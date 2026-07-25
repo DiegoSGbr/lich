@@ -16,7 +16,7 @@ import {
 import {ProjectService, System, Terminal as TerminalService} from "@/lib/rpc"
 import type {ChecksRollup, PullRequestDetail} from "@/lib/api-types"
 import {useProjects} from "@/lib/projects"
-import {activeSessionId, sessionsOf} from "@/lib/sessions"
+import {activeTarget} from "@/lib/sessions"
 import {useGitStatus} from "@/lib/useGitStatus"
 import {usePullRequestDetail} from "@/lib/usePullRequestDetail"
 import {cn, errorText} from "@/lib/utils"
@@ -50,11 +50,7 @@ export function Pulls() {
   const {projectId} = useParams()
   const {projects, sessions} = useProjects()
   const projectPath = projects.find((p) => p.id === projectId)?.path ?? ""
-  const sessionId = projectId ? activeSessionId(sessions, projectId) : ""
-  const session = projectId
-    ? sessionsOf(sessions, projectId).find((s) => s.id === sessionId)
-    : undefined
-  const path = session?.path || projectPath
+  const {sessionId, path} = activeTarget(sessions, projectId ?? null, projectPath)
   const status = useGitStatus(path)
   const branch = status?.branch ?? ""
   const {detail, loading, error, refresh} = usePullRequestDetail(path, branch)

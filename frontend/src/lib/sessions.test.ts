@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   activeSessionId,
+  activeTarget,
   addSession,
   closeSession,
   createProjectSessions,
@@ -316,6 +317,35 @@ describe("restoreSession", () => {
   it("ignores an unknown project", () => {
     const state = buildState(1)
     expect(restoreSession(state, "nope", parked)).toBe(state)
+  })
+})
+
+describe("activeTarget", () => {
+  const root = "/repo"
+
+  it("falls back to the project root when the active session has no checkout", () => {
+    expect(activeTarget(buildState(2), P, root)).toEqual({sessionId: "s2", path: root})
+  })
+
+  it("resolves a worktree session to its checkout", () => {
+    const state = restoreSession(buildState(1), P, {
+      id: "wt1",
+      label: "swift-rabbit",
+      kind: "shell",
+      path: "/repo/.worktrees/swift-rabbit",
+    })
+    expect(activeTarget(state, P, root)).toEqual({
+      sessionId: "wt1",
+      path: "/repo/.worktrees/swift-rabbit",
+    })
+  })
+
+  it("keeps the project root when there is no session at all", () => {
+    expect(activeTarget({}, P, root)).toEqual({sessionId: "", path: root})
+  })
+
+  it("is empty off a project route", () => {
+    expect(activeTarget(buildState(2), null, "")).toEqual({sessionId: "", path: ""})
   })
 })
 
