@@ -1,3 +1,4 @@
+import {useSyncExternalStore} from "react"
 import {DndContext, closestCenter} from "@dnd-kit/core"
 import {SortableContext, verticalListSortingStrategy} from "@dnd-kit/sortable"
 import {useSortableList, verticalAxis} from "@/lib/use-sortable-list"
@@ -5,6 +6,7 @@ import {baseName} from "@/lib/paths"
 import type {Session} from "@/lib/sessions"
 import {SessionCard} from "./SessionCard"
 import {PullRequestCard} from "./PullRequestCard"
+import {isPullsOpen, subscribePullsCard} from "@/lib/pulls-card-store"
 
 interface SessionGroupProps {
   // "" for the project's own root, else the worktree checkout path.
@@ -28,6 +30,7 @@ interface SessionGroupProps {
   // only for worktree groups (a truthy path).
   pullsActive: boolean
   onPulls: () => void
+  onClosePulls: () => void
 }
 
 // SessionGroup renders one worktree's sessions under a static divider titled
@@ -49,10 +52,12 @@ export function SessionGroup({
   onOpenTerminal,
   pullsActive,
   onPulls,
+  onClosePulls,
 }: SessionGroupProps) {
   const ids = sessions.map((session) => session.id)
   const {sensors, onDragEnd} = useSortableList(ids, onReorder)
   const name = path ? baseName(path) : projectName
+  const pullsOpen = useSyncExternalStore(subscribePullsCard, () => isPullsOpen(path))
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -82,13 +87,19 @@ export function SessionGroup({
                 onClose={() => onClose(session)}
                 onRename={(label) => onRename(session.id, label)}
                 onOpenTerminal={onOpenTerminal}
+                onPulls={onPulls}
               />
             ))}
           </div>
         </SortableContext>
       </DndContext>
-      {path && (
-        <PullRequestCard path={path} active={pullsActive} onSelect={onPulls}/>
+      {path && pullsOpen && (
+        <PullRequestCard
+          path={path}
+          active={pullsActive}
+          onSelect={onPulls}
+          onClose={onClosePulls}
+        />
       )}
     </div>
   )

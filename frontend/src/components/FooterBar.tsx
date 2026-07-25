@@ -1,5 +1,6 @@
 import {useEffect, useState} from "react"
 import {useNavigate} from "react-router-dom"
+import {openPulls} from "@/lib/pulls-card-store"
 import {toast} from "sonner"
 import {Code, FileText, GitBranch, Folder, Plus, Diff, GitPullRequestArrow} from "lucide-react"
 import {ProjectService, Terminal as TerminalService} from "@/lib/rpc"
@@ -45,7 +46,7 @@ interface FooterBarProps {
 // shows its checkout's path, branch and diff.
 export function FooterBar({dock, onDock}: FooterBarProps) {
   const navigate = useNavigate()
-  const {projectId, sessionId, path: basePath} = useActiveSession()
+  const {projectId, sessionId, path: basePath, worktreePath} = useActiveSession()
   // Overlay the backend's live cwd so a `cd` in the terminal moves the footer
   // with it — same source the session card follows. Falls back to the session's
   // static start path until the watcher reports.
@@ -184,7 +185,10 @@ export function FooterBar({dock, onDock}: FooterBarProps) {
             render={
               <button
                 type="button"
-                onClick={() => navigate(`/projects/${projectId}/pulls`)}
+                onClick={() => {
+                  openPulls(worktreePath)
+                  navigate(`/projects/${projectId}/pulls`)
+                }}
                 className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
               />
             }

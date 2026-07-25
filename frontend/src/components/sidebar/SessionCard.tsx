@@ -1,6 +1,6 @@
 import {useEffect, useRef, useState} from "react"
 import type {KeyboardEvent} from "react"
-import {GitBranch, Pencil, Terminal, X} from "lucide-react"
+import {GitBranch, GitPullRequestArrow, Pencil, Terminal, X} from "lucide-react"
 import {useSortable} from "@dnd-kit/sortable"
 import {CSS} from "@dnd-kit/utilities"
 import {cn} from "@/lib/utils"
@@ -32,6 +32,8 @@ interface SessionCardProps {
   // agent sessions, so the user can drop into a terminal in the worktree the
   // agent is working in without cd-ing there by hand.
   onOpenTerminal: (cwd: string) => void
+  // Open the Pulls screen for this session's worktree, parking its PR card.
+  onPulls: () => void
 }
 
 // The card itself is the drag grip for reordering the list — no separate handle.
@@ -43,6 +45,7 @@ export function SessionCard({
                               onClose,
                               onRename,
                               onOpenTerminal,
+                              onPulls,
                             }: SessionCardProps) {
   const pathRef = useRef<HTMLSpanElement>(null)
   const [pathOverflow, setPathOverflow] = useState(false)
@@ -229,6 +232,10 @@ export function SessionCard({
               Open Terminal
             </ContextMenuItem>
           )}
+          <ContextMenuItem onClick={onPulls}>
+            <GitPullRequestArrow/>
+            Pull request
+          </ContextMenuItem>
           <ContextMenuSeparator/>
           <ContextMenuItem variant="destructive" onClick={onClose}>
             <X/>
