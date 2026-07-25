@@ -37,11 +37,7 @@ export function PullsFiles({path, onInject}: {path: string; onInject: (text: str
         <PullsFileTree files={files} active={active} onSelect={jumpTo}/>
       </div>
       <div className="flex flex-1 flex-col overflow-y-auto">
-        <div className="flex items-center justify-end gap-3 border-b border-border px-3 py-2.5 text-xs text-muted-foreground">
-          <span>
-            <span className="font-medium text-foreground">{files.length}</span>{" "}
-            {files.length === 1 ? "file changed" : "files changed"}
-          </span>
+        <div className="flex items-center justify-end border-b border-border px-3 py-2.5 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5">
             <DiffStat added={added} deleted={deleted}/>
           </span>
