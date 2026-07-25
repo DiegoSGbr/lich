@@ -46,7 +46,7 @@ interface FooterBarProps {
 // shows its checkout's path, branch and diff.
 export function FooterBar({dock, onDock}: FooterBarProps) {
   const navigate = useNavigate()
-  const {projectId, sessionId, path: basePath, worktreePath} = useActiveSession()
+  const {projectId, sessionId, path: basePath} = useActiveSession()
   // Overlay the backend's live cwd so a `cd` in the terminal moves the footer
   // with it — same source the session card follows. Falls back to the session's
   // static start path until the watcher reports.
@@ -186,7 +186,7 @@ export function FooterBar({dock, onDock}: FooterBarProps) {
               <button
                 type="button"
                 onClick={() => {
-                  openPulls(worktreePath)
+                  openPulls(basePath)
                   navigate(`/projects/${projectId}/pulls`)
                 }}
                 className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"

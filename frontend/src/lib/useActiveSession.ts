@@ -11,9 +11,6 @@ export function useActiveSession(): {
   projectId: string | null
   sessionId: string
   path: string
-  // The active session's own worktree checkout ("" for a project-root session):
-  // the key its Pull request card parks under, distinct from the live-cwd path.
-  worktreePath: string
 } {
   const {projects, sessions} = useProjects()
   const match = useMatch("/projects/:projectId")
@@ -23,5 +20,5 @@ export function useActiveSession(): {
   const session = projectId
     ? sessionsOf(sessions, projectId).find((s) => s.id === sessionId)
     : undefined
-  return {projectId, sessionId, path: session?.path || projectPath, worktreePath: session?.path ?? ""}
+  return {projectId, sessionId, path: session?.path || projectPath}
 }

@@ -259,7 +259,7 @@ export function SessionSidebar() {
               onOpenTerminal={(cwd) => newSession(projectId, "shell", cwd)}
               pullsActive={onPullsRoute && groupActive}
               onPulls={() => {
-                openPulls(group.path)
+                openPulls(group.path || path)
                 const target = groupActive ? realActiveId : group.sessions[0]?.id
                 if (target) {
                   activateSession(projectId, target)
@@ -267,7 +267,7 @@ export function SessionSidebar() {
                 navigate(`/projects/${projectId}/pulls`)
               }}
               onClosePulls={() => {
-                closePulls(group.path)
+                closePulls(group.path || path)
                 if (onPullsRoute && groupActive) {
                   navigate(`/projects/${projectId}`)
                 }

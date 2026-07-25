@@ -57,7 +57,11 @@ export function SessionGroup({
   const ids = sessions.map((session) => session.id)
   const {sensors, onDragEnd} = useSortableList(ids, onReorder)
   const name = path ? baseName(path) : projectName
-  const pullsOpen = useSyncExternalStore(subscribePullsCard, () => isPullsOpen(path))
+  // The PR card keys off the group's real checkout — the project root for the
+  // root group (empty path), else the worktree — so a root project on a feature
+  // branch parks its card too, not only worktrees.
+  const checkout = path || projectPath
+  const pullsOpen = useSyncExternalStore(subscribePullsCard, () => isPullsOpen(checkout))
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -93,9 +97,9 @@ export function SessionGroup({
           </div>
         </SortableContext>
       </DndContext>
-      {path && pullsOpen && (
+      {pullsOpen && (
         <PullRequestCard
-          path={path}
+          path={checkout}
           active={pullsActive}
           onSelect={onPulls}
           onClose={onClosePulls}
