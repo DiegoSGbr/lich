@@ -1,5 +1,5 @@
 import {useState} from "react"
-import {ChevronsDownUp, ChevronsUpDown, Code, FileDiff, GitPullRequestArrow, Maximize2, Minimize2, X} from "lucide-react"
+import {ChevronsDownUp, ChevronsUpDown, Code, FileDiff, Maximize2, Minimize2, X} from "lucide-react"
 import {Button} from "@/components/ui/button"
 import {Tabs, TabsList, TabsTrigger} from "@/components/ui/tabs"
 import {DiffStat} from "@/components/DiffStat"
@@ -9,9 +9,8 @@ import {useActiveSession} from "@/lib/useActiveSession"
 import {useGitStatus} from "@/lib/useGitStatus"
 import {usePanelWidth} from "@/lib/use-panel-width"
 import {FilesPanel} from "./FilesPanel"
-import {PullsPanel} from "./PullsPanel"
 
-export type DockTab = "files" | "review" | "pulls"
+export type DockTab = "files" | "review"
 
 interface RightDockProps {
   tab: DockTab
@@ -43,7 +42,7 @@ export function RightDock({tab, onTab, onClose}: RightDockProps) {
 
   return (
     <aside
-      aria-label={tab === "files" ? "File browser" : tab === "review" ? "Review changes" : "Pull requests"}
+      aria-label={tab === "files" ? "File browser" : "Review changes"}
       className={
         fullscreen
           ? "absolute inset-0 z-20 flex flex-col bg-sidebar"
@@ -64,10 +63,6 @@ export function RightDock({tab, onTab, onClose}: RightDockProps) {
               {status && status.files > 0 && (
                 <DiffStat added={status.added} deleted={status.deleted}/>
               )}
-            </TabsTrigger>
-            <TabsTrigger value="pulls" className="gap-1 rounded-md px-2 py-0.5 text-xs hover:bg-accent/50 data-active:bg-accent data-active:text-accent-foreground dark:data-active:border-transparent dark:data-active:bg-accent dark:data-active:text-accent-foreground">
-              <GitPullRequestArrow className="size-3.5"/>
-              Pulls
             </TabsTrigger>
           </TabsList>
         </Tabs>
@@ -106,13 +101,7 @@ export function RightDock({tab, onTab, onClose}: RightDockProps) {
         </span>
       </div>
       <div className="flex flex-1 flex-col overflow-hidden">
-        {tab === "files" ? (
-          <FilesPanel/>
-        ) : tab === "review" ? (
-          <ReviewPanel bulk={bulk}/>
-        ) : (
-          <PullsPanel/>
-        )}
+        {tab === "files" ? <FilesPanel/> : <ReviewPanel bulk={bulk}/>}
       </div>
       {!fullscreen && (
         <div

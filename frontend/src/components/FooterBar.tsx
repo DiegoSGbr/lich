@@ -1,4 +1,5 @@
 import {useEffect, useState} from "react"
+import {useNavigate} from "react-router-dom"
 import {toast} from "sonner"
 import {Code, FileText, GitBranch, Folder, Plus, Diff, GitPullRequestArrow} from "lucide-react"
 import {ProjectService, Terminal as TerminalService} from "@/lib/rpc"
@@ -43,7 +44,8 @@ interface FooterBarProps {
 // project is active; everything follows the active session — a worktree session
 // shows its checkout's path, branch and diff.
 export function FooterBar({dock, onDock}: FooterBarProps) {
-  const {sessionId, path: basePath} = useActiveSession()
+  const navigate = useNavigate()
+  const {projectId, sessionId, path: basePath} = useActiveSession()
   // Overlay the backend's live cwd so a `cd` in the terminal moves the footer
   // with it — same source the session card follows. Falls back to the session's
   // static start path until the watcher reports.
@@ -176,17 +178,14 @@ export function FooterBar({dock, onDock}: FooterBarProps) {
         </Tooltip>
       )}
 
-      {pr && (
+      {pr && projectId && (
         <Tooltip>
           <TooltipTrigger
             render={
               <button
                 type="button"
-                onClick={() => onDock("pulls")}
-                aria-pressed={dock === "pulls"}
-                className={`flex items-center gap-1.5 rounded-md px-1.5 py-1 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground ${
-                  dock === "pulls" ? "bg-accent text-accent-foreground" : ""
-                }`}
+                onClick={() => navigate(`/projects/${projectId}/pulls`)}
+                className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
               />
             }
           >

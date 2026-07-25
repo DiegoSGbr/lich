@@ -10,6 +10,7 @@ import { FooterBar } from "@/components/FooterBar"
 import { Home } from "@/components/Home"
 import { EmptySessions } from "@/components/EmptySessions"
 import { Settings } from "@/components/settings/Settings"
+import { Pulls } from "@/components/pulls/Pulls"
 import { Toaster } from "@/components/ui/sonner"
 import { ClaudePluginGate } from "@/components/ClaudePluginGate"
 import { AppUpdateGate } from "@/components/AppUpdateGate"
@@ -65,6 +66,9 @@ function App() {
                   it can show that project's overrides, and renders in the main
                   area with the session sidebar kept beside it. */}
               <Route path="/projects/:projectId/settings" element={<Settings />} />
+              {/* The pull-request screen: like Settings, a per-project full-screen
+                  route over the terminals, showing the active session's branch PR. */}
+              <Route path="/projects/:projectId/pulls" element={<Pulls />} />
             </Route>
           </Routes>
           {/* Inside ProjectsProvider + the router: the update flow opens a shell
