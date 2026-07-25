@@ -4,6 +4,7 @@ import {useSortableList, verticalAxis} from "@/lib/use-sortable-list"
 import {baseName} from "@/lib/paths"
 import type {Session} from "@/lib/sessions"
 import {SessionCard} from "./SessionCard"
+import {PullRequestCard} from "./PullRequestCard"
 
 interface SessionGroupProps {
   // "" for the project's own root, else the worktree checkout path.
@@ -22,6 +23,11 @@ interface SessionGroupProps {
   onClose: (session: Session) => void
   onRename: (id: string, label: string) => void
   onOpenTerminal: (cwd: string) => void
+  // The worktree's pull-request entry: opens the Pulls screen for this branch.
+  // pullsActive marks it when that screen is showing this group's PR. Rendered
+  // only for worktree groups (a truthy path).
+  pullsActive: boolean
+  onPulls: () => void
 }
 
 // SessionGroup renders one worktree's sessions under a static divider titled
@@ -41,6 +47,8 @@ export function SessionGroup({
   onClose,
   onRename,
   onOpenTerminal,
+  pullsActive,
+  onPulls,
 }: SessionGroupProps) {
   const ids = sessions.map((session) => session.id)
   const {sensors, onDragEnd} = useSortableList(ids, onReorder)
@@ -79,6 +87,9 @@ export function SessionGroup({
           </div>
         </SortableContext>
       </DndContext>
+      {path && (
+        <PullRequestCard path={path} active={pullsActive} onSelect={onPulls}/>
+      )}
     </div>
   )
 }
