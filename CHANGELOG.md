@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The pull request badge keeps up with the session working next to it.** A
+  commit — or the push that opens a pull request — now reaches the badge, the
+  checks and the diff on its own, instead of waiting for you to click away to
+  another window and back. Git status also follows a checkout that is being
+  worked in every second rather than every three, settling back to the slower
+  cadence once it goes quiet, so nothing extra is spent on idle projects.
+
 - **Open, review and merge pull requests without leaving lich.** A branch's
   GitHub pull request now opens as a full-screen view — reached from the footer
   PR badge, a session card's `#N`, or a session's "Pull request" menu — that
@@ -20,7 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gets wide, and lets you tick each one off as viewed: the file folds away and
   the header counts how far you are. Merge from the header
   — squash, a merge commit or rebase, editing the commit message first if you
-  want — or open a pull request when the branch has none. It reuses the `gh` CLI
+  want — and the merge offers to remove the branch's worktree once it lands, or
+  open a pull request when the branch has none. A reload button covers what
+  nothing can announce (a review, a check going green). It reuses the `gh` CLI
   already behind the footer badge, so a repo without `gh` or a non-GitHub remote
   simply shows nothing.
 - **The footer shows the active session's model and context window.** The status
