@@ -14,6 +14,8 @@ const TREE_HIDDEN_KEY = "lich.pulls.tree.hidden"
 
 interface PullsFilesProps {
   path: string
+  /** The checkout's HEAD; a new commit refetches the diff. */
+  head: string
   /** Identity of the pull request being reviewed (its URL) — what the Viewed
    * ticks are keyed by, so two PRs never share them. */
   pullRequest: string
@@ -25,8 +27,8 @@ interface PullsFilesProps {
 // FileDiff cards as the Review dock — read-only, no discard. Inject still works,
 // so a PR file can be referenced into the session's terminal. Each file can be
 // ticked off as viewed, which folds it away and counts toward the header total.
-export function PullsFiles({path, pullRequest, onInject}: PullsFilesProps) {
-  const {files, error} = usePullRequestDiff(path)
+export function PullsFiles({path, head, pullRequest, onInject}: PullsFilesProps) {
+  const {files, error} = usePullRequestDiff(path, head)
   const rows = useRef<Map<string, HTMLElement>>(new Map())
   const [active, setActive] = useState<string | null>(null)
   // Every file mounts its own CodeMirror, so a wide PR earns a way to fold them

@@ -1,5 +1,5 @@
 import {useState, type ReactNode} from "react"
-import {useParams} from "react-router-dom"
+import {useNavigate, useParams} from "react-router-dom"
 import {toast} from "sonner"
 import {
   Check,
@@ -10,13 +10,16 @@ import {
   GitBranch,
   GitMerge,
   GitPullRequestArrow,
+  RefreshCw,
   X,
   type LucideIcon,
 } from "lucide-react"
-import {ProjectService, System, Terminal as TerminalService} from "@/lib/rpc"
+import {ProjectService, Store, System, Terminal as TerminalService} from "@/lib/rpc"
 import type {ChecksRollup, MergeMethod, PullRequestDetail} from "@/lib/api-types"
 import {useProjects} from "@/lib/projects"
-import {activeTarget} from "@/lib/sessions"
+import {baseName} from "@/lib/paths"
+import {closePulls} from "@/lib/pulls-card-store"
+import {activeTarget, sessionsOf} from "@/lib/sessions"
 import {useGitStatus} from "@/lib/useGitStatus"
 import {usePullRequestDetail} from "@/lib/usePullRequestDetail"
 import {cn, errorText} from "@/lib/utils"
@@ -48,17 +51,62 @@ import {PullsFiles} from "./PullsFiles"
 // exact-match useActiveSession returns empty on this subroute).
 export function Pulls() {
   const {projectId} = useParams()
-  const {projects, sessions} = useProjects()
+  const navigate = useNavigate()
+  const {projects, sessions, closeSession} = useProjects()
   const projectPath = projects.find((p) => p.id === projectId)?.path ?? ""
   const {sessionId, path} = activeTarget(sessions, projectId ?? null, projectPath)
   const status = useGitStatus(path)
   const branch = status?.branch ?? ""
-  const {detail, loading, error, refresh} = usePullRequestDetail(path, branch)
+  const head = status?.head ?? ""
+  const {detail, loading, error, refresh} = usePullRequestDetail(path, branch, head)
 
   const inject = (text: string) => {
     if (sessionId) {
       void TerminalService.Write(sessionId, text)
     }
+  }
+
+  // A merged branch leaves its checkout behind — the one cleanup the user would
+  // otherwise walk back to the sidebar for. Refuse a dirty worktree: whatever
+  // was never committed lives only there, and the sidebar's flow is the one that
+  // knows how to confirm discarding it.
+  const removeWorktree = async () => {
+    if (!projectId || !path) {
+      return
+    }
+    if (await ProjectService.WorktreeDirty(path).catch(() => false)) {
+      toast.error("Worktree has uncommitted changes — remove it from the sidebar.")
+      return
+    }
+    // The PTYs living in the checkout must die before git pulls the directory
+    // out from under them, and no parked row may survive to offer a resume.
+    for (const session of sessionsOf(sessions, projectId).filter((s) => s.path === path)) {
+      closeSession(projectId, session.id)
+    }
+    void Store.PurgeWorktreeSessions(projectId, path)
+    closePulls(path)
+    navigate(`/projects/${projectId}`)
+    try {
+      await ProjectService.RemoveWorktree(projectPath, path, false)
+      toast.success(`Removed ${baseName(path)}`)
+    } catch (err: unknown) {
+      toast.error(`Failed to remove worktree: ${errorText(err)}`)
+    }
+  }
+
+  const onMerged = () => {
+    refresh()
+    const merged = `Merged #${detail?.number} into ${detail?.baseRefName}`
+    // Only a worktree checkout has something to clean up; the project's own
+    // directory stays where it is.
+    if (path === projectPath) {
+      toast.success(merged)
+      return
+    }
+    toast.success(merged, {
+      duration: 10_000,
+      action: {label: "Remove worktree", onClick: () => void removeWorktree()},
+    })
   }
 
   let body: ReactNode
@@ -67,7 +115,16 @@ export function Pulls() {
   } else if (error) {
     body = <Notice>Couldn’t load the pull request: {error}</Notice>
   } else if (detail) {
-    body = <PullRequestView path={path} detail={detail} onMerged={refresh} onInject={inject}/>
+    body = (
+      <PullRequestView
+        path={path}
+        head={head}
+        detail={detail}
+        onRefresh={refresh}
+        onMerged={onMerged}
+        onInject={inject}
+      />
+    )
   } else if (loading) {
     body = <Notice>Loading…</Notice>
   } else {
@@ -88,12 +145,17 @@ interface EditState {
 
 interface PullRequestViewProps {
   path: string
+  /** The checkout's HEAD; changing it refetches the diff under the Files tab. */
+  head: string
   detail: PullRequestDetail
+  /** Re-run the lookup — the manual reload, for what HEAD can't announce. */
+  onRefresh: () => void
+  /** The merge landed; the screen decides what follows (a toast, the worktree). */
   onMerged: () => void
   onInject: (text: string) => void
 }
 
-function PullRequestView({path, detail, onMerged, onInject}: PullRequestViewProps) {
+function PullRequestView({path, head, detail, onRefresh, onMerged, onInject}: PullRequestViewProps) {
   const [merging, setMerging] = useState(false)
   const [edit, setEdit] = useState<EditState | null>(null)
   const [tab, setTab] = useState<"overview" | "files">("overview")
@@ -107,7 +169,6 @@ function PullRequestView({path, detail, onMerged, onInject}: PullRequestViewProp
     setMerging(true)
     try {
       await ProjectService.MergePullRequest(path, method, subject, body)
-      toast.success(`Merged #${detail.number} into ${detail.baseRefName}`)
       setEdit(null)
       onMerged()
     } catch (err: unknown) {
@@ -176,6 +237,11 @@ function PullRequestView({path, detail, onMerged, onInject}: PullRequestViewProp
                 </DropdownMenuContent>
               </DropdownMenu>
             </span>
+            {/* HEAD moving refetches on its own; this covers what it can't see —
+                a review, a check finishing, a PR opened from the terminal. */}
+            <Button variant="ghost" size="sm" onClick={onRefresh} aria-label="Refresh">
+              <RefreshCw/>
+            </Button>
             <Button variant="ghost" size="sm" onClick={() => void System.OpenExternal(detail.url)}>
               <ExternalLink/>
               Open
@@ -226,7 +292,7 @@ function PullRequestView({path, detail, onMerged, onInject}: PullRequestViewProp
             </div>
           </div>
         ) : (
-          <PullsFiles path={path} pullRequest={detail.url} onInject={onInject}/>
+          <PullsFiles path={path} head={head} pullRequest={detail.url} onInject={onInject}/>
         )}
       </div>
 
