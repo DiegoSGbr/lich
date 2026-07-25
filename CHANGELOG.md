@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Open, review and merge pull requests without leaving lich.** A branch's
+  GitHub pull request now opens as a full-screen view — reached from the footer
+  PR badge, a session card's `#N`, or a session's "Pull request" menu — that
+  parks a card in the worktree's sidebar group beside its session, the way the
+  Settings screen does. The Overview tab renders the description as markdown
+  alongside the checks and mergeability; the Files changed tab shows the whole
+  diff next to a file tree that jumps to a file on click. Merge from the header
+  — squash, a merge commit or rebase, editing the commit message first if you
+  want — or open a pull request when the branch has none. It reuses the `gh` CLI
+  already behind the footer badge, so a repo without `gh` or a non-GitHub remote
+  simply shows nothing.
 - **The footer shows the active session's model and context window.** The status
   strip now names the model the active Claude session runs and its reasoning
   effort (e.g. `opus 4.8 · xhigh`), marked with the provider's icon, and a small
