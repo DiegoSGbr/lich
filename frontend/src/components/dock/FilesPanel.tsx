@@ -1,11 +1,13 @@
 import {useCallback, useEffect, useState} from "react"
 import {ChevronLeft} from "lucide-react"
-import {ProjectService, Terminal as TerminalService} from "@/lib/rpc"
+import {ProjectService, System, Terminal as TerminalService} from "@/lib/rpc"
 import {useActiveSession} from "@/lib/useActiveSession"
+import {useProjects} from "@/lib/projects"
+import {queuePaste} from "@/lib/paste-queue"
 import {useGitStatus} from "@/lib/useGitStatus"
 import {buildTree, type TreeNode} from "@/lib/file-tree"
 import {FileTree} from "@/components/FileTree"
-import {formatLineRef} from "@/lib/diff"
+import {formatLineRef, parseDiff, type DiffFile} from "@/lib/diff"
 import {errorText} from "@/lib/utils"
 import type {DocLineSelection} from "@/lib/codemirror"
 import {
@@ -24,8 +26,10 @@ import {useFileEditor} from "./useFileEditor"
 // path/line references into the session's PTY.
 export function FilesPanel() {
   const {projectId, sessionId, path} = useActiveSession()
+  const {newSession, activateSession} = useProjects()
   const status = useGitStatus(path)
   const [tree, setTree] = useState<TreeNode[] | null>(null)
+  const [stats, setStats] = useState<Map<string, DiffFile>>(new Map())
   const [failed, setFailed] = useState(false)
   const [open, setOpen] = useState<string | null>(null)
 
@@ -34,11 +38,18 @@ export function FilesPanel() {
       return
     }
     try {
-      const files = await ProjectService.Tree(path)
+      // The diff feeds each row its +/- badge; a diff failure (nothing to diff)
+      // just means no badges, never a broken tree — hence the swallowed catch.
+      const [files, diffText] = await Promise.all([
+        ProjectService.Tree(path),
+        ProjectService.DiffText(path).catch(() => ""),
+      ])
       setTree(buildTree(files ?? []))
+      setStats(diffStatsByPath(parseDiff(diffText)))
       setFailed(false)
     } catch {
       setTree([])
+      setStats(new Map())
       setFailed(true)
     }
   }, [path])
@@ -64,6 +75,26 @@ export function FilesPanel() {
     }
   }
 
+  // Right-click → Open in editor. The backend either launched a GUI editor
+  // detached (empty reply) or, for a terminal editor like vim, handed back the
+  // command to run: spawn a shell session at this checkout and let the paste
+  // queue deliver it once the PTY exists, the way the self-update flow does.
+  const openInEditor = (rel: string) => {
+    if (!path) {
+      return
+    }
+    void System.OpenInEditor(path, rel)
+      .then((command) => {
+        if (!command) {
+          return
+        }
+        const id = newSession(projectId, "shell", path)
+        queuePaste(id, command + "\n")
+        activateSession(projectId, id)
+      })
+      .catch(() => undefined)
+  }
+
   if (open !== null) {
     return (
       <FilePreview
@@ -74,16 +105,40 @@ export function FilesPanel() {
       />
     )
   }
-  return <TreeBody tree={tree} failed={failed} onOpen={setOpen}/>
+  return (
+    <TreeBody
+      tree={tree}
+      stats={stats}
+      failed={failed}
+      onOpen={setOpen}
+      onEditor={openInEditor}
+    />
+  )
+}
+
+// diffStatsByPath keys each changed file's +/- counts by its current path so a
+// tree row can look up its own line delta. parseDiff already computed the counts
+// for the review panel; this only reshapes them for lookup.
+function diffStatsByPath(files: DiffFile[]): Map<string, DiffFile> {
+  const map = new Map<string, DiffFile>()
+  for (const file of files) {
+    const key = file.newPath || file.oldPath
+    if (key) {
+      map.set(key, file)
+    }
+  }
+  return map
 }
 
 interface TreeBodyProps {
   tree: TreeNode[] | null
+  stats: Map<string, DiffFile>
   failed: boolean
   onOpen: (rel: string) => void
+  onEditor: (rel: string) => void
 }
 
-function TreeBody({tree, failed, onOpen}: TreeBodyProps) {
+function TreeBody({tree, stats, failed, onOpen, onEditor}: TreeBodyProps) {
   if (failed) {
     return <Notice>Not a git repository</Notice>
   }
@@ -93,7 +148,15 @@ function TreeBody({tree, failed, onOpen}: TreeBodyProps) {
   if (tree.length === 0) {
     return <Notice>No tracked files</Notice>
   }
-  return <FileTree tree={tree} className="h-full overflow-y-auto" onSelect={onOpen}/>
+  return (
+    <FileTree
+      tree={tree}
+      stats={stats}
+      onEditor={onEditor}
+      className="h-full overflow-y-auto"
+      onSelect={onOpen}
+    />
+  )
 }
 
 interface FilePreviewProps {
