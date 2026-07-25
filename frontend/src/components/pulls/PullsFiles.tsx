@@ -1,8 +1,9 @@
-import {useRef, useState, type ReactNode} from "react"
+import {useMemo, useRef, useState, type ReactNode} from "react"
 import {usePullRequestDiff} from "@/lib/usePullRequestDiff"
+import {buildTree} from "@/lib/file-tree"
 import {FileDiff} from "@/components/diff/FileDiff"
+import {FileTree} from "@/components/FileTree"
 import {DiffStat} from "@/components/DiffStat"
-import {PullsFileTree} from "./PullsFileTree"
 
 // PullsFiles is the "Files changed" tab of the Pulls screen: a changed-files
 // tree on the left (click to jump) beside the PR's diff, rendered with the same
@@ -12,6 +13,9 @@ export function PullsFiles({path, onInject}: {path: string; onInject: (text: str
   const {files, error} = usePullRequestDiff(path)
   const rows = useRef<Map<string, HTMLElement>>(new Map())
   const [active, setActive] = useState<string | null>(null)
+  // Structure only; the per-file +/- lives on each diff's header, the way
+  // GitHub shows it.
+  const tree = useMemo(() => buildTree((files ?? []).map((file) => file.newPath)), [files])
 
   if (error) {
     return <Notice>Couldn’t load the diff: {error}</Notice>
@@ -34,7 +38,7 @@ export function PullsFiles({path, onInject}: {path: string; onInject: (text: str
   return (
     <div className="flex h-full">
       <div className="w-60 shrink-0 overflow-y-auto border-r border-border">
-        <PullsFileTree files={files} active={active} onSelect={jumpTo}/>
+        <FileTree tree={tree} active={active} defaultOpen onSelect={jumpTo}/>
       </div>
       <div className="flex flex-1 flex-col overflow-y-auto">
         <div className="flex items-center justify-end border-b border-border px-3 py-2.5 text-xs text-muted-foreground">

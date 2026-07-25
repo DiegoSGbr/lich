@@ -1,10 +1,10 @@
 import {useCallback, useEffect, useState} from "react"
-import {ChevronDown, ChevronLeft, ChevronRight, Folder, FolderOpen} from "lucide-react"
+import {ChevronLeft} from "lucide-react"
 import {ProjectService, Terminal as TerminalService} from "@/lib/rpc"
 import {useActiveSession} from "@/lib/useActiveSession"
 import {useGitStatus} from "@/lib/useGitStatus"
 import {buildTree, type TreeNode} from "@/lib/file-tree"
-import {FileIcon} from "@/lib/file-icon"
+import {FileTree} from "@/components/FileTree"
 import {formatLineRef} from "@/lib/diff"
 import {errorText} from "@/lib/utils"
 import type {DocLineSelection} from "@/lib/codemirror"
@@ -84,18 +84,6 @@ interface TreeBodyProps {
 }
 
 function TreeBody({tree, failed, onOpen}: TreeBodyProps) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const toggle = (rel: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(rel)) {
-        next.delete(rel)
-      } else {
-        next.add(rel)
-      }
-      return next
-    })
-
   if (failed) {
     return <Notice>Not a git repository</Notice>
   }
@@ -105,79 +93,7 @@ function TreeBody({tree, failed, onOpen}: TreeBodyProps) {
   if (tree.length === 0) {
     return <Notice>No tracked files</Notice>
   }
-  return (
-    <div role="tree" className="h-full overflow-y-auto py-1 font-mono text-xs">
-      {tree.map((node) => (
-        <TreeRow
-          key={node.path}
-          node={node}
-          depth={0}
-          expanded={expanded}
-          onToggle={toggle}
-          onOpen={onOpen}
-        />
-      ))}
-    </div>
-  )
-}
-
-interface TreeRowProps {
-  node: TreeNode
-  depth: number
-  expanded: Set<string>
-  onToggle: (rel: string) => void
-  onOpen: (rel: string) => void
-}
-
-function TreeRow({node, depth, expanded, onToggle, onOpen}: TreeRowProps) {
-  const isOpen = expanded.has(node.path)
-  // The 0.5rem base keeps even top-level rows off the edge.
-  const indent = {paddingLeft: `${depth * 0.75 + 0.5}rem`}
-  if (node.type === "file") {
-    // A chevron-width spacer keeps file names aligned under their folder's name;
-    // FileIcon draws the language's real logo (devicon).
-    return (
-      <button
-        type="button"
-        onClick={() => onOpen(node.path)}
-        style={indent}
-        title={node.path}
-        className="flex items-center gap-1.5 py-0.5 pr-2 text-left text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-      >
-        <span className="size-3.5 shrink-0" aria-hidden/>
-        <FileIcon path={node.path}/>
-        <span className="truncate">{node.name}</span>
-      </button>
-    )
-  }
-  const Chevron = isOpen ? ChevronDown : ChevronRight
-  const FolderIcon = isOpen ? FolderOpen : Folder
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => onToggle(node.path)}
-        style={indent}
-        aria-expanded={isOpen}
-        className="flex items-center gap-1.5 py-0.5 pr-2 text-left font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
-      >
-        <Chevron className="size-3.5 shrink-0 text-muted-foreground"/>
-        <FolderIcon className="size-3.5 shrink-0 text-muted-foreground"/>
-        <span className="truncate">{node.name}</span>
-      </button>
-      {isOpen &&
-        node.children.map((child) => (
-          <TreeRow
-            key={child.path}
-            node={child}
-            depth={depth + 1}
-            expanded={expanded}
-            onToggle={onToggle}
-            onOpen={onOpen}
-          />
-        ))}
-    </>
-  )
+  return <FileTree tree={tree} className="h-full overflow-y-auto" onSelect={onOpen}/>
 }
 
 interface FilePreviewProps {
