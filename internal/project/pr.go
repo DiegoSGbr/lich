@@ -223,6 +223,29 @@ func (s *Service) CreatePullRequest(path string) error {
 	return nil
 }
 
+// PullRequestDiff returns the unified diff of the path's branch pull request —
+// every change the PR would merge into its base, as GitHub computes it — for the
+// Pulls screen's "Files changed" tab. --color never keeps the output plain so
+// the frontend's parseDiff reads it. An empty string with no error means the
+// branch has no open PR (nothing to show).
+func (s *Service) PullRequestDiff(path string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), prDetailTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "pr", "diff", "--color", "never")
+	cmd.Dir = path
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	winexec.Hide(cmd)
+	out, err := cmd.Output()
+	if err != nil {
+		if isNoPullRequest(stderr.String()) {
+			return "", nil
+		}
+		return "", fmt.Errorf("gh pr diff: %s", ghError(stderr.String(), err))
+	}
+	return string(out), nil
+}
+
 // isNoPullRequest recognises gh's "no PR for this branch" message — the one
 // failure that means an empty panel rather than a real error.
 func isNoPullRequest(stderr string) bool {

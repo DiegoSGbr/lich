@@ -127,6 +127,8 @@ export const ProjectService = {
     call<null>("project.MergePullRequest", [path, method, subject, body]),
   /** Open GitHub's "new pull request" page in the browser (gh pr create --web). */
   CreatePullRequest: (path: string) => call<null>("project.CreatePullRequest", [path]),
+  /** The PR's unified diff (gh pr diff) for the Pulls screen's Files changed tab. */
+  PullRequestDiff: (path: string) => call<string>("project.PullRequestDiff", [path]),
   CreateWorktree: (
     projectPath: string,
     projectID: string,

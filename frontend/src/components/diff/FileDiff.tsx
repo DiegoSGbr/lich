@@ -39,8 +39,9 @@ export interface DiffBulk {
 interface FileDiffProps {
   file: DiffFile
   onInject: (text: string) => void
-  /** Ask the panel to confirm and revert this file's changes. */
-  onDiscard: () => void
+  /** Ask the panel to confirm and revert this file's changes. Omitted for a
+   * read-only diff (a PR's changes), where discarding makes no sense. */
+  onDiscard?: () => void
   /** Collapse/expand-all directive from the panel; absent = no bulk control. */
   bulk?: DiffBulk
 }
@@ -96,9 +97,11 @@ export function FileDiff({file, onInject, onDiscard, bulk}: FileDiffProps) {
         <HeaderAction label="Add file as context" onClick={() => onInject(`@${file.newPath} `)}>
           <Paperclip className="size-3.5"/>
         </HeaderAction>
-        <HeaderAction label="Discard Changes" onClick={onDiscard}>
-          <Undo2 className="size-3.5"/>
-        </HeaderAction>
+        {onDiscard && (
+          <HeaderAction label="Discard Changes" onClick={onDiscard}>
+            <Undo2 className="size-3.5"/>
+          </HeaderAction>
+        )}
       </div>
       {expanded &&
         (file.binary ? (
