@@ -1,22 +1,33 @@
-import {useMemo, useRef, useState, type ReactNode} from "react"
+import {useMemo, useRef, useState, useSyncExternalStore, type ReactNode} from "react"
 import {ChevronsDownUp, ChevronsUpDown} from "lucide-react"
 import {usePullRequestDiff} from "@/lib/usePullRequestDiff"
+import {setViewed, subscribeViewed, viewedFiles} from "@/lib/pull-request-viewed"
 import {buildTree} from "@/lib/file-tree"
 import {FileDiff, HeaderAction, type DiffBulk} from "@/components/diff/FileDiff"
 import {FileTree} from "@/components/FileTree"
 import {DiffStat} from "@/components/DiffStat"
 
+interface PullsFilesProps {
+  path: string
+  /** Identity of the pull request being reviewed (its URL) — what the Viewed
+   * ticks are keyed by, so two PRs never share them. */
+  pullRequest: string
+  onInject: (text: string) => void
+}
+
 // PullsFiles is the "Files changed" tab of the Pulls screen: a changed-files
 // tree on the left (click to jump) beside the PR's diff, rendered with the same
 // FileDiff cards as the Review dock — read-only, no discard. Inject still works,
-// so a PR file can be referenced into the session's terminal.
-export function PullsFiles({path, onInject}: {path: string; onInject: (text: string) => void}) {
+// so a PR file can be referenced into the session's terminal. Each file can be
+// ticked off as viewed, which folds it away and counts toward the header total.
+export function PullsFiles({path, pullRequest, onInject}: PullsFilesProps) {
   const {files, error} = usePullRequestDiff(path)
   const rows = useRef<Map<string, HTMLElement>>(new Map())
   const [active, setActive] = useState<string | null>(null)
   // Every file mounts its own CodeMirror, so a wide PR earns a way to fold them
   // all at once — same directive the Review dock hands its panel.
   const [bulk, setBulk] = useState<DiffBulk>({open: true, nonce: 0})
+  const viewed = useSyncExternalStore(subscribeViewed, () => viewedFiles(pullRequest))
   // Structure only; the per-file +/- lives on each diff's header, the way
   // GitHub shows it.
   const tree = useMemo(() => buildTree((files ?? []).map((file) => file.newPath)), [files])
@@ -33,6 +44,7 @@ export function PullsFiles({path, onInject}: {path: string; onInject: (text: str
 
   const added = files.reduce((sum, file) => sum + file.added, 0)
   const deleted = files.reduce((sum, file) => sum + file.deleted, 0)
+  const viewedCount = files.filter((file) => viewed.has(file.newPath)).length
 
   const jumpTo = (target: string) => {
     setActive(target)
@@ -46,6 +58,11 @@ export function PullsFiles({path, onInject}: {path: string; onInject: (text: str
       </div>
       <div className="flex flex-1 flex-col overflow-y-auto">
         <div className="flex items-center justify-end gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
+          {viewedCount > 0 && (
+            <span className="mr-auto tabular-nums">
+              {viewedCount} of {files.length} viewed
+            </span>
+          )}
           <span className="flex items-center gap-1.5">
             <DiffStat added={added} deleted={deleted}/>
           </span>
@@ -72,7 +89,13 @@ export function PullsFiles({path, onInject}: {path: string; onInject: (text: str
                 }
               }}
             >
-              <FileDiff file={file} onInject={onInject} bulk={bulk}/>
+              <FileDiff
+                file={file}
+                onInject={onInject}
+                bulk={bulk}
+                viewed={viewed.has(file.newPath)}
+                onViewed={(next) => setViewed(pullRequest, file.newPath, next)}
+              />
             </div>
           ))}
         </div>

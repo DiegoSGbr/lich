@@ -15,8 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parks a card in the worktree's sidebar group beside its session, the way the
   Settings screen does. The Overview tab renders the description as markdown
   alongside the checks and mergeability; the Files changed tab shows the whole
-  diff next to a file tree that jumps to a file on click, and folds every file
-  at once when the review gets wide. Merge from the header
+  diff next to a file tree that jumps to a file on click, folds every file at
+  once when the review gets wide, and lets you tick each one off as viewed —
+  the file folds away and the header counts how far you are. Merge from the
+  header
   — squash, a merge commit or rebase, editing the commit message first if you
   want — or open a pull request when the branch has none. It reuses the `gh` CLI
   already behind the footer badge, so a repo without `gh` or a non-GitHub remote

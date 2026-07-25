@@ -226,7 +226,7 @@ function PullRequestView({path, detail, onMerged, onInject}: PullRequestViewProp
             </div>
           </div>
         ) : (
-          <PullsFiles path={path} onInject={onInject}/>
+          <PullsFiles path={path} pullRequest={detail.url} onInject={onInject}/>
         )}
       </div>
 
