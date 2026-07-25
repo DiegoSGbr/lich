@@ -18,6 +18,7 @@ import {useActiveSession} from "@/lib/useActiveSession"
 import {useGitStatus} from "@/lib/useGitStatus"
 import {usePullRequestDetail} from "@/lib/usePullRequestDetail"
 import {cn, errorText} from "@/lib/utils"
+import {Markdown} from "@/components/Markdown"
 import {Button} from "@/components/ui/button"
 import {
   Dialog,
@@ -193,9 +194,7 @@ function PullRequestView({path, detail, onMerged}: PullRequestViewProps) {
 
         {detail.body.trim() !== "" && (
           <div className="border-t border-border px-3 py-3">
-            <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground">
-              {detail.body.trim()}
-            </p>
+            <Markdown>{detail.body}</Markdown>
           </div>
         )}
       </div>
