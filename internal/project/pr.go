@@ -58,11 +58,11 @@ const prViewFields = "number,url,state,title,body,isDraft,mergeable,baseRefName,
 
 // PRDetail is the full view of a branch's open pull request — richer than the
 // footer badge's PullRequest — driving the dock's Pulls panel: the title, body,
-// CI rollup and mergeability gate the merge affordance.
+// CI rollup and mergeability gate the merge affordance. gh's state does not
+// travel with it: a detail exists only when the PR is open (parsePRDetail).
 type PRDetail struct {
 	Number       int          `json:"number"`
 	URL          string       `json:"url"`
-	State        string       `json:"state"`
 	Title        string       `json:"title"`
 	Body         string       `json:"body"`
 	IsDraft      bool         `json:"isDraft"`
@@ -137,7 +137,6 @@ func parsePRDetail(out []byte) (*PRDetail, error) {
 	return &PRDetail{
 		Number:       v.Number,
 		URL:          v.URL,
-		State:        v.State,
 		Title:        v.Title,
 		Body:         v.Body,
 		IsDraft:      v.IsDraft,

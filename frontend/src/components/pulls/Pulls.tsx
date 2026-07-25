@@ -14,7 +14,7 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import {ProjectService, System, Terminal as TerminalService} from "@/lib/rpc"
-import type {ChecksRollup, PullRequestDetail} from "@/lib/api-types"
+import type {ChecksRollup, MergeMethod, PullRequestDetail} from "@/lib/api-types"
 import {useProjects} from "@/lib/projects"
 import {activeTarget} from "@/lib/sessions"
 import {useGitStatus} from "@/lib/useGitStatus"
@@ -80,7 +80,7 @@ export function Pulls() {
 // EditState carries a pending "edit commit message" merge: which method to run
 // and the message the dialog is editing. null when the dialog is closed.
 interface EditState {
-  method: string
+  method: MergeMethod
   title: string
   subject: string
   body: string
@@ -103,7 +103,7 @@ function PullRequestView({path, detail, onMerged, onInject}: PullRequestViewProp
       ? `Conflicts with ${detail.baseRefName}`
       : null
 
-  const merge = async (method: string, subject = "", body = "") => {
+  const merge = async (method: MergeMethod, subject = "", body = "") => {
     setMerging(true)
     try {
       await ProjectService.MergePullRequest(path, method, subject, body)
@@ -117,7 +117,7 @@ function PullRequestView({path, detail, onMerged, onInject}: PullRequestViewProp
     }
   }
 
-  const openEdit = (method: string) => {
+  const openEdit = (method: Extract<MergeMethod, "squash" | "merge">) => {
     setEdit(
       method === "squash"
         ? {

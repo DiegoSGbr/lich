@@ -11,6 +11,7 @@ import type {
   Branches,
   DetectedProvider,
   DiffStats,
+  MergeMethod,
   PatchNotes as PatchNotesData,
   PluginStatus,
   Project,
@@ -122,8 +123,8 @@ export const ProjectService = {
   /** The active branch's open PR in full (title, body, checks) for the Pulls dock tab. */
   PullRequestDetail: (path: string) =>
     call<PullRequestDetail | null>("project.PullRequestDetail", [path]),
-  /** Merge the branch's PR on GitHub. method: "squash" | "merge" | "rebase". */
-  MergePullRequest: (path: string, method: string, subject: string, body: string) =>
+  /** Merge the branch's PR on GitHub. The backend allow-lists the method. */
+  MergePullRequest: (path: string, method: MergeMethod, subject: string, body: string) =>
     call<null>("project.MergePullRequest", [path, method, subject, body]),
   /** Open GitHub's "new pull request" page in the browser (gh pr create --web). */
   CreatePullRequest: (path: string) => call<null>("project.CreatePullRequest", [path]),

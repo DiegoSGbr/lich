@@ -31,11 +31,13 @@ export interface ChecksRollup {
   total: number
 }
 
+/** How a pull request is merged — the gh flag the backend allow-lists. */
+export type MergeMethod = "squash" | "merge" | "rebase"
+
 /** internal/project.PRDetail — the branch's open PR in full, for the Pulls panel. */
 export interface PullRequestDetail {
   number: number
   url: string
-  state: string
   title: string
   body: string
   isDraft: boolean
