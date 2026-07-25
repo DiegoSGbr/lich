@@ -1,11 +1,16 @@
 import {useMemo, useRef, useState, useSyncExternalStore, type ReactNode} from "react"
-import {ChevronsDownUp, ChevronsUpDown} from "lucide-react"
+import {ChevronsDownUp, ChevronsUpDown, PanelLeftClose, PanelLeftOpen} from "lucide-react"
 import {usePullRequestDiff} from "@/lib/usePullRequestDiff"
 import {setViewed, subscribeViewed, viewedFiles} from "@/lib/pull-request-viewed"
 import {buildTree} from "@/lib/file-tree"
 import {FileDiff, HeaderAction, type DiffBulk} from "@/components/diff/FileDiff"
 import {FileTree} from "@/components/FileTree"
 import {DiffStat} from "@/components/DiffStat"
+
+// The file tree is a navigator, not the review itself: hiding it hands the
+// whole width to the diff. Remembered in localStorage like every other UI pref,
+// so the choice survives leaving the screen.
+const TREE_HIDDEN_KEY = "lich.pulls.tree.hidden"
 
 interface PullsFilesProps {
   path: string
@@ -27,6 +32,7 @@ export function PullsFiles({path, pullRequest, onInject}: PullsFilesProps) {
   // Every file mounts its own CodeMirror, so a wide PR earns a way to fold them
   // all at once — same directive the Review dock hands its panel.
   const [bulk, setBulk] = useState<DiffBulk>({open: true, nonce: 0})
+  const [treeOpen, setTreeOpen] = useState(() => localStorage.getItem(TREE_HIDDEN_KEY) !== "1")
   const viewed = useSyncExternalStore(subscribeViewed, () => viewedFiles(pullRequest))
   // Structure only; the per-file +/- lives on each diff's header, the way
   // GitHub shows it.
@@ -51,18 +57,38 @@ export function PullsFiles({path, pullRequest, onInject}: PullsFilesProps) {
     rows.current.get(target)?.scrollIntoView({block: "start", behavior: "smooth"})
   }
 
+  const toggleTree = () => {
+    const next = !treeOpen
+    setTreeOpen(next)
+    localStorage.setItem(TREE_HIDDEN_KEY, next ? "0" : "1")
+  }
+
   return (
     <div className="flex h-full">
-      <div className="w-60 shrink-0 overflow-y-auto border-r border-border">
-        <FileTree tree={tree} active={active} defaultOpen onSelect={jumpTo}/>
-      </div>
+      {treeOpen && (
+        <div className="w-60 shrink-0 overflow-y-auto border-r border-border">
+          <FileTree tree={tree} active={active} defaultOpen onSelect={jumpTo}/>
+        </div>
+      )}
       <div className="flex flex-1 flex-col overflow-y-auto">
         <div className="flex items-center justify-end gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
-          {viewedCount > 0 && (
-            <span className="mr-auto tabular-nums">
-              {viewedCount} of {files.length} viewed
-            </span>
-          )}
+          <span className="mr-auto flex items-center gap-2">
+            <HeaderAction
+              label={treeOpen ? "Hide the file tree" : "Show the file tree"}
+              onClick={toggleTree}
+            >
+              {treeOpen ? (
+                <PanelLeftClose className="size-3.5"/>
+              ) : (
+                <PanelLeftOpen className="size-3.5"/>
+              )}
+            </HeaderAction>
+            {viewedCount > 0 && (
+              <span className="tabular-nums">
+                {viewedCount} of {files.length} viewed
+              </span>
+            )}
+          </span>
           <span className="flex items-center gap-1.5">
             <DiffStat added={added} deleted={deleted}/>
           </span>
