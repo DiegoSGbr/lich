@@ -15,6 +15,7 @@ import type {
   PluginStatus,
   Project,
   PullRequest,
+  PullRequestDetail,
   StoredProject,
   StoredSession,
   Worktree,
@@ -118,6 +119,14 @@ export const ProjectService = {
   DiscardFile: (path: string, rel: string) => call<null>("project.DiscardFile", [path, rel]),
   ListBranches: (path: string) => call<Branches>("project.ListBranches", [path]),
   PullRequest: (path: string) => call<PullRequest | null>("project.PullRequest", [path]),
+  /** The active branch's open PR in full (title, body, checks) for the Pulls dock tab. */
+  PullRequestDetail: (path: string) =>
+    call<PullRequestDetail | null>("project.PullRequestDetail", [path]),
+  /** Merge the branch's PR on GitHub. method: "squash" | "merge" | "rebase". */
+  MergePullRequest: (path: string, method: string, subject: string, body: string) =>
+    call<null>("project.MergePullRequest", [path, method, subject, body]),
+  /** Open GitHub's "new pull request" page in the browser (gh pr create --web). */
+  CreatePullRequest: (path: string) => call<null>("project.CreatePullRequest", [path]),
   CreateWorktree: (
     projectPath: string,
     projectID: string,

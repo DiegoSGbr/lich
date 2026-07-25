@@ -23,6 +23,29 @@ export interface PullRequest {
   state: string
 }
 
+/** internal/project.ChecksRollup — gh statusCheckRollup collapsed to counts. */
+export interface ChecksRollup {
+  passed: number
+  failed: number
+  pending: number
+  total: number
+}
+
+/** internal/project.PRDetail — the branch's open PR in full, for the Pulls panel. */
+export interface PullRequestDetail {
+  number: number
+  url: string
+  state: string
+  title: string
+  body: string
+  isDraft: boolean
+  /** gh: MERGEABLE | CONFLICTING | UNKNOWN */
+  mergeable: string
+  baseRefName: string
+  headRefName: string
+  checks: ChecksRollup
+}
+
 /** internal/project.Worktree — a git worktree checkout: branch and path. */
 export interface Worktree {
   name: string

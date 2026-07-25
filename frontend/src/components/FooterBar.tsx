@@ -1,7 +1,7 @@
 import {useEffect, useState} from "react"
 import {toast} from "sonner"
 import {Code, FileText, GitBranch, Folder, Plus, Diff, GitPullRequestArrow} from "lucide-react"
-import {ProjectService, System, Terminal as TerminalService} from "@/lib/rpc"
+import {ProjectService, Terminal as TerminalService} from "@/lib/rpc"
 import type {DockTab} from "@/components/dock/RightDock"
 import {useActiveSession} from "@/lib/useActiveSession"
 import {useSessionCwd} from "@/lib/useSessionCwd"
@@ -182,14 +182,17 @@ export function FooterBar({dock, onDock}: FooterBarProps) {
             render={
               <button
                 type="button"
-                onClick={() => void System.OpenExternal(pr.url)}
-                className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                onClick={() => onDock("pulls")}
+                aria-pressed={dock === "pulls"}
+                className={`flex items-center gap-1.5 rounded-md px-1.5 py-1 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground ${
+                  dock === "pulls" ? "bg-accent text-accent-foreground" : ""
+                }`}
               />
             }
           >
             <GitPullRequestArrow className="size-3.5"/> PR #{pr.number}
           </TooltipTrigger>
-          <TooltipContent>Open pull request on GitHub</TooltipContent>
+          <TooltipContent>View pull request</TooltipContent>
         </Tooltip>
       )}
 
