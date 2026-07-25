@@ -1,8 +1,11 @@
 package project
 
 import (
+	"errors"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestParsePRDetail(t *testing.T) {
@@ -216,3 +219,173 @@ var errTest = testError("sentinel")
 type testError string
 
 func (e testError) Error() string { return string(e) }
+
+// fakeGH stands in for the gh CLI: it records the invocation and replays a
+// canned result, so the pull request flows run without a GitHub remote.
+type fakeGH struct {
+	out []byte
+	err error
+
+	calls   int
+	timeout time.Duration
+	dir     string
+	args    []string
+}
+
+func (f *fakeGH) run(timeout time.Duration, dir string, args ...string) ([]byte, error) {
+	f.calls++
+	f.timeout, f.dir, f.args = timeout, dir, args
+	return f.out, f.err
+}
+
+// withGH builds a Service whose gh calls land on the fake instead of the CLI.
+func withGH(f *fakeGH) *Service { return &Service{gh: f.run} }
+
+func TestPullRequestDetailFlow(t *testing.T) {
+	t.Run("open PR decodes, scoped to the path", func(t *testing.T) {
+		gh := &fakeGH{out: []byte(`{"number":7,"state":"OPEN","title":"t"}`)}
+		pr, err := withGH(gh).PullRequestDetail("/repo")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if pr == nil || pr.Number != 7 {
+			t.Fatalf("wrong detail: %+v", pr)
+		}
+		if gh.dir != "/repo" {
+			t.Errorf("dir = %q, want /repo", gh.dir)
+		}
+		if want := []string{"pr", "view", "--json", prViewFields}; !slices.Equal(gh.args, want) {
+			t.Errorf("args = %v, want %v", gh.args, want)
+		}
+		if gh.timeout != prDetailTimeout {
+			t.Errorf("timeout = %v, want %v", gh.timeout, prDetailTimeout)
+		}
+	})
+
+	t.Run("no pull request is an empty panel, not an error", func(t *testing.T) {
+		pr, err := withGH(&fakeGH{err: errNoPullRequest}).PullRequestDetail("/repo")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if pr != nil {
+			t.Errorf("expected nil detail, got %+v", pr)
+		}
+	})
+
+	t.Run("a real gh failure surfaces its cause", func(t *testing.T) {
+		gh := &fakeGH{err: errors.New("gh auth login required")}
+		_, err := withGH(gh).PullRequestDetail("/repo")
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if !strings.Contains(err.Error(), "gh pr view") || !strings.Contains(err.Error(), "auth login") {
+			t.Errorf("error should name the command and the cause, got %q", err)
+		}
+	})
+
+	t.Run("malformed gh output errors", func(t *testing.T) {
+		if _, err := withGH(&fakeGH{out: []byte(`{not json`)}).PullRequestDetail("/repo"); err == nil {
+			t.Error("expected a decode error")
+		}
+	})
+}
+
+func TestMergePullRequestFlow(t *testing.T) {
+	t.Run("the built args reach gh", func(t *testing.T) {
+		gh := &fakeGH{}
+		if err := withGH(gh).MergePullRequest("/repo", "squash", "", ""); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := []string{"pr", "merge", "--squash"}; !slices.Equal(gh.args, want) {
+			t.Errorf("args = %v, want %v", gh.args, want)
+		}
+		if gh.dir != "/repo" || gh.timeout != prMergeTimeout {
+			t.Errorf("wrong scope: dir %q timeout %v", gh.dir, gh.timeout)
+		}
+	})
+
+	t.Run("an unknown method never reaches gh", func(t *testing.T) {
+		gh := &fakeGH{}
+		if err := withGH(gh).MergePullRequest("/repo", "force", "", ""); err == nil {
+			t.Error("expected an error for an unknown merge method")
+		}
+		if gh.calls != 0 {
+			t.Errorf("gh was called %d times, want 0", gh.calls)
+		}
+	})
+
+	t.Run("gh's refusal surfaces", func(t *testing.T) {
+		gh := &fakeGH{err: errors.New("Pull request is not mergeable")}
+		err := withGH(gh).MergePullRequest("/repo", "merge", "", "")
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if !strings.Contains(err.Error(), "gh pr merge") || !strings.Contains(err.Error(), "not mergeable") {
+			t.Errorf("error should name the command and the cause, got %q", err)
+		}
+	})
+}
+
+func TestCreatePullRequestFlow(t *testing.T) {
+	t.Run("opens the web flow in the path", func(t *testing.T) {
+		gh := &fakeGH{}
+		if err := withGH(gh).CreatePullRequest("/repo"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := []string{"pr", "create", "--web"}; !slices.Equal(gh.args, want) {
+			t.Errorf("args = %v, want %v", gh.args, want)
+		}
+		if gh.dir != "/repo" || gh.timeout != prCreateTimeout {
+			t.Errorf("wrong scope: dir %q timeout %v", gh.dir, gh.timeout)
+		}
+	})
+
+	t.Run("gh's failure surfaces", func(t *testing.T) {
+		gh := &fakeGH{err: errors.New("no git remote found")}
+		err := withGH(gh).CreatePullRequest("/repo")
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if !strings.Contains(err.Error(), "gh pr create") || !strings.Contains(err.Error(), "no git remote") {
+			t.Errorf("error should name the command and the cause, got %q", err)
+		}
+	})
+}
+
+func TestPullRequestDiffFlow(t *testing.T) {
+	t.Run("plain diff text is returned verbatim", func(t *testing.T) {
+		gh := &fakeGH{out: []byte("diff --git a/a.txt b/a.txt\n")}
+		text, err := withGH(gh).PullRequestDiff("/repo")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if text != "diff --git a/a.txt b/a.txt\n" {
+			t.Errorf("diff = %q", text)
+		}
+		if want := []string{"pr", "diff", "--color", "never"}; !slices.Equal(gh.args, want) {
+			t.Errorf("args = %v, want %v", gh.args, want)
+		}
+		if gh.dir != "/repo" {
+			t.Errorf("dir = %q, want /repo", gh.dir)
+		}
+	})
+
+	t.Run("no pull request yields an empty diff, not an error", func(t *testing.T) {
+		text, err := withGH(&fakeGH{err: errNoPullRequest}).PullRequestDiff("/repo")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if text != "" {
+			t.Errorf("diff = %q, want empty", text)
+		}
+	})
+
+	t.Run("a real gh failure surfaces", func(t *testing.T) {
+		gh := &fakeGH{err: errors.New("could not resolve to a Repository")}
+		if _, err := withGH(gh).PullRequestDiff("/repo"); err == nil {
+			t.Fatal("expected an error")
+		} else if !strings.Contains(err.Error(), "gh pr diff") {
+			t.Errorf("error should name the command, got %q", err)
+		}
+	})
+}
