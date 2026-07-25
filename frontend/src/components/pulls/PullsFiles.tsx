@@ -1,7 +1,8 @@
 import {useMemo, useRef, useState, type ReactNode} from "react"
+import {ChevronsDownUp, ChevronsUpDown} from "lucide-react"
 import {usePullRequestDiff} from "@/lib/usePullRequestDiff"
 import {buildTree} from "@/lib/file-tree"
-import {FileDiff} from "@/components/diff/FileDiff"
+import {FileDiff, HeaderAction, type DiffBulk} from "@/components/diff/FileDiff"
 import {FileTree} from "@/components/FileTree"
 import {DiffStat} from "@/components/DiffStat"
 
@@ -13,6 +14,9 @@ export function PullsFiles({path, onInject}: {path: string; onInject: (text: str
   const {files, error} = usePullRequestDiff(path)
   const rows = useRef<Map<string, HTMLElement>>(new Map())
   const [active, setActive] = useState<string | null>(null)
+  // Every file mounts its own CodeMirror, so a wide PR earns a way to fold them
+  // all at once — same directive the Review dock hands its panel.
+  const [bulk, setBulk] = useState<DiffBulk>({open: true, nonce: 0})
   // Structure only; the per-file +/- lives on each diff's header, the way
   // GitHub shows it.
   const tree = useMemo(() => buildTree((files ?? []).map((file) => file.newPath)), [files])
@@ -41,10 +45,20 @@ export function PullsFiles({path, onInject}: {path: string; onInject: (text: str
         <FileTree tree={tree} active={active} defaultOpen onSelect={jumpTo}/>
       </div>
       <div className="flex flex-1 flex-col overflow-y-auto">
-        <div className="flex items-center justify-end border-b border-border px-3 py-2.5 text-xs text-muted-foreground">
+        <div className="flex items-center justify-end gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5">
             <DiffStat added={added} deleted={deleted}/>
           </span>
+          <HeaderAction
+            label={bulk.open ? "Collapse all files" : "Expand all files"}
+            onClick={() => setBulk((b) => ({open: !b.open, nonce: b.nonce + 1}))}
+          >
+            {bulk.open ? (
+              <ChevronsDownUp className="size-3.5"/>
+            ) : (
+              <ChevronsUpDown className="size-3.5"/>
+            )}
+          </HeaderAction>
         </div>
         <div className="flex flex-col p-3 [&>div:not(:first-child)]:mt-2.5 [&>div:not(:first-child)]:border-t [&>div:not(:first-child)]:border-border [&>div:not(:first-child)]:pt-2.5">
           {files.map((file) => (
@@ -58,7 +72,7 @@ export function PullsFiles({path, onInject}: {path: string; onInject: (text: str
                 }
               }}
             >
-              <FileDiff file={file} onInject={onInject}/>
+              <FileDiff file={file} onInject={onInject} bulk={bulk}/>
             </div>
           ))}
         </div>

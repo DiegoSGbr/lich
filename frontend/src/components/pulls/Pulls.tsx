@@ -143,35 +143,39 @@ function PullRequestView({path, detail, onMerged, onInject}: PullRequestViewProp
             <span className="text-muted-foreground">#{detail.number}</span> {detail.title}
           </h1>
           <div className="flex flex-none items-center gap-2">
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button size="sm" disabled={merging || blocked !== null}>
-                    <GitMerge/>
-                    {merging ? "Merging…" : "Merge"}
-                    <ChevronDown/>
-                  </Button>
-                }
-              />
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => void merge("squash")}>
-                  Squash and merge
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => void merge("merge")}>
-                  Create a merge commit
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => void merge("rebase")}>
-                  Rebase and merge
-                </DropdownMenuItem>
-                <DropdownMenuSeparator/>
-                <DropdownMenuItem onClick={() => openEdit("squash")}>
-                  Squash and merge, edit message…
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => openEdit("merge")}>
-                  Create a merge commit, edit message…
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {/* The reason rides on a wrapper: a disabled button takes no pointer
+                events, so its own title would never surface. */}
+            <span title={blocked ?? undefined}>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button size="sm" disabled={merging || blocked !== null}>
+                      <GitMerge/>
+                      {merging ? "Merging…" : "Merge"}
+                      <ChevronDown/>
+                    </Button>
+                  }
+                />
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => void merge("squash")}>
+                    Squash and merge
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => void merge("merge")}>
+                    Create a merge commit
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => void merge("rebase")}>
+                    Rebase and merge
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator/>
+                  <DropdownMenuItem onClick={() => openEdit("squash")}>
+                    Squash and merge, edit message…
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => openEdit("merge")}>
+                    Create a merge commit, edit message…
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </span>
             <Button variant="ghost" size="sm" onClick={() => void System.OpenExternal(detail.url)}>
               <ExternalLink/>
               Open
@@ -197,7 +201,7 @@ function PullRequestView({path, detail, onMerged, onInject}: PullRequestViewProp
           <MergeableStat mergeable={detail.mergeable} base={detail.baseRefName}/>
         </div>
 
-        <div className="mt-4 flex gap-1">
+        <div role="tablist" className="mt-4 flex gap-1">
           <TabButton active={tab === "overview"} onClick={() => setTab("overview")}>
             Overview
           </TabButton>
@@ -210,7 +214,7 @@ function PullRequestView({path, detail, onMerged, onInject}: PullRequestViewProp
         </div>
       </div>
 
-      <div className="flex-1 overflow-hidden">
+      <div role="tabpanel" className="flex-1 overflow-hidden">
         {tab === "overview" ? (
           <div className="h-full overflow-y-auto">
             <div className="max-w-3xl px-6 py-5">
@@ -243,6 +247,8 @@ function TabButton({active, onClick, children}: {active: boolean; onClick: () =>
   return (
     <button
       type="button"
+      role="tab"
+      aria-selected={active}
       onClick={onClick}
       className={cn(
         "-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
