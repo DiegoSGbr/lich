@@ -10,6 +10,7 @@ import {useSessionStatus} from "@/lib/useSessionStatus"
 import {useSessionCwd} from "@/lib/useSessionCwd"
 import {useSessionAgent} from "@/lib/useSessionAgent"
 import {useGitStatus} from "@/lib/useGitStatus"
+import {usePullRequest} from "@/lib/usePullRequest"
 import {DiffStat} from "@/components/DiffStat"
 import {SessionStatusIcon} from "./SessionStatusIcon"
 import {Tooltip, TooltipContent, TooltipTrigger} from "@/components/ui/tooltip"
@@ -63,11 +64,12 @@ export function SessionCard({
   // The live working directory the backend's cwd watcher reports ("" until it
   // does): a `cd` in the terminal moves the card with it. Falls back to the
   // session's static start path — a worktree session lives in its own checkout,
-  // so that path (not the project's) is the fallback. Git status follows
-  // whatever is shown, so it reflects the directory's repo.
+  // so that path (not the project's) is the fallback. Git status and the PR
+  // badge follow whatever is shown, so they reflect the directory's repo.
   const liveCwd = useSessionCwd(session.id)
   const shownPath = liveCwd || session.path || path
   const git = useGitStatus(shownPath)
+  const pr = usePullRequest(shownPath, git?.branch ?? "")
   // Renaming disables the drag: the sensor would otherwise claim the pointer
   // before the input could be clicked into or its text selected.
   const {
@@ -179,6 +181,20 @@ export function SessionCard({
                   <span className="truncate">{git.branch}</span>
                 </span>
                   <span className="flex shrink-0 items-center gap-1.5">
+                    {pr && (
+                      <span
+                        role="button"
+                        aria-label={`View pull request #${pr.number}`}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onPulls()
+                        }}
+                        className="flex items-center gap-1 rounded-sm transition-colors hover:text-foreground"
+                      >
+                        <GitPullRequestArrow className="size-3 shrink-0"/>
+                        #{pr.number}
+                      </span>
+                    )}
                     {git.files > 0 && (
                       <DiffStat added={git.added} deleted={git.deleted}/>
                     )}
@@ -211,6 +227,11 @@ export function SessionCard({
                     <GitBranch className="size-3 shrink-0"/>
                     {git.branch}
                   </span>
+                  {pr && (
+                    <span className="flex items-center gap-1">
+                      <GitPullRequestArrow className="size-3 shrink-0"/>#{pr.number}
+                    </span>
+                  )}
                   {git.files > 0 && (
                     <span className="flex items-center gap-1.5">
                       <DiffStat added={git.added} deleted={git.deleted}/>
