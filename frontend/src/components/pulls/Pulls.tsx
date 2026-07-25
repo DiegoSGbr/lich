@@ -214,7 +214,7 @@ function PullRequestView({path, detail, onMerged, onInject}: PullRequestViewProp
       <div className="flex-1 overflow-hidden">
         {tab === "overview" ? (
           <div className="h-full overflow-y-auto">
-            <div className="mx-auto max-w-3xl px-6 py-5">
+            <div className="max-w-3xl px-6 py-5">
               {detail.body.trim() !== "" ? (
                 <Markdown>{detail.body}</Markdown>
               ) : (
