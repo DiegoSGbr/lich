@@ -14,6 +14,8 @@ export interface DiffStats {
   files: number
   added: number
   deleted: number
+  /** The HEAD commit the counts sit on; "" in a repository without commits. */
+  head: string
 }
 
 /** internal/project.PullRequest — the branch's open GitHub PR (gh CLI). */
