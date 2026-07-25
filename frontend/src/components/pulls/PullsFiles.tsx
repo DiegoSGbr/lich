@@ -1,6 +1,7 @@
 import type {ReactNode} from "react"
 import {usePullRequestDiff} from "@/lib/usePullRequestDiff"
 import {FileDiff} from "@/components/diff/FileDiff"
+import {DiffStat} from "@/components/DiffStat"
 
 // PullsFiles is the "Files changed" tab of the Pulls screen: the PR's unified
 // diff (gh pr diff) rendered with the same FileDiff cards as the Review dock,
@@ -18,11 +19,24 @@ export function PullsFiles({path, onInject}: {path: string; onInject: (text: str
   if (files.length === 0) {
     return <Notice>No file changes</Notice>
   }
+
+  const added = files.reduce((sum, file) => sum + file.added, 0)
+  const deleted = files.reduce((sum, file) => sum + file.deleted, 0)
+
   return (
-    <div className="flex flex-col p-3 [&>section:not(:first-child)]:mt-2.5 [&>section:not(:first-child)]:border-t [&>section:not(:first-child)]:border-border [&>section:not(:first-child)]:pt-2.5">
-      {files.map((file) => (
-        <FileDiff key={file.newPath} file={file} onInject={onInject}/>
-      ))}
+    <div>
+      <div className="flex items-center gap-3 border-b border-border px-3 py-2 text-xs text-muted-foreground">
+        <span>
+          <span className="font-medium text-foreground">{files.length}</span>{" "}
+          {files.length === 1 ? "file changed" : "files changed"}
+        </span>
+        <DiffStat added={added} deleted={deleted}/>
+      </div>
+      <div className="flex flex-col p-3 [&>section:not(:first-child)]:mt-2.5 [&>section:not(:first-child)]:border-t [&>section:not(:first-child)]:border-border [&>section:not(:first-child)]:pt-2.5">
+        {files.map((file) => (
+          <FileDiff key={file.newPath} file={file} onInject={onInject}/>
+        ))}
+      </div>
     </div>
   )
 }
