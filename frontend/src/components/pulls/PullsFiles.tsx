@@ -1,7 +1,13 @@
 import {useMemo, useRef, useState, useSyncExternalStore, type ReactNode} from "react"
 import {ChevronsDownUp, ChevronsUpDown, PanelLeftClose, PanelLeftOpen} from "lucide-react"
 import {usePullRequestDiff} from "@/lib/usePullRequestDiff"
-import {setViewed, subscribeViewed, viewedFiles} from "@/lib/pull-request-viewed"
+import {
+  fileFingerprint,
+  isViewed,
+  setViewed,
+  subscribeViewed,
+  viewedFiles,
+} from "@/lib/pull-request-viewed"
 import {buildTree} from "@/lib/file-tree"
 import {FileDiff, HeaderAction, type DiffBulk} from "@/components/diff/FileDiff"
 import {FileTree} from "@/components/FileTree"
@@ -36,6 +42,12 @@ export function PullsFiles({path, head, pullRequest, onInject}: PullsFilesProps)
   const [bulk, setBulk] = useState<DiffBulk>({open: true, nonce: 0})
   const [treeOpen, setTreeOpen] = useState(() => localStorage.getItem(TREE_HIDDEN_KEY) !== "1")
   const viewed = useSyncExternalStore(subscribeViewed, () => viewedFiles(pullRequest))
+  // A tick is against the file's content, so a new commit unticks exactly the
+  // files it rewrote. Recomputed only when the diff itself changes.
+  const fingerprints = useMemo(
+    () => new Map((files ?? []).map((file) => [file.newPath, fileFingerprint(file)])),
+    [files],
+  )
   // Structure only; the per-file +/- lives on each diff's header, the way
   // GitHub shows it.
   const tree = useMemo(() => buildTree((files ?? []).map((file) => file.newPath)), [files])
@@ -52,7 +64,9 @@ export function PullsFiles({path, head, pullRequest, onInject}: PullsFilesProps)
 
   const added = files.reduce((sum, file) => sum + file.added, 0)
   const deleted = files.reduce((sum, file) => sum + file.deleted, 0)
-  const viewedCount = files.filter((file) => viewed.has(file.newPath)).length
+  const viewedCount = files.filter((file) =>
+    isViewed(viewed, file.newPath, fingerprints.get(file.newPath) ?? ""),
+  ).length
 
   const jumpTo = (target: string) => {
     setActive(target)
@@ -124,8 +138,15 @@ export function PullsFiles({path, head, pullRequest, onInject}: PullsFilesProps)
                   file={file}
                   onInject={onInject}
                   bulk={bulk}
-                  viewed={viewed.has(file.newPath)}
-                  onViewed={(next) => setViewed(pullRequest, file.newPath, next)}
+                  viewed={isViewed(viewed, file.newPath, fingerprints.get(file.newPath) ?? "")}
+                  onViewed={(next) =>
+                    setViewed(
+                      pullRequest,
+                      file.newPath,
+                      fingerprints.get(file.newPath) ?? "",
+                      next,
+                    )
+                  }
                 />
               </div>
             ))}
