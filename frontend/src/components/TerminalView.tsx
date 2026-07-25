@@ -10,17 +10,17 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { System, Terminal as Service } from "@/lib/rpc"
 import { onAppEvent } from "@/lib/app-events"
-import { ensureTransport, onSessionData, sendInput } from "@/lib/term-transport"
-import { chordSequence, isSearchOpenChord } from "@/lib/term-keys"
-import { makeReplayBuffer } from "@/lib/replay-buffer"
-import { takePaste } from "@/lib/paste-queue"
-import { takeSetup } from "@/lib/setup-queue"
-import { recordChunk } from "@/lib/term-perf"
-import { copyToastMessage, COPY_TOAST_DURATION_MS } from "@/lib/copy-toast"
-import { computeGrid } from "@/lib/term-fit"
-import { useSettings } from "@/lib/settings"
-import type { ResolvedTheme } from "@/lib/settings"
-import type { SessionKind } from "@/lib/sessions"
+import { ensureTransport, onSessionData, sendInput } from "@/lib/terminal/term-transport"
+import { chordSequence, isSearchOpenChord } from "@/lib/terminal/term-keys"
+import { makeReplayBuffer } from "@/lib/terminal/replay-buffer"
+import { takePaste } from "@/lib/terminal/paste-queue"
+import { takeSetup } from "@/lib/terminal/setup-queue"
+import { recordChunk } from "@/lib/terminal/term-perf"
+import { copyToastMessage, COPY_TOAST_DURATION_MS } from "@/lib/terminal/copy-toast"
+import { computeGrid } from "@/lib/terminal/term-fit"
+import { useSettings } from "@/providers/settings"
+import type { ResolvedTheme } from "@/providers/settings"
+import type { SessionKind } from "@/lib/session/sessions"
 import "@xterm/xterm/css/xterm.css"
 
 // The terminal: xterm.js 6 + the WebGL renderer, in the Chromium shell
@@ -66,7 +66,13 @@ const IS_WINDOWS = navigator.platform.toLowerCase().includes("win")
 // first render measure or if xterm ever moves the private; refit then skips,
 // keeping the current grid (degrades, never breaks).
 function cellDimensions(term: Terminal): { width: number; height: number } | null {
-  const core = (term as unknown as { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } } } })._core
+  const core = (
+    term as unknown as {
+      _core?: {
+        _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } }
+      }
+    }
+  )._core
   const cell = core?._renderService?.dimensions?.css?.cell
   if (!cell || !cell.width || !cell.height) {
     return null
@@ -510,7 +516,6 @@ export function TerminalView({
       liveRef.current?.dispose()
       liveRef.current = null
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, projectId, cwd, kind])
 
   // Visibility is the terminal's lifecycle: hidden destroys it (state lives
@@ -543,7 +548,6 @@ export function TerminalView({
     }
     void Service.Resize(sessionId, live.term.cols, live.term.rows)
     live.term.focus()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, sessionId])
 
   // Font family and size need no live-update path: changing them means being
@@ -613,12 +617,7 @@ export function TerminalView({
           >
             <ArrowDown className="h-3.5 w-3.5" />
           </Button>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label="Close search"
-            onClick={closeSearch}
-          >
+          <Button size="icon-xs" variant="ghost" aria-label="Close search" onClick={closeSearch}>
             <X className="h-3.5 w-3.5" />
           </Button>
         </div>

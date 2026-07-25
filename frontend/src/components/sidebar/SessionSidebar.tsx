@@ -1,14 +1,15 @@
-import {useState, useSyncExternalStore} from "react"
-import {useMatch, useNavigate} from "react-router-dom"
-import {GitBranch, Plus, Terminal} from "lucide-react"
-import {toast} from "sonner"
-import {ProjectService, Store} from "@/lib/rpc"
-import {closeSettings, isSettingsOpen, subscribeSettingsCard} from "@/lib/settings-card-store"
-import {closePulls, openPulls} from "@/lib/pulls-card-store"
-import {enabledProviders, useProviders} from "@/lib/providers-store"
-import {ProviderIcon} from "@/lib/provider-icons"
-import {SettingsCard} from "./SettingsCard"
-import {Button} from "@/components/ui/button"
+import { useState, useSyncExternalStore } from "react"
+import { useMatch, useNavigate } from "react-router-dom"
+import { GitBranch, Plus, Terminal } from "lucide-react"
+import { toast } from "sonner"
+import { ProjectService, Store } from "@/lib/rpc"
+import { closeSettings, isSettingsOpen, subscribeSettingsCard } from "@/lib/settings-card-store"
+import { closePulls, openPulls } from "@/lib/pulls-card-store"
+import { enabledProviders, useProviders } from "@/lib/providers-store"
+import { ProviderIcon } from "@/components/ProviderIcon"
+import { ResizeHandle } from "@/components/common/ResizeHandle"
+import { SettingsCard } from "./SettingsCard"
+import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,22 +18,22 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import {useProjects} from "@/lib/projects"
-import {queueSetup} from "@/lib/setup-queue"
+import { useProjects } from "@/providers/projects"
+import { queueSetup } from "@/lib/terminal/setup-queue"
 import {
   activeSessionId,
   groupByWorktree,
   isLastWorktreeSession,
   sessionsOf,
   type Session,
-} from "@/lib/sessions"
-import {baseName} from "@/lib/paths"
-import {CloseWorktreeDialog, ForceRemoveWorktreeDialog} from "./CloseWorktreeDialog"
-import {SessionGroup} from "./SessionGroup"
-import {WorktreeDialog} from "./WorktreeDialog"
-import {useGitStatus} from "@/lib/useGitStatus"
-import {usePanelWidth} from "@/lib/use-panel-width"
-import {errorText} from "@/lib/utils"
+} from "@/lib/session/sessions"
+import { baseName } from "@/lib/paths"
+import { CloseWorktreeDialog, ForceRemoveWorktreeDialog } from "./CloseWorktreeDialog"
+import { SessionGroup } from "./SessionGroup"
+import { WorktreeDialog } from "./WorktreeDialog"
+import { useGitStatus } from "@/lib/git/use-git-status"
+import { usePanelWidth } from "@/lib/use-panel-width"
+import { errorText } from "@/lib/utils"
 
 // SessionSidebar lists the active project's sessions and can be drag-resized
 // within a fixed pixel range. Width persists across restarts. It renders nothing
@@ -67,7 +68,7 @@ export function SessionSidebar() {
   const enabled = enabledProviders(useProviders())
   const path = projects.find((p) => p.id === projectId)?.path ?? ""
   const git = useGitStatus(path)
-  const {width, handleProps} = usePanelWidth({
+  const { width, handleProps } = usePanelWidth({
     storageKey: "lich.sidebar.width",
     minRem: 12,
     maxRem: 30,
@@ -139,11 +140,9 @@ export function SessionSidebar() {
     // The checkout is going away, so no parked row for it may linger — one would
     // otherwise resurface a resume against a worktree that no longer exists.
     void Store.PurgeWorktreeSessions(projectId, session.path ?? "")
-    ProjectService.RemoveWorktree(path, session.path ?? "", force).catch(
-      (err: unknown) => {
-        toast.error(`Failed to remove worktree: ${errorText(err)}`)
-      },
-    )
+    ProjectService.RemoveWorktree(path, session.path ?? "", force).catch((err: unknown) => {
+      toast.error(`Failed to remove worktree: ${errorText(err)}`)
+    })
   }
 
   const removeAndClose = async () => {
@@ -155,9 +154,7 @@ export function SessionSidebar() {
     // A dirty worktree needs a second confirmation before --force discards its
     // changes. A failed check falls through to the plain remove, whose own
     // refusal surfaces as a toast.
-    const dirty = await ProjectService.WorktreeDirty(session.path).catch(
-      () => false,
-    )
+    const dirty = await ProjectService.WorktreeDirty(session.path).catch(() => false)
     if (dirty) {
       setPendingForce(session)
       return
@@ -176,7 +173,7 @@ export function SessionSidebar() {
   return (
     <aside
       className="relative flex shrink-0 flex-col border-r border-border bg-sidebar p-2"
-      style={{width: `${width}rem`}}
+      style={{ width: `${width}rem` }}
     >
       <DropdownMenu>
         <DropdownMenuTrigger
@@ -189,7 +186,7 @@ export function SessionSidebar() {
             />
           }
         >
-          <Plus className="size-4 text-muted-foreground"/>
+          <Plus className="size-4 text-muted-foreground" />
           New Session
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="max-w-56">
@@ -199,22 +196,19 @@ export function SessionSidebar() {
                 key={provider.id}
                 onClick={() => newSession(projectId, provider.id)}
               >
-                <ProviderIcon kind={provider.id}/>
+                <ProviderIcon kind={provider.id} />
                 {provider.name}
               </DropdownMenuItem>
             ))}
           </DropdownMenuGroup>
-          <DropdownMenuSeparator/>
+          <DropdownMenuSeparator />
           <DropdownMenuGroup>
             <DropdownMenuItem onClick={() => newSession(projectId, "shell")}>
-              <Terminal/>
+              <Terminal />
               Terminal
             </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!git?.branch}
-              onClick={() => setWorktreeOpen(true)}
-            >
-              <GitBranch/>
+            <DropdownMenuItem disabled={!git?.branch} onClick={() => setWorktreeOpen(true)}>
+              <GitBranch />
               Worktree
             </DropdownMenuItem>
           </DropdownMenuGroup>
@@ -297,13 +291,7 @@ export function SessionSidebar() {
         onForceRemove={forceRemoveAndClose}
       />
 
-      <div
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize sidebar"
-        {...handleProps}
-        className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize touch-none transition-colors hover:bg-accent"
-      />
+      <ResizeHandle edge="right" label="Resize sidebar" handleProps={handleProps} />
     </aside>
   )
 }

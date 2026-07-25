@@ -5,8 +5,8 @@ import {
   useDefaultProvider,
   useProviders,
 } from "@/lib/providers-store"
-import { ProviderIcon } from "@/lib/provider-icons"
-import type { ProviderKind } from "@/lib/sessions"
+import { ProviderIcon } from "@/components/ProviderIcon"
+import type { ProviderKind } from "@/lib/session/sessions"
 import {
   Select,
   SelectContent,
@@ -29,9 +29,7 @@ export function ProvidersSettings() {
   const defaultProvider = useDefaultProvider()
 
   if (providers.length === 0) {
-    return (
-      <p className="py-5 text-sm text-muted-foreground">Detecting providers…</p>
-    )
+    return <p className="py-5 text-sm text-muted-foreground">Detecting providers…</p>
   }
 
   const enabled = enabledProviders(providers)

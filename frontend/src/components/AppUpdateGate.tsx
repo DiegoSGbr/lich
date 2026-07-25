@@ -1,13 +1,17 @@
-import {useEffect, useRef} from "react"
-import {toast} from "sonner"
-import {useMatch, useNavigate} from "react-router-dom"
-import {Button} from "@/components/ui/button"
-import {decideUpdateAction, UPDATE_DISMISSED_KEY, type UpdateAction} from "@/lib/app-update-gate"
-import {AppUpdate, System} from "@/lib/rpc"
-import {useProjects} from "@/lib/projects"
-import {queuePaste} from "@/lib/paste-queue"
-import {registerUpdateChecker} from "@/lib/update-check"
-import {errorText} from "@/lib/utils"
+import { useEffect, useRef } from "react"
+import { toast } from "sonner"
+import { useMatch, useNavigate } from "react-router-dom"
+import { Button } from "@/components/ui/button"
+import {
+  decideUpdateAction,
+  UPDATE_DISMISSED_KEY,
+  type UpdateAction,
+} from "@/lib/update/app-update-gate"
+import { AppUpdate, System } from "@/lib/rpc"
+import { useProjects } from "@/providers/projects"
+import { queuePaste } from "@/lib/terminal/paste-queue"
+import { registerUpdateChecker } from "@/lib/update/update-check"
+import { errorText } from "@/lib/utils"
 
 // How often to re-check for a release after startup, so a long-running session
 // eventually notices one. Hourly is plenty — releases are rare and the
@@ -20,7 +24,7 @@ const POLL_INTERVAL_MS = 60 * 60 * 1000
 // paste the install command into a terminal (the user runs it) or open the
 // release page. Any failure is silent — it must never block or break startup.
 export function AppUpdateGate() {
-  const {newSession, ensureHomeProject} = useProjects()
+  const { newSession, ensureHomeProject } = useProjects()
   const navigate = useNavigate()
   const activeProjectId = useMatch("/projects/:projectId")?.params.projectId ?? null
 
@@ -43,7 +47,7 @@ export function AppUpdateGate() {
     return () => registerUpdateChecker(null)
   })
 
-  const prompt = (action: UpdateAction & {kind: "update"}) => {
+  const prompt = (action: UpdateAction & { kind: "update" }) => {
     promptedVersion.current = action.version
     if (action.canSelfApply) {
       promptSelfApply(action.version)
@@ -81,8 +85,8 @@ export function AppUpdateGate() {
   const promptSelfApply = (version: string) => {
     toast(`lich ${version} is available`, {
       duration: Infinity,
-      action: {label: "Update & install", onClick: () => void runApply()},
-      cancel: {label: "Later", onClick: () => dismiss(version)},
+      action: { label: "Update & install", onClick: () => void runApply() },
+      cancel: { label: "Later", onClick: () => dismiss(version) },
     })
   }
 
@@ -94,13 +98,13 @@ export function AppUpdateGate() {
     try {
       await AppUpdate.Apply()
     } catch (error) {
-      toast.error(`Update failed: ${errorText(error)}`, {id})
+      toast.error(`Update failed: ${errorText(error)}`, { id })
       return
     }
     toast.success("lich updated", {
       id,
       duration: Infinity,
-      action: {label: "Restart", onClick: () => void runRestart()},
+      action: { label: "Restart", onClick: () => void runRestart() },
     })
   }
 
@@ -155,7 +159,7 @@ export function AppUpdateGate() {
           </div>
         </div>
       ),
-      {duration: Infinity},
+      { duration: Infinity },
     )
   }
 

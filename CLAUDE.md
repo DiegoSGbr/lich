@@ -41,6 +41,7 @@ Frontend in isolation: `cd frontend && pnpm run build` (runs `tsc` + `vite build
 ## Local Gate (before every commit / PR)
 
 - `gofmt -l .` clean (fix with `gofmt -w .`) and `go vet ./...` clean.
+- `cd frontend && pnpm check` clean — biome is the frontend's gofmt + vet (fix with `pnpm format`).
 - `go test ./...` (backend) and `cd frontend && pnpm test` (frontend) green — or `task test` for both.
 - `cd frontend && pnpm build` succeeds (tsc typecheck + vite).
 - Touched an OS seam or a `_test.go` build tag? Run the same cross-compile loop CI runs:
@@ -94,7 +95,7 @@ Deliberate limits and shortcuts — one line of *what and where*; the mechanism 
 
 - **Session cwd is polled** from the PTY child (`internal/terminal/cwd.go`, per-OS readers behind build tags); a
   failed read degrades to the session's start directory. Tracks the direct child only, not nested shells.
-- **git status is polled** — one shared poller per repository path (`frontend/src/lib/git-status-store.ts`); the
+- **git status is polled** — one shared poller per repository path (`frontend/src/lib/git/git-status-store.ts`); the
   lich plugin's `session-touched` hook nudges an immediate refresh. An fs watcher is the upgrade path.
 - **Context-window usage is read off the transcript** (`internal/terminal/usage_claude.go`): on a turn-boundary
   status hook, the tail of `~/.claude/projects/<slug>/<id>.jsonl` is parsed for the last main-thread assistant
@@ -111,7 +112,7 @@ Deliberate limits and shortcuts — one line of *what and where*; the mechanism 
   pinned at 47821; `LICH_LISTEN_PORT` overrides it, `LICH_PORT` is the distinct per-session hook variable), the
   workspace in SQLite (`<config-dir>/lich/lich.db`, `internal/store`). Closing a session deletes its row; keeping a
   worktree parks its session for a later resume; a closed project is hidden, never deleted.
-- **Hidden sessions are serialized and destroyed**: 2MB replay rings on both sides (`frontend/src/lib/replay-buffer.ts`
+- **Hidden sessions are serialized and destroyed**: 2MB replay rings on both sides (`frontend/src/lib/terminal/replay-buffer.ts`
   page-side, `internal/terminal/replay.go` backend-side — the latter survives a full page reload). waveterm's disk
   filestore is the upgrade path if size ever matters.
 - **Terminal I/O rides the loopback WebSocket**; when the socket is down, output falls back to `/events` and input

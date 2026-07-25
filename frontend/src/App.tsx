@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { HashRouter, Outlet, Route, Routes } from "react-router-dom"
-import { SettingsProvider } from "@/lib/settings"
-import { ProjectsProvider } from "@/lib/projects"
+import { SettingsProvider } from "@/providers/settings"
+import { ProjectsProvider } from "@/providers/projects"
 import { ProjectTabs } from "@/components/tabs/ProjectTabs"
 import { SessionSidebar } from "@/components/sidebar/SessionSidebar"
 import { TerminalHost } from "@/components/TerminalHost"
@@ -22,8 +22,7 @@ import { CommandPalette } from "@/components/CommandPalette"
 // top of the terminals.
 function Layout() {
   const [dock, setDock] = useState<DockTab | null>(null)
-  const toggleDock = (tab: DockTab) =>
-    setDock((cur) => (cur === tab ? null : tab))
+  const toggleDock = (tab: DockTab) => setDock((cur) => (cur === tab ? null : tab))
   return (
     <div className="flex h-screen w-screen flex-col bg-background">
       <ProjectTabs />
@@ -36,13 +35,7 @@ function Layout() {
               <TerminalHost />
               <Outlet />
             </div>
-            {dock && (
-              <RightDock
-                tab={dock}
-                onTab={setDock}
-                onClose={() => setDock(null)}
-              />
-            )}
+            {dock && <RightDock tab={dock} onTab={setDock} onClose={() => setDock(null)} />}
           </div>
           <FooterBar dock={dock} onDock={toggleDock} />
         </main>

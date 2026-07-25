@@ -54,7 +54,7 @@ what re-arms the spinner after them. Every tool re-reports `busy` (idempotent);
 - **UI push** — `internal/terminal/terminal.go`: emits the global app event
   `session-status` (`{id, state}`). Global rather than per-session because its
   consumers outlive any one card.
-- **Store** — `frontend/src/lib/session-status-store.ts`: one subscription taken
+- **Store** — `frontend/src/lib/session/session-status-store.ts`: one subscription taken
   at page load keeps the last state of every session, keyed by id. The card
   cannot hold it: the sidebar only renders cards for the active project, so
   switching projects unmounts them, and a status reported meanwhile would be lost.
@@ -66,7 +66,7 @@ what re-arms the spinner after them. Every tool re-reports `busy` (idempotent);
   `busy` over `done`), shown only while the project is not the active one. A
   `done` stops badging once the project has been on screen; `busy` and `waiting`
   badge for as long as they hold, being live states rather than notifications.
-- **Toast + route** — `frontend/src/lib/projects.tsx`: raises an actionable toast
+- **Toast + route** — `frontend/src/providers/projects.tsx`: raises an actionable toast
   that navigates to the session's card when a report says `waiting`, skipped for
   the session already focused. It reads the raw event rather than the store: the
   store collapses a repeat state into no notification, which would swallow a

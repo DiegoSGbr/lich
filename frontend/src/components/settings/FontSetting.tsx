@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { Fonts as FontService } from "@/lib/rpc"
-import { DEFAULT_FONT, useSettings } from "@/lib/settings"
+import { DEFAULT_FONT, useSettings } from "@/providers/settings"
 import {
   Select,
   SelectContent,
@@ -29,10 +29,7 @@ export function FontSetting() {
   )
 
   return (
-    <SettingBlock
-      title="Font"
-      description="Font family used to render the terminal."
-    >
+    <SettingBlock title="Font" description="Font family used to render the terminal.">
       <Select value={font} onValueChange={(value) => value && setFont(value)}>
         <SelectTrigger className="w-64">
           <SelectValue placeholder="Select a font" />

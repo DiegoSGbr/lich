@@ -2,12 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 import { useNavigate } from "react-router-dom"
 import { CornerDownLeft, Folder, Search } from "lucide-react"
-import { useProjects } from "@/lib/projects"
-import { useSettings } from "@/lib/settings"
+import { useProjects } from "@/providers/projects"
+import { useSettings } from "@/providers/settings"
 import { isRecordingTarget, matchesCombo } from "@/lib/hotkeys"
-import { useSessionStatus } from "@/lib/useSessionStatus"
+import { useSessionStatus } from "@/lib/session/use-session-status"
 import { SessionStatusIcon } from "@/components/sidebar/SessionStatusIcon"
-import { filterPalette, paletteSessions, type PaletteSession } from "@/lib/command-palette"
+import { filterPalette, paletteSessions, type PaletteSession } from "@/lib/session/command-palette"
 import type { Project } from "@/lib/api-types"
 import { cn } from "@/lib/utils"
 
@@ -103,6 +103,7 @@ export function CommandPalette() {
           <div className="flex items-center gap-3 border-b px-4 py-3">
             <Search className="size-4 shrink-0 text-muted-foreground" />
             <input
+              // biome-ignore lint/a11y/noAutofocus: the palette opens on a shortcut to be typed into.
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -197,7 +198,10 @@ function Row({ selected, onSelect, onRun, children }: RowProps) {
     >
       {children}
       <CornerDownLeft
-        className={cn("size-3.5 shrink-0 text-muted-foreground", selected ? "opacity-100" : "opacity-0")}
+        className={cn(
+          "size-3.5 shrink-0 text-muted-foreground",
+          selected ? "opacity-100" : "opacity-0",
+        )}
       />
     </button>
   )

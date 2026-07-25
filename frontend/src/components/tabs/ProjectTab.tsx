@@ -1,9 +1,10 @@
 import { NavLink } from "react-router-dom"
-import { Bell, Check, LoaderCircle, X } from "lucide-react"
+import { Bell, Check, LoaderCircle } from "lucide-react"
 import { useSortable } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
+import { CloseButton } from "@/components/common/CloseButton"
 import { cn } from "@/lib/utils"
-import { useProjectStatus } from "@/lib/useSessionStatus"
+import { useProjectStatus } from "@/lib/session/use-session-status"
 import type { Project } from "@/lib/api-types"
 
 interface ProjectTabProps {
@@ -14,8 +15,9 @@ interface ProjectTabProps {
 
 // The tab is its own drag grip for reordering the strip — no separate handle.
 export function ProjectTab({ project, sessionIds, onClose }: ProjectTabProps) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: project.id })
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: project.id,
+  })
   // What the project's sessions are up to while you are looking elsewhere. The
   // active tab never badges: its cards are already on screen saying the same
   // thing, in more detail and per session.
@@ -25,10 +27,7 @@ export function ProjectTab({ project, sessionIds, onClose }: ProjectTabProps) {
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={cn(
-        "shrink-0",
-        isDragging && "z-10 rounded-md bg-accent shadow-md",
-      )}
+      className={cn("shrink-0", isDragging && "z-10 rounded-md bg-accent shadow-md")}
       {...attributes}
       {...listeners}
     >
@@ -46,27 +45,19 @@ export function ProjectTab({ project, sessionIds, onClose }: ProjectTabProps) {
           const badge = isActive ? null : status
           return (
             <>
-              {badge === "busy" && (
-                <LoaderCircle className="size-3 shrink-0 animate-spin" />
-              )}
-              {badge === "done" && (
-                <Check className="size-3 shrink-0 text-emerald-500" />
-              )}
-              {badge === "waiting" && (
-                <Bell className="size-3 shrink-0 text-amber-500" />
-              )}
+              {badge === "busy" && <LoaderCircle className="size-3 shrink-0 animate-spin" />}
+              {badge === "done" && <Check className="size-3 shrink-0 text-emerald-500" />}
+              {badge === "waiting" && <Bell className="size-3 shrink-0 text-amber-500" />}
               <span className="truncate">{project.name}</span>
-              <span
-                role="button"
-                aria-label={`Close ${project.name}`}
+              {/* preventDefault, not stopPropagation: the parent is a NavLink,
+                  and the click must not navigate to the tab being closed. */}
+              <CloseButton
+                label={`Close ${project.name}`}
                 onClick={(event) => {
                   event.preventDefault()
                   onClose()
                 }}
-                className="flex size-4 shrink-0 items-center justify-center rounded opacity-0 transition-opacity hover:bg-foreground/15 group-hover:opacity-100"
-              >
-                <X className="size-3" />
-              </span>
+              />
             </>
           )
         }}

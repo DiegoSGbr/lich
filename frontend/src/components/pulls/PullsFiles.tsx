@@ -1,17 +1,20 @@
-import {useMemo, useRef, useState, useSyncExternalStore, type ReactNode} from "react"
-import {ChevronsDownUp, ChevronsUpDown, PanelLeftClose, PanelLeftOpen} from "lucide-react"
-import {usePullRequestDiff} from "@/lib/usePullRequestDiff"
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react"
+import { useMemo, useRef, useState, useSyncExternalStore } from "react"
+import { IconAction } from "@/components/common/IconAction"
+import { Notice } from "@/components/common/Notice"
+import { CollapseAllAction, useDiffBulk } from "@/components/diff/diff-bulk"
+import { FileDiff } from "@/components/diff/FileDiff"
+import { DiffStat } from "@/components/DiffStat"
+import { FileTree } from "@/components/FileTree"
+import { buildTree } from "@/lib/git/file-tree"
 import {
   fileFingerprint,
   isViewed,
   setViewed,
   subscribeViewed,
   viewedFiles,
-} from "@/lib/pull-request-viewed"
-import {buildTree} from "@/lib/file-tree"
-import {FileDiff, HeaderAction, type DiffBulk} from "@/components/diff/FileDiff"
-import {FileTree} from "@/components/FileTree"
-import {DiffStat} from "@/components/DiffStat"
+} from "@/lib/pulls/pull-request-viewed"
+import { usePullRequestDiff } from "@/lib/pulls/use-pull-request-diff"
 
 // The file tree is a navigator, not the review itself: hiding it hands the
 // whole width to the diff. Remembered in localStorage like every other UI pref,
@@ -33,13 +36,13 @@ interface PullsFilesProps {
 // FileDiff cards as the Review dock — read-only, no discard. Inject still works,
 // so a PR file can be referenced into the session's terminal. Each file can be
 // ticked off as viewed, which folds it away and counts toward the header total.
-export function PullsFiles({path, head, pullRequest, onInject}: PullsFilesProps) {
-  const {files, error} = usePullRequestDiff(path, head)
+export function PullsFiles({ path, head, pullRequest, onInject }: PullsFilesProps) {
+  const { files, error } = usePullRequestDiff(path, head)
   const rows = useRef<Map<string, HTMLElement>>(new Map())
   const [active, setActive] = useState<string | null>(null)
   // Every file mounts its own CodeMirror, so a wide PR earns a way to fold them
   // all at once — same directive the Review dock hands its panel.
-  const [bulk, setBulk] = useState<DiffBulk>({open: true, nonce: 0})
+  const [bulk, toggleAll] = useDiffBulk()
   const [treeOpen, setTreeOpen] = useState(() => localStorage.getItem(TREE_HIDDEN_KEY) !== "1")
   const viewed = useSyncExternalStore(subscribeViewed, () => viewedFiles(pullRequest))
   // A tick is against the file's content, so a new commit unticks exactly the
@@ -53,13 +56,13 @@ export function PullsFiles({path, head, pullRequest, onInject}: PullsFilesProps)
   const tree = useMemo(() => buildTree((files ?? []).map((file) => file.newPath)), [files])
 
   if (error) {
-    return <Notice>Couldn’t load the diff: {error}</Notice>
+    return <Notice className="px-4 py-6 text-sm">Couldn’t load the diff: {error}</Notice>
   }
   if (files === null) {
-    return <Notice>Loading…</Notice>
+    return <Notice className="px-4 py-6 text-sm">Loading…</Notice>
   }
   if (files.length === 0) {
-    return <Notice>No file changes</Notice>
+    return <Notice className="px-4 py-6 text-sm">No file changes</Notice>
   }
 
   const added = files.reduce((sum, file) => sum + file.added, 0)
@@ -70,7 +73,7 @@ export function PullsFiles({path, head, pullRequest, onInject}: PullsFilesProps)
 
   const jumpTo = (target: string) => {
     setActive(target)
-    rows.current.get(target)?.scrollIntoView({block: "start", behavior: "smooth"})
+    rows.current.get(target)?.scrollIntoView({ block: "start", behavior: "smooth" })
   }
 
   const toggleTree = () => {
@@ -83,7 +86,7 @@ export function PullsFiles({path, head, pullRequest, onInject}: PullsFilesProps)
     <div className="flex h-full">
       {treeOpen && (
         <div className="w-60 shrink-0 overflow-y-auto border-r border-border">
-          <FileTree tree={tree} active={active} defaultOpen onSelect={jumpTo}/>
+          <FileTree tree={tree} active={active} defaultOpen onSelect={jumpTo} />
         </div>
       )}
       <div className="flex flex-1 flex-col overflow-hidden">
@@ -91,16 +94,16 @@ export function PullsFiles({path, head, pullRequest, onInject}: PullsFilesProps)
             stay put without fighting each file's own sticky header. */}
         <div className="flex flex-none items-center justify-end gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
           <span className="mr-auto flex items-center gap-2">
-            <HeaderAction
+            <IconAction
               label={treeOpen ? "Hide the file tree" : "Show the file tree"}
               onClick={toggleTree}
             >
               {treeOpen ? (
-                <PanelLeftClose className="size-3.5"/>
+                <PanelLeftClose className="size-3.5" />
               ) : (
-                <PanelLeftOpen className="size-3.5"/>
+                <PanelLeftOpen className="size-3.5" />
               )}
-            </HeaderAction>
+            </IconAction>
             {viewedCount > 0 && (
               <span className="tabular-nums">
                 {viewedCount} of {files.length} viewed
@@ -108,18 +111,9 @@ export function PullsFiles({path, head, pullRequest, onInject}: PullsFilesProps)
             )}
           </span>
           <span className="flex items-center gap-1.5">
-            <DiffStat added={added} deleted={deleted}/>
+            <DiffStat added={added} deleted={deleted} />
           </span>
-          <HeaderAction
-            label={bulk.open ? "Collapse all files" : "Expand all files"}
-            onClick={() => setBulk((b) => ({open: !b.open, nonce: b.nonce + 1}))}
-          >
-            {bulk.open ? (
-              <ChevronsDownUp className="size-3.5"/>
-            ) : (
-              <ChevronsUpDown className="size-3.5"/>
-            )}
-          </HeaderAction>
+          <CollapseAllAction open={bulk.open} onToggle={toggleAll} />
         </div>
         <div className="flex-1 overflow-y-auto">
           <div className="flex flex-col p-3 [&>div:not(:first-child)]:mt-2.5 [&>div:not(:first-child)]:border-t [&>div:not(:first-child)]:border-border [&>div:not(:first-child)]:pt-2.5">
@@ -140,12 +134,7 @@ export function PullsFiles({path, head, pullRequest, onInject}: PullsFilesProps)
                   bulk={bulk}
                   viewed={isViewed(viewed, file.newPath, fingerprints.get(file.newPath) ?? "")}
                   onViewed={(next) =>
-                    setViewed(
-                      pullRequest,
-                      file.newPath,
-                      fingerprints.get(file.newPath) ?? "",
-                      next,
-                    )
+                    setViewed(pullRequest, file.newPath, fingerprints.get(file.newPath) ?? "", next)
                   }
                 />
               </div>
@@ -155,8 +144,4 @@ export function PullsFiles({path, head, pullRequest, onInject}: PullsFilesProps)
       </div>
     </div>
   )
-}
-
-function Notice({children}: {children: ReactNode}) {
-  return <p className="px-4 py-6 text-sm text-muted-foreground">{children}</p>
 }
