@@ -21,7 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PR badge, a session card's `#N`, or a session's "Pull request" menu — that
   parks a card in the worktree's sidebar group beside its session, the way the
   Settings screen does. The Overview tab renders the description as markdown
-  alongside the checks and mergeability; the Files changed tab shows the whole
+  alongside the checks and mergeability; the Checks tab lists every check —
+  what failed first, what is still running and for how long — and opens its run
+  in the browser, refreshing itself every ten seconds while any of them is still
+  going; the Files changed tab shows the whole
   diff next to a file tree that jumps to a file on click — hide the tree and
   the diff takes the whole width — folds every file at once when the review
   gets wide, and lets you tick each one off as viewed: the file folds away and

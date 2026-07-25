@@ -141,6 +141,86 @@ func TestReduceChecks(t *testing.T) {
 	}
 }
 
+func TestToCheckItems(t *testing.T) {
+	t.Run("no checks yields no list", func(t *testing.T) {
+		if got := toCheckItems(nil); got != nil {
+			t.Errorf("toCheckItems(nil) = %+v, want nil", got)
+		}
+	})
+
+	t.Run("both gh shapes flatten to one row", func(t *testing.T) {
+		got := toCheckItems([]checkItem{
+			{
+				Name: "test (ubuntu)", WorkflowName: "CI",
+				Status: "COMPLETED", Conclusion: "SUCCESS",
+				DetailsURL:  "https://github.com/o/l/runs/1",
+				StartedAt:   "2026-07-25T10:00:00Z",
+				CompletedAt: "2026-07-25T10:02:30Z",
+			},
+			{
+				Context: "ci/legacy", Description: "the old bot",
+				State: "SUCCESS", TargetURL: "https://ci.example/1",
+			},
+		})
+		if len(got) != 2 {
+			t.Fatalf("want 2 rows, got %+v", got)
+		}
+		run := got[0]
+		if run.Name != "test (ubuntu)" || run.Description != "CI" || run.State != checkPassed {
+			t.Errorf("check run flattened wrong: %+v", run)
+		}
+		if run.URL != "https://github.com/o/l/runs/1" || run.CompletedAt == "" {
+			t.Errorf("check run lost its link or timing: %+v", run)
+		}
+		ctx := got[1]
+		// A StatusContext names itself with context/description/targetUrl; those
+		// have to land in the same three fields as a CheckRun's.
+		if ctx.Name != "ci/legacy" || ctx.Description != "the old bot" || ctx.URL != "https://ci.example/1" {
+			t.Errorf("status context flattened wrong: %+v", ctx)
+		}
+	})
+
+	t.Run("worst state first, gh's order within a state", func(t *testing.T) {
+		got := toCheckItems([]checkItem{
+			{Name: "passed-1", Status: "COMPLETED", Conclusion: "SUCCESS"},
+			{Name: "running", Status: "IN_PROGRESS"},
+			{Name: "failed", Status: "COMPLETED", Conclusion: "FAILURE"},
+			{Name: "passed-2", Status: "COMPLETED", Conclusion: "SKIPPED"},
+		})
+		var names []string
+		for _, c := range got {
+			names = append(names, c.Name)
+		}
+		want := []string{"failed", "running", "passed-1", "passed-2"}
+		if !slices.Equal(names, want) {
+			t.Errorf("order = %v, want %v", names, want)
+		}
+	})
+
+	t.Run("the list agrees with the rollup", func(t *testing.T) {
+		items := []checkItem{
+			{Name: "a", Status: "COMPLETED", Conclusion: "SUCCESS"},
+			{Name: "b", Status: "QUEUED"},
+			{Name: "c", State: "ERROR"},
+		}
+		rollup := reduceChecks(items)
+		var passed, failed, pending int
+		for _, c := range toCheckItems(items) {
+			switch c.State {
+			case checkPassed:
+				passed++
+			case checkFailed:
+				failed++
+			case checkPending:
+				pending++
+			}
+		}
+		if passed != rollup.Passed || failed != rollup.Failed || pending != rollup.Pending {
+			t.Errorf("list %d/%d/%d disagrees with rollup %+v", passed, failed, pending, rollup)
+		}
+	})
+}
+
 func TestMergeArgs(t *testing.T) {
 	// An unrecognised method must be refused before any gh shell-out.
 	if _, err := mergeArgs("force", "", ""); err == nil {

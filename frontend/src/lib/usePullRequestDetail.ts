@@ -5,6 +5,11 @@ import {errorText} from "./utils"
 
 export type {PullRequestDetail}
 
+// How often the detail is re-read while a check is still running. CI is the one
+// thing here that changes with nobody touching the repository, so it is the one
+// thing polled — and only while something is actually in flight.
+const RUNNING_CHECKS_POLL_MS = 10_000
+
 export interface PullRequestState {
   detail: PullRequestDetail | null
   loading: boolean
@@ -66,6 +71,18 @@ export function usePullRequestDetail(
       window.removeEventListener("focus", refresh)
     }
   }, [refresh, branch, head])
+
+  // Depends on the count, not the detail object: while it stays at 3 the
+  // interval keeps running instead of being torn down and rebuilt each read,
+  // and it stops on its own the moment the last check settles.
+  const pending = detail?.checks.pending ?? 0
+  useEffect(() => {
+    if (pending === 0) {
+      return
+    }
+    const timer = setInterval(refresh, RUNNING_CHECKS_POLL_MS)
+    return () => clearInterval(timer)
+  }, [pending, refresh])
 
   return {detail, loading, error, refresh}
 }

@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import {Input} from "@/components/ui/input"
 import {Label} from "@/components/ui/label"
+import {PullsChecks} from "./PullsChecks"
 import {PullsFiles} from "./PullsFiles"
 
 // Pulls is the per-project pull-request screen: it fills the main area on top of
@@ -158,7 +159,7 @@ interface PullRequestViewProps {
 function PullRequestView({path, head, detail, onRefresh, onMerged, onInject}: PullRequestViewProps) {
   const [merging, setMerging] = useState(false)
   const [edit, setEdit] = useState<EditState | null>(null)
-  const [tab, setTab] = useState<"overview" | "files">("overview")
+  const [tab, setTab] = useState<"overview" | "files" | "checks">("overview")
   const blocked = detail.isDraft
     ? "Pull request is a draft"
     : detail.mergeable === "CONFLICTING"
@@ -263,7 +264,19 @@ function PullRequestView({path, head, detail, onRefresh, onMerged, onInject}: Pu
             <GitBranch className="size-3.5"/>
             {detail.headRefName} → {detail.baseRefName}
           </span>
-          <ChecksStat checks={detail.checks}/>
+          {/* The counter is where the eye lands when CI is red; make it the way
+              into the list instead of a dead readout. */}
+          {detail.checks.total > 0 ? (
+            <button
+              type="button"
+              onClick={() => setTab("checks")}
+              className="rounded-sm transition-opacity hover:opacity-80"
+            >
+              <ChecksStat checks={detail.checks}/>
+            </button>
+          ) : (
+            <ChecksStat checks={detail.checks}/>
+          )}
           <MergeableStat mergeable={detail.mergeable} base={detail.baseRefName}/>
         </div>
 
@@ -277,22 +290,32 @@ function PullRequestView({path, head, detail, onRefresh, onMerged, onInject}: Pu
               <span className="tabular-nums text-muted-foreground">{detail.changedFiles}</span>
             )}
           </TabButton>
+          {detail.checks.total > 0 && (
+            <TabButton active={tab === "checks"} onClick={() => setTab("checks")}>
+              Checks
+              <span className="tabular-nums text-muted-foreground">{detail.checks.total}</span>
+            </TabButton>
+          )}
         </div>
       </div>
 
       <div role="tabpanel" className="flex-1 overflow-hidden">
-        {tab === "overview" ? (
-          <div className="h-full overflow-y-auto">
-            <div className="max-w-3xl px-6 py-5">
-              {detail.body.trim() !== "" ? (
-                <Markdown>{detail.body}</Markdown>
-              ) : (
-                <p className="text-sm text-muted-foreground">No description.</p>
-              )}
-            </div>
-          </div>
-        ) : (
+        {tab === "files" ? (
           <PullsFiles path={path} head={head} pullRequest={detail.url} onInject={onInject}/>
+        ) : (
+          <div className="h-full overflow-y-auto">
+            {tab === "checks" ? (
+              <PullsChecks checks={detail.checkRuns}/>
+            ) : (
+              <div className="max-w-3xl px-6 py-5">
+                {detail.body.trim() !== "" ? (
+                  <Markdown>{detail.body}</Markdown>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No description.</p>
+                )}
+              </div>
+            )}
+          </div>
         )}
       </div>
 

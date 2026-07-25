@@ -36,6 +36,19 @@ export interface ChecksRollup {
 /** How a pull request is merged — the gh flag the backend allow-lists. */
 export type MergeMethod = "squash" | "merge" | "rebase"
 
+/** internal/project.CheckItem — one check of the PR's rollup, for the Checks tab. */
+export interface CheckItem {
+  name: string
+  state: "passed" | "failed" | "pending"
+  /** Workflow name, or the status context's own description. */
+  description: string
+  /** Where to read the run; "" when gh reports none. */
+  url: string
+  /** gh's ISO timestamps; "" while a check has not started or finished. */
+  startedAt: string
+  completedAt: string
+}
+
 /** internal/project.PRDetail — the branch's open PR in full, for the Pulls panel. */
 export interface PullRequestDetail {
   number: number
@@ -49,6 +62,8 @@ export interface PullRequestDetail {
   headRefName: string
   changedFiles: number
   checks: ChecksRollup
+  /** The rollup itself, worst state first; null when the PR reports no checks. */
+  checkRuns: CheckItem[] | null
 }
 
 /** internal/project.Worktree — a git worktree checkout: branch and path. */
