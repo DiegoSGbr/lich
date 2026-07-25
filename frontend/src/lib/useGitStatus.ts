@@ -1,10 +1,14 @@
 import {useCallback, useSyncExternalStore} from "react"
 import {ProjectService} from "./rpc"
-import {createGitStatusStore, type GitStatus} from "./git-status-store"
+import {createGitStatusStore, type GitStatus, type PollCadence} from "./git-status-store"
 
 export type {GitStatus}
 
-const GIT_POLL_MS = 3_000
+// A checkout being worked in is read every second, so an edit or a commit shows
+// up while the agent is still typing; after five quiet reads it falls back to
+// the old 3s, which is what an idle project costs today. The plugin's
+// session-touched hook still nudges an immediate read on top of this.
+const GIT_POLL: PollCadence = {fastMs: 1_000, slowMs: 3_000, idleTicks: 5}
 
 async function fetchGitStatus(path: string): Promise<GitStatus | null> {
   try {
@@ -18,11 +22,11 @@ async function fetchGitStatus(path: string): Promise<GitStatus | null> {
   }
 }
 
-const store = createGitStatusStore(fetchGitStatus, GIT_POLL_MS)
+const store = createGitStatusStore(fetchGitStatus, GIT_POLL)
 
 // refreshGitStatus fetches a path's git status immediately, ahead of its poll
-// tick — used by the session-touched hook signal to cut the up-to-3s lag on the
-// diff badge after Claude edits files. No-op when no card watches the path.
+// tick — used by the session-touched hook signal to cut the lag on the diff
+// badge after Claude edits files. No-op when no card watches the path.
 export function refreshGitStatus(path: string): void {
   store.refresh(path)
 }

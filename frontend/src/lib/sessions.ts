@@ -240,6 +240,24 @@ export function sessionsOf(state: SessionState, projectId: string): Session[] {
   return state[projectId]?.sessions ?? []
 }
 
+// activeTarget resolves what a project screen acts on: the active session's id
+// and the path it lives in — a worktree session resolves to its checkout,
+// everything else to the project root. Pure so both useActiveSession (the
+// project route) and the pull request screen (a subroute, where the exact-match
+// useMatch yields no project) read the same triple.
+export function activeTarget(
+  state: SessionState,
+  projectId: string | null,
+  projectPath: string,
+): {sessionId: string; path: string} {
+  if (!projectId) {
+    return {sessionId: "", path: projectPath}
+  }
+  const sessionId = activeSessionId(state, projectId)
+  const session = sessionsOf(state, projectId).find((s) => s.id === sessionId)
+  return {sessionId, path: session?.path || projectPath}
+}
+
 // A worktree's sessions under one roof. `path` is the checkout root ("" for the
 // project's own directory); `sessions` keeps the group's flat relative order.
 export interface SessionGroup {

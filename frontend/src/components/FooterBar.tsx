@@ -1,7 +1,9 @@
 import {useEffect, useState} from "react"
+import {useNavigate} from "react-router-dom"
+import {openPulls} from "@/lib/pulls-card-store"
 import {toast} from "sonner"
 import {Code, FileText, GitBranch, Folder, Plus, Diff, GitPullRequestArrow} from "lucide-react"
-import {ProjectService, System, Terminal as TerminalService} from "@/lib/rpc"
+import {ProjectService, Terminal as TerminalService} from "@/lib/rpc"
 import type {DockTab} from "@/components/dock/RightDock"
 import {useActiveSession} from "@/lib/useActiveSession"
 import {useSessionCwd} from "@/lib/useSessionCwd"
@@ -43,7 +45,8 @@ interface FooterBarProps {
 // project is active; everything follows the active session — a worktree session
 // shows its checkout's path, branch and diff.
 export function FooterBar({dock, onDock}: FooterBarProps) {
-  const {sessionId, path: basePath} = useActiveSession()
+  const navigate = useNavigate()
+  const {projectId, sessionId, path: basePath} = useActiveSession()
   // Overlay the backend's live cwd so a `cd` in the terminal moves the footer
   // with it — same source the session card follows. Falls back to the session's
   // static start path until the watcher reports.
@@ -54,7 +57,7 @@ export function FooterBar({dock, onDock}: FooterBarProps) {
   // The footer context readout is opt-out (Settings › Providers).
   const {showContextUsage} = useSettings()
   const status = useGitStatus(path)
-  const pr = usePullRequest(path, status?.branch ?? "")
+  const pr = usePullRequest(path, status?.branch ?? "", status?.head ?? "")
   const now = useNow()
 
   const attachFile = async () => {
@@ -176,20 +179,23 @@ export function FooterBar({dock, onDock}: FooterBarProps) {
         </Tooltip>
       )}
 
-      {pr && (
+      {pr && projectId && (
         <Tooltip>
           <TooltipTrigger
             render={
               <button
                 type="button"
-                onClick={() => void System.OpenExternal(pr.url)}
+                onClick={() => {
+                  openPulls(basePath)
+                  navigate(`/projects/${projectId}/pulls`)
+                }}
                 className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
               />
             }
           >
             <GitPullRequestArrow className="size-3.5"/> PR #{pr.number}
           </TooltipTrigger>
-          <TooltipContent>Open pull request on GitHub</TooltipContent>
+          <TooltipContent>View pull request</TooltipContent>
         </Tooltip>
       )}
 

@@ -134,8 +134,14 @@ func TestDiff(t *testing.T) {
 	git("add", "a.txt")
 	git("commit", "-m", "init")
 
-	if got := svc.Diff(repo); got != (DiffStats{}) {
-		t.Errorf("Diff(clean repo) = %+v, want zero", got)
+	clean := svc.Diff(repo)
+	if clean.Files != 0 || clean.Added != 0 || clean.Deleted != 0 {
+		t.Errorf("Diff(clean repo) = %+v, want no changes", clean)
+	}
+	// Head names the commit the counts sit on — the signal the frontend watches
+	// to notice a commit, so a clean tree still has to report it.
+	if len(clean.Head) < 7 {
+		t.Errorf("Diff(clean repo).Head = %q, want a commit sha", clean.Head)
 	}
 
 	if err := os.WriteFile(file, []byte("one\nchanged\nadded\n"), 0o644); err != nil {
@@ -184,5 +190,10 @@ func TestDiffNoCommits(t *testing.T) {
 	got := New(nil).Diff(repo)
 	if got.Files != 1 || got.Added != 3 || got.Deleted != 0 {
 		t.Errorf("Diff(no-commit repo) = %+v, want {Files:1 Added:3 Deleted:0}", got)
+	}
+	// No HEAD to name yet; the field stays empty rather than carrying the empty
+	// tree hash the numstat falls back to.
+	if got.Head != "" {
+		t.Errorf("Diff(no-commit repo).Head = %q, want empty", got.Head)
 	}
 }

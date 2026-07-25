@@ -1,13 +1,12 @@
 import {useCallback, useEffect, useState} from "react"
-import {ChevronDown, ChevronLeft, ChevronRight, Folder, FolderOpen} from "lucide-react"
+import {ChevronLeft} from "lucide-react"
 import {ProjectService, System, Terminal as TerminalService} from "@/lib/rpc"
 import {useActiveSession} from "@/lib/useActiveSession"
 import {useProjects} from "@/lib/projects"
 import {queuePaste} from "@/lib/paste-queue"
 import {useGitStatus} from "@/lib/useGitStatus"
 import {buildTree, type TreeNode} from "@/lib/file-tree"
-import {FileIcon} from "@/lib/file-icon"
-import {DiffStat} from "@/components/DiffStat"
+import {FileTree} from "@/components/FileTree"
 import {formatLineRef, parseDiff, type DiffFile} from "@/lib/diff"
 import {errorText} from "@/lib/utils"
 import type {DocLineSelection} from "@/lib/codemirror"
@@ -140,38 +139,6 @@ interface TreeBodyProps {
 }
 
 function TreeBody({tree, stats, failed, onOpen, onEditor}: TreeBodyProps) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const toggle = (rel: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(rel)) {
-        next.delete(rel)
-      } else {
-        next.add(rel)
-      }
-      return next
-    })
-
-  // Expand/collapse a directory and every directory beneath it, the scope a
-  // right-click on that folder implies.
-  const setSubtree = (node: TreeNode, expand: boolean) =>
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      const walk = (n: TreeNode) => {
-        if (n.type !== "dir") {
-          return
-        }
-        if (expand) {
-          next.add(n.path)
-        } else {
-          next.delete(n.path)
-        }
-        n.children.forEach(walk)
-      }
-      walk(node)
-      return next
-    })
-
   if (failed) {
     return <Notice>Not a git repository</Notice>
   }
@@ -182,130 +149,13 @@ function TreeBody({tree, stats, failed, onOpen, onEditor}: TreeBodyProps) {
     return <Notice>No tracked files</Notice>
   }
   return (
-    <div role="tree" className="h-full overflow-y-auto py-1 font-mono text-xs">
-      {tree.map((node) => (
-        <TreeRow
-          key={node.path}
-          node={node}
-          depth={0}
-          stats={stats}
-          expanded={expanded}
-          onToggle={toggle}
-          onExpandAll={(n) => setSubtree(n, true)}
-          onCollapseAll={(n) => setSubtree(n, false)}
-          onOpen={onOpen}
-          onEditor={onEditor}
-        />
-      ))}
-    </div>
-  )
-}
-
-interface TreeRowProps {
-  node: TreeNode
-  depth: number
-  stats: Map<string, DiffFile>
-  expanded: Set<string>
-  onToggle: (rel: string) => void
-  onExpandAll: (node: TreeNode) => void
-  onCollapseAll: (node: TreeNode) => void
-  onOpen: (rel: string) => void
-  onEditor: (rel: string) => void
-}
-
-function TreeRow({
-  node,
-  depth,
-  stats,
-  expanded,
-  onToggle,
-  onExpandAll,
-  onCollapseAll,
-  onOpen,
-  onEditor,
-}: TreeRowProps) {
-  const isOpen = expanded.has(node.path)
-  // The 0.5rem base keeps even top-level rows off the edge.
-  const indent = {paddingLeft: `${depth * 0.75 + 0.5}rem`}
-  if (node.type === "file") {
-    const stat = stats.get(node.path)
-    // A chevron-width spacer keeps file names aligned under their folder's name;
-    // FileIcon draws the language's real logo (devicon).
-    return (
-      <ContextMenu>
-        <ContextMenuTrigger
-          render={
-            <button
-              type="button"
-              onClick={() => onOpen(node.path)}
-              style={indent}
-              title={node.path}
-              className="flex items-center gap-1.5 py-0.5 pr-2 text-left text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-            />
-          }
-        >
-          <span className="size-3.5 shrink-0" aria-hidden/>
-          <FileIcon path={node.path}/>
-          <span className="min-w-0 truncate">{node.name}</span>
-          {stat && (
-            <span className="ml-auto flex shrink-0 items-center gap-1.5 pl-2 tabular-nums">
-              <DiffStat added={stat.added} deleted={stat.deleted}/>
-            </span>
-          )}
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem onClick={() => onEditor(node.path)}>
-            Open in editor
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
-    )
-  }
-  const Chevron = isOpen ? ChevronDown : ChevronRight
-  const FolderIcon = isOpen ? FolderOpen : Folder
-  return (
-    <>
-      <ContextMenu>
-        <ContextMenuTrigger
-          render={
-            <button
-              type="button"
-              onClick={() => onToggle(node.path)}
-              style={indent}
-              aria-expanded={isOpen}
-              className="flex items-center gap-1.5 py-0.5 pr-2 text-left font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
-            />
-          }
-        >
-          <Chevron className="size-3.5 shrink-0 text-muted-foreground"/>
-          <FolderIcon className="size-3.5 shrink-0 text-muted-foreground"/>
-          <span className="truncate">{node.name}</span>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem onClick={() => onExpandAll(node)}>
-            Expand all
-          </ContextMenuItem>
-          <ContextMenuItem onClick={() => onCollapseAll(node)}>
-            Collapse all
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
-      {isOpen &&
-        node.children.map((child) => (
-          <TreeRow
-            key={child.path}
-            node={child}
-            depth={depth + 1}
-            stats={stats}
-            expanded={expanded}
-            onToggle={onToggle}
-            onExpandAll={onExpandAll}
-            onCollapseAll={onCollapseAll}
-            onOpen={onOpen}
-            onEditor={onEditor}
-          />
-        ))}
-    </>
+    <FileTree
+      tree={tree}
+      stats={stats}
+      onEditor={onEditor}
+      className="h-full overflow-y-auto"
+      onSelect={onOpen}
+    />
   )
 }
 

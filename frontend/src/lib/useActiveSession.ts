@@ -1,6 +1,6 @@
 import {useMatch} from "react-router-dom"
 import {useProjects} from "./projects"
-import {activeSessionId, sessionsOf} from "./sessions"
+import {activeTarget} from "./sessions"
 
 // useActiveSession resolves what is currently in focus: the routed project, its
 // active session and the working path that session lives in — a worktree
@@ -16,9 +16,5 @@ export function useActiveSession(): {
   const match = useMatch("/projects/:projectId")
   const projectId = match?.params.projectId ?? null
   const projectPath = projects.find((p) => p.id === projectId)?.path ?? ""
-  const sessionId = projectId ? activeSessionId(sessions, projectId) : ""
-  const session = projectId
-    ? sessionsOf(sessions, projectId).find((s) => s.id === sessionId)
-    : undefined
-  return {projectId, sessionId, path: session?.path || projectPath}
+  return {projectId, ...activeTarget(sessions, projectId, projectPath)}
 }

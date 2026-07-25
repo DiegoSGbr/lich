@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The pull request badge keeps up with the session working next to it.** A
+  commit — or the push that opens a pull request — now reaches the badge, the
+  checks and the diff on its own, instead of waiting for you to click away to
+  another window and back. Git status also follows a checkout that is being
+  worked in every second rather than every three, settling back to the slower
+  cadence once it goes quiet, so nothing extra is spent on idle projects.
+
+- **Open, review and merge pull requests without leaving lich.** A branch's
+  GitHub pull request now opens as a full-screen view — reached from the footer
+  PR badge, a session card's `#N`, or a session's "Pull request" menu — that
+  parks a card in the worktree's sidebar group beside its session, the way the
+  Settings screen does. The Overview tab renders the description as markdown
+  alongside the checks and mergeability; the Checks tab lists every check —
+  what failed first, what is still running and for how long — and opens its run
+  in the browser, refreshing itself every ten seconds while any of them is still
+  going; the Files changed tab shows the whole
+  diff next to a file tree that jumps to a file on click — hide the tree and
+  the diff takes the whole width — folds every file at once when the review
+  gets wide, and lets you tick each one off as viewed: the file folds away and
+  the header counts how far you are. Merge from the header
+  — squash, a merge commit or rebase, editing the commit message first if you
+  want — and the merge offers to remove the branch's worktree once it lands, or
+  open a pull request when the branch has none. A reload button covers what
+  nothing can announce (a review, a check going green). It reuses the `gh` CLI
+  already behind the footer badge, so a repo without `gh` or a non-GitHub remote
+  simply shows nothing.
 - **The footer shows the active session's model and context window.** The status
   strip now names the model the active Claude session runs and its reasoning
   effort (e.g. `opus 4.8 · xhigh`), marked with the provider's icon, and a small

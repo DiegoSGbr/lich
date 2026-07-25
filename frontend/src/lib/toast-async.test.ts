@@ -3,9 +3,9 @@ import {runWithToast} from "./toast-async"
 
 // Sonner is the framework boundary here; stub it so the test asserts the
 // control flow (action ran, success/error branch, return value) without a DOM.
-const loading = vi.fn(() => "toast-id")
-const success = vi.fn()
-const error = vi.fn()
+const loading = vi.fn((..._args: unknown[]) => "toast-id")
+const success = vi.fn((..._args: unknown[]) => undefined)
+const error = vi.fn((..._args: unknown[]) => undefined)
 vi.mock("sonner", () => ({
   toast: {
     loading: (...args: unknown[]) => loading(...args),

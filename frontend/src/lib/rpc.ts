@@ -11,10 +11,12 @@ import type {
   Branches,
   DetectedProvider,
   DiffStats,
+  MergeMethod,
   PatchNotes as PatchNotesData,
   PluginStatus,
   Project,
   PullRequest,
+  PullRequestDetail,
   StoredProject,
   StoredSession,
   Worktree,
@@ -118,6 +120,16 @@ export const ProjectService = {
   DiscardFile: (path: string, rel: string) => call<null>("project.DiscardFile", [path, rel]),
   ListBranches: (path: string) => call<Branches>("project.ListBranches", [path]),
   PullRequest: (path: string) => call<PullRequest | null>("project.PullRequest", [path]),
+  /** The active branch's open PR in full (title, body, checks) for the Pulls dock tab. */
+  PullRequestDetail: (path: string) =>
+    call<PullRequestDetail | null>("project.PullRequestDetail", [path]),
+  /** Merge the branch's PR on GitHub. The backend allow-lists the method. */
+  MergePullRequest: (path: string, method: MergeMethod, subject: string, body: string) =>
+    call<null>("project.MergePullRequest", [path, method, subject, body]),
+  /** Open GitHub's "new pull request" page in the browser (gh pr create --web). */
+  CreatePullRequest: (path: string) => call<null>("project.CreatePullRequest", [path]),
+  /** The PR's unified diff (gh pr diff) for the Pulls screen's Files changed tab. */
+  PullRequestDiff: (path: string) => call<string>("project.PullRequestDiff", [path]),
   CreateWorktree: (
     projectPath: string,
     projectID: string,

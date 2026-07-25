@@ -11,7 +11,6 @@ import {useSessionCwd} from "@/lib/useSessionCwd"
 import {useSessionAgent} from "@/lib/useSessionAgent"
 import {useGitStatus} from "@/lib/useGitStatus"
 import {usePullRequest} from "@/lib/usePullRequest"
-import {System} from "@/lib/rpc"
 import {DiffStat} from "@/components/DiffStat"
 import {SessionStatusIcon} from "./SessionStatusIcon"
 import {Tooltip, TooltipContent, TooltipTrigger} from "@/components/ui/tooltip"
@@ -34,6 +33,8 @@ interface SessionCardProps {
   // agent sessions, so the user can drop into a terminal in the worktree the
   // agent is working in without cd-ing there by hand.
   onOpenTerminal: (cwd: string) => void
+  // Open the Pulls screen for this session's worktree, parking its PR card.
+  onPulls: () => void
 }
 
 // The card itself is the drag grip for reordering the list — no separate handle.
@@ -45,6 +46,7 @@ export function SessionCard({
                               onClose,
                               onRename,
                               onOpenTerminal,
+                              onPulls,
                             }: SessionCardProps) {
   const pathRef = useRef<HTMLSpanElement>(null)
   const [pathOverflow, setPathOverflow] = useState(false)
@@ -67,7 +69,7 @@ export function SessionCard({
   const liveCwd = useSessionCwd(session.id)
   const shownPath = liveCwd || session.path || path
   const git = useGitStatus(shownPath)
-  const pr = usePullRequest(shownPath, git?.branch ?? "")
+  const pr = usePullRequest(shownPath, git?.branch ?? "", git?.head ?? "")
   // Renaming disables the drag: the sensor would otherwise claim the pointer
   // before the input could be clicked into or its text selected.
   const {
@@ -182,10 +184,10 @@ export function SessionCard({
                     {pr && (
                       <span
                         role="button"
-                        aria-label={`Open pull request #${pr.number} on GitHub`}
+                        aria-label={`View pull request #${pr.number}`}
                         onClick={(event) => {
                           event.stopPropagation()
-                          void System.OpenExternal(pr.url)
+                          onPulls()
                         }}
                         className="flex items-center gap-1 rounded-sm transition-colors hover:text-foreground"
                       >
@@ -251,6 +253,10 @@ export function SessionCard({
               Open Terminal
             </ContextMenuItem>
           )}
+          <ContextMenuItem onClick={onPulls}>
+            <GitPullRequestArrow/>
+            Pull request
+          </ContextMenuItem>
           <ContextMenuSeparator/>
           <ContextMenuItem variant="destructive" onClick={onClose}>
             <X/>

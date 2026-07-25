@@ -12,6 +12,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import {Checkbox} from "@/components/ui/checkbox"
 import {
   buildFileDoc,
   formatLineRef,
@@ -21,6 +22,7 @@ import {
   type NewLineRange,
 } from "@/lib/diff"
 import {languageAbbr, splitPath} from "@/lib/lang-badge"
+import {cn} from "@/lib/utils"
 import {DiffStat} from "@/components/DiffStat"
 import {useDiffEditor} from "./useDiffEditor"
 
@@ -39,15 +41,21 @@ export interface DiffBulk {
 interface FileDiffProps {
   file: DiffFile
   onInject: (text: string) => void
-  /** Ask the panel to confirm and revert this file's changes. */
-  onDiscard: () => void
+  /** Ask the panel to confirm and revert this file's changes. Omitted for a
+   * read-only diff (a PR's changes), where discarding makes no sense. */
+  onDiscard?: () => void
   /** Collapse/expand-all directive from the panel; absent = no bulk control. */
   bulk?: DiffBulk
+  /** Whether the reviewer has ticked this file off. */
+  viewed?: boolean
+  /** Handle the tick. Absent = no Viewed control (the dock's working diff,
+   * where every file is the current one). */
+  onViewed?: (next: boolean) => void
 }
 
 // The card must not clip overflow — a clipping ancestor would break the
 // sticky header.
-export function FileDiff({file, onInject, onDiscard, bulk}: FileDiffProps) {
+export function FileDiff({file, onInject, onDiscard, bulk, viewed, onViewed}: FileDiffProps) {
   const doc = useMemo(() => buildFileDoc(file), [file])
   const [expanded, setExpanded] = useState(
     !file.binary && doc.lineMeta.length <= LARGE_FILE_LINES,
@@ -75,7 +83,11 @@ export function FileDiff({file, onInject, onDiscard, bulk}: FileDiffProps) {
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-0.5 transition-colors hover:text-foreground"
+          className={cn(
+            "flex min-w-0 flex-1 items-center gap-2 rounded-md py-0.5 transition-colors hover:text-foreground",
+            // A ticked-off file recedes without leaving the list.
+            viewed && "opacity-60",
+          )}
         >
           <Chevron className="size-3.5 shrink-0 text-muted-foreground"/>
           <span
@@ -96,9 +108,29 @@ export function FileDiff({file, onInject, onDiscard, bulk}: FileDiffProps) {
         <HeaderAction label="Add file as context" onClick={() => onInject(`@${file.newPath} `)}>
           <Paperclip className="size-3.5"/>
         </HeaderAction>
-        <HeaderAction label="Discard Changes" onClick={onDiscard}>
-          <Undo2 className="size-3.5"/>
-        </HeaderAction>
+        {onDiscard && (
+          <HeaderAction label="Discard Changes" onClick={onDiscard}>
+            <Undo2 className="size-3.5"/>
+          </HeaderAction>
+        )}
+        {onViewed && (
+          <label
+            htmlFor={`viewed-${file.newPath}`}
+            className="flex shrink-0 cursor-pointer select-none items-center gap-1.5 pl-1 text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <Checkbox
+              id={`viewed-${file.newPath}`}
+              checked={viewed ?? false}
+              // Ticking a file folds it away; unticking brings it back, so the
+              // checkbox doubles as the "done with this one" gesture.
+              onCheckedChange={(next) => {
+                onViewed(next)
+                setExpanded(!next)
+              }}
+            />
+            Viewed
+          </label>
+        )}
       </div>
       {expanded &&
         (file.binary ? (

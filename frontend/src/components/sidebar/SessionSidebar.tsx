@@ -4,6 +4,7 @@ import {GitBranch, Plus, Terminal} from "lucide-react"
 import {toast} from "sonner"
 import {ProjectService, Store} from "@/lib/rpc"
 import {closeSettings, isSettingsOpen, subscribeSettingsCard} from "@/lib/settings-card-store"
+import {closePulls, openPulls} from "@/lib/pulls-card-store"
 import {enabledProviders, useProviders} from "@/lib/providers-store"
 import {ProviderIcon} from "@/lib/provider-icons"
 import {SettingsCard} from "./SettingsCard"
@@ -58,6 +59,7 @@ export function SessionSidebar() {
   const match = useMatch("/projects/:projectId/*")
   const projectId = match?.params.projectId
   const onSettings = !!useMatch("/projects/:projectId/settings")
+  const onPullsRoute = !!useMatch("/projects/:projectId/pulls")
   const navigate = useNavigate()
   const settingsOpen = useSyncExternalStore(subscribeSettingsCard, () =>
     isSettingsOpen(projectId ?? ""),
@@ -82,9 +84,10 @@ export function SessionSidebar() {
     return null
   }
 
-  // No card is highlighted while the Settings screen owns the view, so the
-  // Settings card reads as the active one instead.
-  const activeId = onSettings ? "" : activeSessionId(sessions, projectId)
+  const realActiveId = activeSessionId(sessions, projectId)
+  // No session card highlights while a full-screen route (Settings, Pulls) owns
+  // the view; its own sidebar entry reads as active instead.
+  const activeId = onSettings || onPullsRoute ? "" : realActiveId
   const groups = groupByWorktree(list)
   const projectName = baseName(path)
 
@@ -231,29 +234,47 @@ export function SessionSidebar() {
             }}
           />
         )}
-        {groups.map((group) => (
-          <SessionGroup
-            key={group.path || "__root__"}
-            path={group.path}
-            sessions={group.sessions}
-            projectPath={path}
-            projectName={projectName}
-            activeId={activeId}
-            // The divider only earns its place once a worktree splits the list;
-            // a lone group keeps the old flat, header-less look.
-            showHeader={groups.length > 1}
-            onReorder={(ids) => commitGroupOrder(group.path, ids)}
-            onSelect={(id) => {
-              activateSession(projectId, id)
-              // From the settings screen this returns to the terminal; on the
-              // project route it is a no-op.
-              navigate(`/projects/${projectId}`)
-            }}
-            onClose={(session) => requestClose(session)}
-            onRename={(id, label) => renameSession(projectId, id, label)}
-            onOpenTerminal={(cwd) => newSession(projectId, "shell", cwd)}
-          />
-        ))}
+        {groups.map((group) => {
+          const groupActive = group.sessions.some((s) => s.id === realActiveId)
+          return (
+            <SessionGroup
+              key={group.path || "__root__"}
+              path={group.path}
+              sessions={group.sessions}
+              projectPath={path}
+              projectName={projectName}
+              activeId={activeId}
+              // The divider only earns its place once a worktree splits the list;
+              // a lone group keeps the old flat, header-less look.
+              showHeader={groups.length > 1}
+              onReorder={(ids) => commitGroupOrder(group.path, ids)}
+              onSelect={(id) => {
+                activateSession(projectId, id)
+                // From the settings screen this returns to the terminal; on the
+                // project route it is a no-op.
+                navigate(`/projects/${projectId}`)
+              }}
+              onClose={(session) => requestClose(session)}
+              onRename={(id, label) => renameSession(projectId, id, label)}
+              onOpenTerminal={(cwd) => newSession(projectId, "shell", cwd)}
+              pullsActive={onPullsRoute && groupActive}
+              onPulls={() => {
+                openPulls(group.path || path)
+                const target = groupActive ? realActiveId : group.sessions[0]?.id
+                if (target) {
+                  activateSession(projectId, target)
+                }
+                navigate(`/projects/${projectId}/pulls`)
+              }}
+              onClosePulls={() => {
+                closePulls(group.path || path)
+                if (onPullsRoute && groupActive) {
+                  navigate(`/projects/${projectId}`)
+                }
+              }}
+            />
+          )
+        })}
       </div>
 
       <WorktreeDialog

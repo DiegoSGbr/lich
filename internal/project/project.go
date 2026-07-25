@@ -48,11 +48,14 @@ type Picker interface {
 // Service opens project directories via the native file picker.
 type Service struct {
 	picker Picker
+	// gh runs the GitHub CLI for the pull request flows (pr.go); a seam so they
+	// are testable without a GitHub remote.
+	gh ghRunner
 }
 
 // New returns a project service using the given picker.
 func New(picker Picker) *Service {
-	return &Service{picker: picker}
+	return &Service{picker: picker, gh: runGH}
 }
 
 // Open shows the native directory picker and returns the chosen project, or nil
@@ -151,16 +154,19 @@ func (s *Service) PickFile() (string, error) {
 	return path, nil
 }
 
-// DiffStats summarizes the uncommitted changes of a work tree.
+// DiffStats summarizes the uncommitted changes of a work tree. Head is the
+// commit those changes sit on — the frontend watches it to notice a commit the
+// way it watches Files/Added/Deleted to notice an edit.
 type DiffStats struct {
-	Files   int `json:"files"`
-	Added   int `json:"added"`
-	Deleted int `json:"deleted"`
+	Files   int    `json:"files"`
+	Added   int    `json:"added"`
+	Deleted int    `json:"deleted"`
+	Head    string `json:"head"`
 }
 
-// Diff returns the dirty-file count (modified + untracked) and the added/deleted
-// line totals against HEAD. A non-repository path yields the zero value, matching
-// Branch's contract.
+// Diff returns the dirty-file count (modified + untracked), the added/deleted
+// line totals against HEAD, and the HEAD commit itself. A non-repository path
+// yields the zero value, matching Branch's contract.
 func (s *Service) Diff(path string) DiffStats {
 	var stats DiffStats
 	if out, err := command("git", "-C", path, "status", "--porcelain").Output(); err == nil {
@@ -169,7 +175,9 @@ func (s *Service) Diff(path string) DiffStats {
 	// A repository without commits has no HEAD; diff against git's empty tree,
 	// same as DiffText. Errors here must not skip the untracked block below.
 	base := "HEAD"
-	if _, err := runGit(path, "rev-parse", "--verify", "HEAD"); err != nil {
+	if out, err := runGit(path, "rev-parse", "--verify", "HEAD"); err == nil {
+		stats.Head = strings.TrimSpace(out)
+	} else {
 		base = emptyTreeHash
 	}
 	if out, err := command("git", "-C", path, "diff", "--numstat", base).Output(); err == nil {

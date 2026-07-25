@@ -14,6 +14,8 @@ export interface DiffStats {
   files: number
   added: number
   deleted: number
+  /** The HEAD commit the counts sit on; "" in a repository without commits. */
+  head: string
 }
 
 /** internal/project.PullRequest — the branch's open GitHub PR (gh CLI). */
@@ -21,6 +23,47 @@ export interface PullRequest {
   number: number
   url: string
   state: string
+}
+
+/** internal/project.ChecksRollup — gh statusCheckRollup collapsed to counts. */
+export interface ChecksRollup {
+  passed: number
+  failed: number
+  pending: number
+  total: number
+}
+
+/** How a pull request is merged — the gh flag the backend allow-lists. */
+export type MergeMethod = "squash" | "merge" | "rebase"
+
+/** internal/project.CheckItem — one check of the PR's rollup, for the Checks tab. */
+export interface CheckItem {
+  name: string
+  state: "passed" | "failed" | "pending"
+  /** Workflow name, or the status context's own description. */
+  description: string
+  /** Where to read the run; "" when gh reports none. */
+  url: string
+  /** gh's ISO timestamps; "" while a check has not started or finished. */
+  startedAt: string
+  completedAt: string
+}
+
+/** internal/project.PRDetail — the branch's open PR in full, for the Pulls panel. */
+export interface PullRequestDetail {
+  number: number
+  url: string
+  title: string
+  body: string
+  isDraft: boolean
+  /** gh: MERGEABLE | CONFLICTING | UNKNOWN */
+  mergeable: string
+  baseRefName: string
+  headRefName: string
+  changedFiles: number
+  checks: ChecksRollup
+  /** The rollup itself, worst state first; null when the PR reports no checks. */
+  checkRuns: CheckItem[] | null
 }
 
 /** internal/project.Worktree — a git worktree checkout: branch and path. */
