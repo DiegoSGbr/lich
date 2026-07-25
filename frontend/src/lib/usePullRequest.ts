@@ -1,5 +1,5 @@
 import {useEffect, useState} from "react"
-import {ProjectService} from "./rpc"
+import {lookupPullRequest} from "./pull-request-lookup"
 import type {PullRequest} from "./api-types"
 
 export type {PullRequest}
@@ -9,9 +9,10 @@ export type {PullRequest}
 // changes, and each lookup is a network round-trip. It refetches when the path
 // or branch changes, and on window focus — so opening or merging a PR in the
 // browser is reflected the moment the user returns to lich, without a branch
-// switch. Returns null while loading, on any error, or when the branch has no
-// open PR (a merged or closed one is filtered server-side), so the caller hides
-// the badge.
+// switch. Callers asking about the same checkout share one gh call
+// (pull-request-lookup). Returns null while loading, on any error, or when the
+// branch has no open PR (a merged or closed one is filtered server-side), so
+// the caller hides the badge.
 export function usePullRequest(path: string, branch: string): PullRequest | null {
   const [pr, setPr] = useState<PullRequest | null>(null)
   useEffect(() => {
@@ -22,13 +23,9 @@ export function usePullRequest(path: string, branch: string): PullRequest | null
     let alive = true
     setPr(null)
     const load = () => {
-      ProjectService.PullRequest(path)
-        .then((result) => {
-          if (alive) setPr(result)
-        })
-        .catch(() => {
-          if (alive) setPr(null)
-        })
+      void lookupPullRequest(path, branch).then((result) => {
+        if (alive) setPr(result)
+      })
     }
     load()
     window.addEventListener("focus", load)
