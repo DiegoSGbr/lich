@@ -211,14 +211,16 @@ function PullRequestView({path, detail, onMerged, onInject}: PullRequestViewProp
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-hidden">
         {tab === "overview" ? (
-          <div className="mx-auto max-w-3xl px-6 py-5">
-            {detail.body.trim() !== "" ? (
-              <Markdown>{detail.body}</Markdown>
-            ) : (
-              <p className="text-sm text-muted-foreground">No description.</p>
-            )}
+          <div className="h-full overflow-y-auto">
+            <div className="mx-auto max-w-3xl px-6 py-5">
+              {detail.body.trim() !== "" ? (
+                <Markdown>{detail.body}</Markdown>
+              ) : (
+                <p className="text-sm text-muted-foreground">No description.</p>
+              )}
+            </div>
           </div>
         ) : (
           <PullsFiles path={path} onInject={onInject}/>

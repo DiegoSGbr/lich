@@ -1,14 +1,17 @@
-import type {ReactNode} from "react"
+import {useRef, useState, type ReactNode} from "react"
 import {usePullRequestDiff} from "@/lib/usePullRequestDiff"
 import {FileDiff} from "@/components/diff/FileDiff"
 import {DiffStat} from "@/components/DiffStat"
+import {PullsFileTree} from "./PullsFileTree"
 
-// PullsFiles is the "Files changed" tab of the Pulls screen: the PR's unified
-// diff (gh pr diff) rendered with the same FileDiff cards as the Review dock,
-// read-only — no discard (these changes are committed and remote). Inject still
-// works, so a PR file can be referenced into the session's terminal.
+// PullsFiles is the "Files changed" tab of the Pulls screen: a changed-files
+// tree on the left (click to jump) beside the PR's diff, rendered with the same
+// FileDiff cards as the Review dock — read-only, no discard. Inject still works,
+// so a PR file can be referenced into the session's terminal.
 export function PullsFiles({path, onInject}: {path: string; onInject: (text: string) => void}) {
   const {files, error} = usePullRequestDiff(path)
+  const rows = useRef<Map<string, HTMLElement>>(new Map())
+  const [active, setActive] = useState<string | null>(null)
 
   if (error) {
     return <Notice>Couldn’t load the diff: {error}</Notice>
@@ -23,21 +26,42 @@ export function PullsFiles({path, onInject}: {path: string; onInject: (text: str
   const added = files.reduce((sum, file) => sum + file.added, 0)
   const deleted = files.reduce((sum, file) => sum + file.deleted, 0)
 
+  const jumpTo = (target: string) => {
+    setActive(target)
+    rows.current.get(target)?.scrollIntoView({block: "start", behavior: "smooth"})
+  }
+
   return (
-    <div>
-      <div className="flex items-center justify-end gap-3 border-b border-border px-3 py-2.5 text-xs text-muted-foreground">
-        <span>
-          <span className="font-medium text-foreground">{files.length}</span>{" "}
-          {files.length === 1 ? "file changed" : "files changed"}
-        </span>
-        <span className="flex items-center gap-1.5">
-          <DiffStat added={added} deleted={deleted}/>
-        </span>
+    <div className="flex h-full">
+      <div className="w-60 shrink-0 overflow-y-auto border-r border-border">
+        <PullsFileTree files={files} active={active} onSelect={jumpTo}/>
       </div>
-      <div className="flex flex-col p-3 [&>section:not(:first-child)]:mt-2.5 [&>section:not(:first-child)]:border-t [&>section:not(:first-child)]:border-border [&>section:not(:first-child)]:pt-2.5">
-        {files.map((file) => (
-          <FileDiff key={file.newPath} file={file} onInject={onInject}/>
-        ))}
+      <div className="flex flex-1 flex-col overflow-y-auto">
+        <div className="flex items-center justify-end gap-3 border-b border-border px-3 py-2.5 text-xs text-muted-foreground">
+          <span>
+            <span className="font-medium text-foreground">{files.length}</span>{" "}
+            {files.length === 1 ? "file changed" : "files changed"}
+          </span>
+          <span className="flex items-center gap-1.5">
+            <DiffStat added={added} deleted={deleted}/>
+          </span>
+        </div>
+        <div className="flex flex-col p-3 [&>div:not(:first-child)]:mt-2.5 [&>div:not(:first-child)]:border-t [&>div:not(:first-child)]:border-border [&>div:not(:first-child)]:pt-2.5">
+          {files.map((file) => (
+            <div
+              key={file.newPath}
+              ref={(el) => {
+                if (el) {
+                  rows.current.set(file.newPath, el)
+                } else {
+                  rows.current.delete(file.newPath)
+                }
+              }}
+            >
+              <FileDiff file={file} onInject={onInject}/>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   )
