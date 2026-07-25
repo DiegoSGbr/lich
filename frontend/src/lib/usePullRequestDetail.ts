@@ -20,7 +20,9 @@ export interface PullRequestState {
 // error when the branch simply has no open PR: the panel's empty state.
 export function usePullRequestDetail(path: string, branch: string): PullRequestState {
   const [detail, setDetail] = useState<PullRequestDetail | null>(null)
-  const [loading, setLoading] = useState(false)
+  // Starts true so the first paint — before the mount effect fires the lookup —
+  // reads as loading, not as "this branch has no pull request".
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const seq = useRef(0)
 
