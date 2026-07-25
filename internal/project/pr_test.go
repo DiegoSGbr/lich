@@ -257,8 +257,8 @@ func TestPullRequestDetailFlow(t *testing.T) {
 		if want := []string{"pr", "view", "--json", prViewFields}; !slices.Equal(gh.args, want) {
 			t.Errorf("args = %v, want %v", gh.args, want)
 		}
-		if gh.timeout != prDetailTimeout {
-			t.Errorf("timeout = %v, want %v", gh.timeout, prDetailTimeout)
+		if gh.timeout != prReadTimeout {
+			t.Errorf("timeout = %v, want %v", gh.timeout, prReadTimeout)
 		}
 	})
 

@@ -14,10 +14,10 @@ import (
 )
 
 // gh network calls are capped so a slow forge or a hung auth prompt never
-// wedges the dock panel; merge and create get more room because they push and
-// mutate on the remote.
+// wedges the pull request screen. The reads (view, diff) share one budget;
+// merge and create get more room because they push and mutate on the remote.
 const (
-	prDetailTimeout = 8 * time.Second
+	prReadTimeout   = 8 * time.Second
 	prMergeTimeout  = 30 * time.Second
 	prCreateTimeout = 20 * time.Second
 )
@@ -113,7 +113,7 @@ type checkItem struct {
 // real failure (gh missing, not a GitHub repo) yields an error so the panel can
 // tell "no PR" apart from "could not look up".
 func (s *Service) PullRequestDetail(path string) (*PRDetail, error) {
-	out, err := s.gh(prDetailTimeout, path, "pr", "view", "--json", prViewFields)
+	out, err := s.gh(prReadTimeout, path, "pr", "view", "--json", prViewFields)
 	if errors.Is(err, errNoPullRequest) {
 		return nil, nil
 	}
@@ -241,8 +241,13 @@ func (s *Service) CreatePullRequest(path string) error {
 // Pulls screen's "Files changed" tab. --color never keeps the output plain so
 // the frontend's parseDiff reads it. An empty string with no error means the
 // branch has no open PR (nothing to show).
+//
+// Ceiling: the whole diff is buffered here and shipped as one JSON string, so a
+// monster PR costs its own size in memory on both sides. Reviewing a diff that
+// large in a panel is not the workflow; stream it (or cap and mark it
+// truncated) if that ever stops being true.
 func (s *Service) PullRequestDiff(path string) (string, error) {
-	out, err := s.gh(prDetailTimeout, path, "pr", "diff", "--color", "never")
+	out, err := s.gh(prReadTimeout, path, "pr", "diff", "--color", "never")
 	if errors.Is(err, errNoPullRequest) {
 		return "", nil
 	}
