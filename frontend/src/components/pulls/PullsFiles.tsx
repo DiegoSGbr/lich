@@ -25,12 +25,14 @@ export function PullsFiles({path, onInject}: {path: string; onInject: (text: str
 
   return (
     <div>
-      <div className="flex items-center gap-3 border-b border-border px-3 py-2 text-xs text-muted-foreground">
+      <div className="flex items-center justify-end gap-3 border-b border-border px-3 py-2.5 text-xs text-muted-foreground">
         <span>
           <span className="font-medium text-foreground">{files.length}</span>{" "}
           {files.length === 1 ? "file changed" : "files changed"}
         </span>
-        <DiffStat added={added} deleted={deleted}/>
+        <span className="flex items-center gap-1.5">
+          <DiffStat added={added} deleted={deleted}/>
+        </span>
       </div>
       <div className="flex flex-col p-3 [&>section:not(:first-child)]:mt-2.5 [&>section:not(:first-child)]:border-t [&>section:not(:first-child)]:border-border [&>section:not(:first-child)]:pt-2.5">
         {files.map((file) => (
