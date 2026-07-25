@@ -30,7 +30,9 @@ const mdProse = cn(
 )
 
 // A markdown link must not navigate lich's own Chromium window; open it in the
-// system browser instead, the same as every other external link in the app.
+// system browser instead, the same as every other external link in the app. A
+// PR body also carries anchors and repo-relative links, which the backend's
+// http(s) gate refuses — swallow those here instead of firing a rejected call.
 const components: Components = {
   a(props) {
     const {href, children} = props
@@ -39,7 +41,9 @@ const components: Components = {
         href={href}
         onClick={(e) => {
           e.preventDefault()
-          if (href) void System.OpenExternal(href)
+          if (href?.startsWith("http://") || href?.startsWith("https://")) {
+            void System.OpenExternal(href)
+          }
         }}
       >
         {children}
