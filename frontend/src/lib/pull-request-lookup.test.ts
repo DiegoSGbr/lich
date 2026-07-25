@@ -26,9 +26,9 @@ afterEach(() => {
 describe("pull-request-lookup", () => {
   it("collapses a burst of callers into one gh call", async () => {
     const results = await Promise.all([
-      lookupPullRequest("/a", "main"),
-      lookupPullRequest("/a", "main"),
-      lookupPullRequest("/a", "main"),
+      lookupPullRequest("/a", "main", "sha1"),
+      lookupPullRequest("/a", "main", "sha1"),
+      lookupPullRequest("/a", "main", "sha1"),
     ])
     expect(pullRequest).toHaveBeenCalledTimes(1)
     expect(results).toEqual([pr, pr, pr])
@@ -37,10 +37,10 @@ describe("pull-request-lookup", () => {
   it("shares a slow call however long it takes", async () => {
     let release = (_: typeof pr | null) => {}
     pullRequest.mockReturnValueOnce(new Promise((resolve) => (release = resolve)))
-    const first = lookupPullRequest("/b", "main")
+    const first = lookupPullRequest("/b", "main", "sha1")
     // Well past the share window, but the first call has not answered yet.
     vi.setSystemTime(Date.now() + 60_000)
-    const second = lookupPullRequest("/b", "main")
+    const second = lookupPullRequest("/b", "main", "sha1")
     release(pr)
     expect(await first).toEqual(pr)
     expect(await second).toEqual(pr)
@@ -48,22 +48,30 @@ describe("pull-request-lookup", () => {
   })
 
   it("asks gh again once the answer goes stale", async () => {
-    await lookupPullRequest("/c", "main")
+    await lookupPullRequest("/c", "main", "sha1")
     vi.setSystemTime(Date.now() + 60_000)
-    await lookupPullRequest("/c", "main")
+    await lookupPullRequest("/c", "main", "sha1")
     expect(pullRequest).toHaveBeenCalledTimes(2)
   })
 
   it("does not share across branches", async () => {
     await Promise.all([
-      lookupPullRequest("/d", "main"),
-      lookupPullRequest("/d", "feature"),
+      lookupPullRequest("/d", "main", "sha1"),
+      lookupPullRequest("/d", "feature", "sha1"),
     ])
+    expect(pullRequest).toHaveBeenCalledTimes(2)
+  })
+
+  // A commit from the session next door is what opens (or closes) a PR, so a
+  // moved HEAD must reach gh rather than replaying the answer for the old one.
+  it("asks again when the head commit moves", async () => {
+    await lookupPullRequest("/f", "main", "sha1")
+    await lookupPullRequest("/f", "main", "sha2")
     expect(pullRequest).toHaveBeenCalledTimes(2)
   })
 
   it("resolves a failed lookup to no pull request", async () => {
     pullRequest.mockRejectedValueOnce(new Error("gh: not found"))
-    await expect(lookupPullRequest("/e", "main")).resolves.toBeNull()
+    await expect(lookupPullRequest("/e", "main", "sha1")).resolves.toBeNull()
   })
 })

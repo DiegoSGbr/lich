@@ -18,7 +18,7 @@ interface PullRequestCardProps {
 // as the door to open one, whose create flow lives on the screen's empty state).
 export function PullRequestCard({path, active, onSelect, onClose}: PullRequestCardProps) {
   const git = useGitStatus(path)
-  const pr = usePullRequest(path, git?.branch ?? "")
+  const pr = usePullRequest(path, git?.branch ?? "", git?.head ?? "")
   return (
     <button
       type="button"

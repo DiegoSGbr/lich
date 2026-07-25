@@ -57,7 +57,7 @@ export function FooterBar({dock, onDock}: FooterBarProps) {
   // The footer context readout is opt-out (Settings › Providers).
   const {showContextUsage} = useSettings()
   const status = useGitStatus(path)
-  const pr = usePullRequest(path, status?.branch ?? "")
+  const pr = usePullRequest(path, status?.branch ?? "", status?.head ?? "")
   const now = useNow()
 
   const attachFile = async () => {

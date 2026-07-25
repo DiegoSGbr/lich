@@ -69,7 +69,7 @@ export function SessionCard({
   const liveCwd = useSessionCwd(session.id)
   const shownPath = liveCwd || session.path || path
   const git = useGitStatus(shownPath)
-  const pr = usePullRequest(shownPath, git?.branch ?? "")
+  const pr = usePullRequest(shownPath, git?.branch ?? "", git?.head ?? "")
   // Renaming disables the drag: the sensor would otherwise claim the pointer
   // before the input could be clicked into or its text selected.
   const {

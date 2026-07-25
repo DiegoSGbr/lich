@@ -10,9 +10,10 @@ export interface PullRequestDiffState {
 
 // usePullRequestDiff fetches and parses the PR's unified diff (gh pr diff) for
 // the Files changed tab. Fetched on demand — the diff is a gh round-trip and can
-// be large — and refetched on window focus, like the PR detail. files is null
-// while loading or on error; an empty array is a PR with no file changes.
-export function usePullRequestDiff(path: string): PullRequestDiffState {
+// be large — and refetched when the checkout's HEAD moves or on window focus,
+// like the PR detail. files is null while loading or on error; an empty array
+// is a PR with no file changes.
+export function usePullRequestDiff(path: string, head: string): PullRequestDiffState {
   const [files, setFiles] = useState<DiffFile[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const seq = useRef(0)
@@ -44,7 +45,7 @@ export function usePullRequestDiff(path: string): PullRequestDiffState {
       seq.current++
       window.removeEventListener("focus", refresh)
     }
-  }, [refresh])
+  }, [refresh, head])
 
   return {files, error}
 }

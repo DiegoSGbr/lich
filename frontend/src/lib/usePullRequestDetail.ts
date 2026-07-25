@@ -13,12 +13,17 @@ export interface PullRequestState {
 }
 
 // usePullRequestDetail resolves the active branch's open PR in full for the
-// Pulls dock tab. Like the footer badge it is not polled — a PR changes rarely
-// and each lookup is a gh network round-trip — but it refetches on window focus
-// (so opening or merging in the browser reflects on return) and exposes
-// refresh() so an in-app merge updates the panel at once. detail is null with no
-// error when the branch simply has no open PR: the panel's empty state.
-export function usePullRequestDetail(path: string, branch: string): PullRequestState {
+// Pulls screen. Like the footer badge it is not polled — each lookup is a gh
+// network round-trip — but it refetches whenever the checkout's HEAD moves (a
+// commit from the session next door lands in the checks and the diff), on
+// window focus, and through refresh() so an in-app merge or a manual reload
+// updates the screen at once. detail is null with no error when the branch
+// simply has no open PR: the screen's empty state.
+export function usePullRequestDetail(
+  path: string,
+  branch: string,
+  head: string,
+): PullRequestState {
   const [detail, setDetail] = useState<PullRequestDetail | null>(null)
   // Starts true so the first paint — before the mount effect fires the lookup —
   // reads as loading, not as "this branch has no pull request".
@@ -60,7 +65,7 @@ export function usePullRequestDetail(path: string, branch: string): PullRequestS
       seq.current++
       window.removeEventListener("focus", refresh)
     }
-  }, [refresh, branch])
+  }, [refresh, branch, head])
 
   return {detail, loading, error, refresh}
 }

@@ -17,11 +17,15 @@ interface Shared {
 const shared = new Map<string, Shared>()
 
 // lookupPullRequest resolves a checkout's open PR, sharing one gh call across
-// every caller asking about the same checkout+branch at the same time. It never
-// rejects: a failed lookup (no gh, not a GitHub repo) reads as "no PR", the
-// caller's cue to hide the badge.
-export function lookupPullRequest(path: string, branch: string): Promise<PullRequest | null> {
-  const key = `${path}\n${branch}`
+// every caller asking about the same checkout+branch+commit at the same time.
+// It never rejects: a failed lookup (no gh, not a GitHub repo) reads as "no
+// PR", the caller's cue to hide the badge.
+export function lookupPullRequest(
+  path: string,
+  branch: string,
+  head: string,
+): Promise<PullRequest | null> {
+  const key = `${path}\n${branch}\n${head}`
   const now = Date.now()
   const hit = shared.get(key)
   // An in-flight call is always shared, however long gh takes.
