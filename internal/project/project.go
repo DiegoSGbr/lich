@@ -48,11 +48,14 @@ type Picker interface {
 // Service opens project directories via the native file picker.
 type Service struct {
 	picker Picker
+	// gh runs the GitHub CLI for the pull request flows (pr.go); a seam so they
+	// are testable without a GitHub remote.
+	gh ghRunner
 }
 
 // New returns a project service using the given picker.
 func New(picker Picker) *Service {
-	return &Service{picker: picker}
+	return &Service{picker: picker, gh: runGH}
 }
 
 // Open shows the native directory picker and returns the chosen project, or nil

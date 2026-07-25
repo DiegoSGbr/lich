@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -20,6 +21,37 @@ const (
 	prMergeTimeout  = 30 * time.Second
 	prCreateTimeout = 20 * time.Second
 )
+
+// ghRunner runs one gh subcommand inside dir and returns its stdout. It is a
+// field on Service so the pull request flows can be exercised without a GitHub
+// remote; production wiring is runGH.
+type ghRunner func(timeout time.Duration, dir string, args ...string) ([]byte, error)
+
+// errNoPullRequest marks gh's "no pull requests found" — the one failure that
+// means the branch simply has no PR, which the read flows turn into an empty
+// panel instead of an error.
+var errNoPullRequest = errors.New("no pull request for this branch")
+
+// runGH shells out to gh with the call capped by timeout, and turns a failure
+// into an error carrying gh's own stderr (it names the cause — not mergeable,
+// branch protection, auth, missing repo).
+func runGH(timeout time.Duration, dir string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", args...)
+	cmd.Dir = dir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	winexec.Hide(cmd)
+	out, err := cmd.Output()
+	if err != nil {
+		if isNoPullRequest(stderr.String()) {
+			return nil, errNoPullRequest
+		}
+		return nil, errors.New(ghError(stderr.String(), err))
+	}
+	return out, nil
+}
 
 // prViewFields is the gh `pr view --json` selection backing the Pulls panel.
 const prViewFields = "number,url,state,title,body,isDraft,mergeable,baseRefName,headRefName,statusCheckRollup,changedFiles"
@@ -81,19 +113,12 @@ type checkItem struct {
 // real failure (gh missing, not a GitHub repo) yields an error so the panel can
 // tell "no PR" apart from "could not look up".
 func (s *Service) PullRequestDetail(path string) (*PRDetail, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), prDetailTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", "pr", "view", "--json", prViewFields)
-	cmd.Dir = path
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	winexec.Hide(cmd)
-	out, err := cmd.Output()
+	out, err := s.gh(prDetailTimeout, path, "pr", "view", "--json", prViewFields)
+	if errors.Is(err, errNoPullRequest) {
+		return nil, nil
+	}
 	if err != nil {
-		if isNoPullRequest(stderr.String()) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("gh pr view: %s", ghError(stderr.String(), err))
+		return nil, fmt.Errorf("gh pr view: %w", err)
 	}
 	return parsePRDetail(out)
 }
@@ -178,15 +203,8 @@ func (s *Service) MergePullRequest(path, method, subject, body string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), prMergeTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", args...)
-	cmd.Dir = path
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	winexec.Hide(cmd)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("gh pr merge: %s", ghError(stderr.String(), err))
+	if _, err := s.gh(prMergeTimeout, path, args...); err != nil {
+		return fmt.Errorf("gh pr merge: %w", err)
 	}
 	return nil
 }
@@ -213,15 +231,8 @@ func mergeArgs(method, subject, body string) ([]string, error) {
 // Deliberately the web flow, not an in-app form — GitHub's page already owns the
 // title, body, reviewers and template. Returns once the browser is launched.
 func (s *Service) CreatePullRequest(path string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), prCreateTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", "pr", "create", "--web")
-	cmd.Dir = path
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	winexec.Hide(cmd)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("gh pr create: %s", ghError(stderr.String(), err))
+	if _, err := s.gh(prCreateTimeout, path, "pr", "create", "--web"); err != nil {
+		return fmt.Errorf("gh pr create: %w", err)
 	}
 	return nil
 }
@@ -232,19 +243,12 @@ func (s *Service) CreatePullRequest(path string) error {
 // the frontend's parseDiff reads it. An empty string with no error means the
 // branch has no open PR (nothing to show).
 func (s *Service) PullRequestDiff(path string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), prDetailTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", "pr", "diff", "--color", "never")
-	cmd.Dir = path
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	winexec.Hide(cmd)
-	out, err := cmd.Output()
+	out, err := s.gh(prDetailTimeout, path, "pr", "diff", "--color", "never")
+	if errors.Is(err, errNoPullRequest) {
+		return "", nil
+	}
 	if err != nil {
-		if isNoPullRequest(stderr.String()) {
-			return "", nil
-		}
-		return "", fmt.Errorf("gh pr diff: %s", ghError(stderr.String(), err))
+		return "", fmt.Errorf("gh pr diff: %w", err)
 	}
 	return string(out), nil
 }
