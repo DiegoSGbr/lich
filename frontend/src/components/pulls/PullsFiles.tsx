@@ -70,8 +70,10 @@ export function PullsFiles({path, pullRequest, onInject}: PullsFilesProps) {
           <FileTree tree={tree} active={active} defaultOpen onSelect={jumpTo}/>
         </div>
       )}
-      <div className="flex flex-1 flex-col overflow-y-auto">
-        <div className="flex items-center justify-end gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
+      <div className="flex flex-1 flex-col overflow-hidden">
+        {/* Outside the scroll area, not sticky: the totals and the panel toggle
+            stay put without fighting each file's own sticky header. */}
+        <div className="flex flex-none items-center justify-end gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
           <span className="mr-auto flex items-center gap-2">
             <HeaderAction
               label={treeOpen ? "Hide the file tree" : "Show the file tree"}
@@ -103,27 +105,29 @@ export function PullsFiles({path, pullRequest, onInject}: PullsFilesProps) {
             )}
           </HeaderAction>
         </div>
-        <div className="flex flex-col p-3 [&>div:not(:first-child)]:mt-2.5 [&>div:not(:first-child)]:border-t [&>div:not(:first-child)]:border-border [&>div:not(:first-child)]:pt-2.5">
-          {files.map((file) => (
-            <div
-              key={file.newPath}
-              ref={(el) => {
-                if (el) {
-                  rows.current.set(file.newPath, el)
-                } else {
-                  rows.current.delete(file.newPath)
-                }
-              }}
-            >
-              <FileDiff
-                file={file}
-                onInject={onInject}
-                bulk={bulk}
-                viewed={viewed.has(file.newPath)}
-                onViewed={(next) => setViewed(pullRequest, file.newPath, next)}
-              />
-            </div>
-          ))}
+        <div className="flex-1 overflow-y-auto">
+          <div className="flex flex-col p-3 [&>div:not(:first-child)]:mt-2.5 [&>div:not(:first-child)]:border-t [&>div:not(:first-child)]:border-border [&>div:not(:first-child)]:pt-2.5">
+            {files.map((file) => (
+              <div
+                key={file.newPath}
+                ref={(el) => {
+                  if (el) {
+                    rows.current.set(file.newPath, el)
+                  } else {
+                    rows.current.delete(file.newPath)
+                  }
+                }}
+              >
+                <FileDiff
+                  file={file}
+                  onInject={onInject}
+                  bulk={bulk}
+                  viewed={viewed.has(file.newPath)}
+                  onViewed={(next) => setViewed(pullRequest, file.newPath, next)}
+                />
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
