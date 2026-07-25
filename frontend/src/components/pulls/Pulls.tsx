@@ -207,6 +207,9 @@ function PullRequestView({path, detail, onMerged, onInject}: PullRequestViewProp
           </TabButton>
           <TabButton active={tab === "files"} onClick={() => setTab("files")}>
             Files changed
+            {detail.changedFiles > 0 && (
+              <span className="tabular-nums text-muted-foreground">{detail.changedFiles}</span>
+            )}
           </TabButton>
         </div>
       </div>
@@ -246,7 +249,7 @@ function TabButton({active, onClick, children}: {active: boolean; onClick: () =>
       type="button"
       onClick={onClick}
       className={cn(
-        "-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+        "-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
         active
           ? "border-primary text-foreground"
           : "border-transparent text-muted-foreground hover:text-foreground",

@@ -43,6 +43,7 @@ export interface PullRequestDetail {
   mergeable: string
   baseRefName: string
   headRefName: string
+  changedFiles: number
   checks: ChecksRollup
 }
 

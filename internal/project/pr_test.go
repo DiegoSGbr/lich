@@ -17,6 +17,7 @@ func TestParsePRDetail(t *testing.T) {
 			"mergeable": "MERGEABLE",
 			"baseRefName": "main",
 			"headRefName": "quiet-willow",
+			"changedFiles": 6,
 			"statusCheckRollup": [
 				{"status": "COMPLETED", "conclusion": "SUCCESS"},
 				{"state": "SUCCESS"}
@@ -37,6 +38,9 @@ func TestParsePRDetail(t *testing.T) {
 		}
 		if pr.Checks.Passed != 2 || pr.Checks.Total != 2 || pr.Checks.Failed != 0 {
 			t.Errorf("wrong checks: %+v", pr.Checks)
+		}
+		if pr.ChangedFiles != 6 {
+			t.Errorf("wrong changed files: %d", pr.ChangedFiles)
 		}
 	})
 

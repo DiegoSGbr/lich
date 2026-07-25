@@ -22,22 +22,23 @@ const (
 )
 
 // prViewFields is the gh `pr view --json` selection backing the Pulls panel.
-const prViewFields = "number,url,state,title,body,isDraft,mergeable,baseRefName,headRefName,statusCheckRollup"
+const prViewFields = "number,url,state,title,body,isDraft,mergeable,baseRefName,headRefName,statusCheckRollup,changedFiles"
 
 // PRDetail is the full view of a branch's open pull request — richer than the
 // footer badge's PullRequest — driving the dock's Pulls panel: the title, body,
 // CI rollup and mergeability gate the merge affordance.
 type PRDetail struct {
-	Number      int          `json:"number"`
-	URL         string       `json:"url"`
-	State       string       `json:"state"`
-	Title       string       `json:"title"`
-	Body        string       `json:"body"`
-	IsDraft     bool         `json:"isDraft"`
-	Mergeable   string       `json:"mergeable"` // gh: MERGEABLE | CONFLICTING | UNKNOWN
-	BaseRefName string       `json:"baseRefName"`
-	HeadRefName string       `json:"headRefName"`
-	Checks      ChecksRollup `json:"checks"`
+	Number       int          `json:"number"`
+	URL          string       `json:"url"`
+	State        string       `json:"state"`
+	Title        string       `json:"title"`
+	Body         string       `json:"body"`
+	IsDraft      bool         `json:"isDraft"`
+	Mergeable    string       `json:"mergeable"` // gh: MERGEABLE | CONFLICTING | UNKNOWN
+	BaseRefName  string       `json:"baseRefName"`
+	HeadRefName  string       `json:"headRefName"`
+	ChangedFiles int          `json:"changedFiles"`
+	Checks       ChecksRollup `json:"checks"`
 }
 
 // ChecksRollup collapses gh's statusCheckRollup array into the counts the panel
@@ -61,6 +62,7 @@ type ghPRView struct {
 	Mergeable         string      `json:"mergeable"`
 	BaseRefName       string      `json:"baseRefName"`
 	HeadRefName       string      `json:"headRefName"`
+	ChangedFiles      int         `json:"changedFiles"`
 	StatusCheckRollup []checkItem `json:"statusCheckRollup"`
 }
 
@@ -108,16 +110,17 @@ func parsePRDetail(out []byte) (*PRDetail, error) {
 		return nil, nil
 	}
 	return &PRDetail{
-		Number:      v.Number,
-		URL:         v.URL,
-		State:       v.State,
-		Title:       v.Title,
-		Body:        v.Body,
-		IsDraft:     v.IsDraft,
-		Mergeable:   v.Mergeable,
-		BaseRefName: v.BaseRefName,
-		HeadRefName: v.HeadRefName,
-		Checks:      reduceChecks(v.StatusCheckRollup),
+		Number:       v.Number,
+		URL:          v.URL,
+		State:        v.State,
+		Title:        v.Title,
+		Body:         v.Body,
+		IsDraft:      v.IsDraft,
+		Mergeable:    v.Mergeable,
+		BaseRefName:  v.BaseRefName,
+		HeadRefName:  v.HeadRefName,
+		ChangedFiles: v.ChangedFiles,
+		Checks:       reduceChecks(v.StatusCheckRollup),
 	}, nil
 }
 
