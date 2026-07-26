@@ -62,18 +62,45 @@ export interface PullRequestCommit {
   date: string
 }
 
+/** internal/project.PRSummary — one row of the repository's open pull requests. */
+export interface PullRequestSummary {
+  number: number
+  title: string
+  /** Login, or the display name when gh reports no login. */
+  author: string
+  /** gh: OPEN | CLOSED | MERGED */
+  state: string
+  isDraft: boolean
+  /** gh: APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED; "" when none is required. */
+  reviewDecision: string
+  headRefName: string
+  /** The head branch lives on a fork: it can be read, but not pushed back to. */
+  isCrossRepository: boolean
+  /** gh's ISO timestamp. */
+  updatedAt: string
+  checks: ChecksRollup
+}
+
 /** internal/project.PRDetail — the branch's open PR in full, for the Pulls panel. */
 export interface PullRequestDetail {
   number: number
   url: string
   title: string
   body: string
+  /** gh: OPEN | CLOSED | MERGED. Only a number-addressed lookup returns a
+   * non-OPEN one; the branch lookup still hides them. */
+  state: string
   isDraft: boolean
   /** gh: MERGEABLE | CONFLICTING | UNKNOWN */
   mergeable: string
+  /** gh's aggregate verdict: APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED;
+   * "" where the repository requires no review. */
+  reviewDecision: string
   baseRefName: string
   headRefName: string
   changedFiles: number
+  /** The head branch lives on a fork: no session can be opened on it. */
+  isCrossRepository: boolean
   checks: ChecksRollup
   /** The rollup itself, worst state first; null when the PR reports no checks. */
   checkRuns: CheckItem[] | null

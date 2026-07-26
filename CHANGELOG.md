@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **lich now lists a repository's open pull requests, and can open a session on
+  one.** A pull-request button in the tab bar, beside Settings, parks a "Pull
+  requests" card at the top of the sidebar and opens the list — the one way in
+  that does not already require a pull request, since every other entry appears
+  only once a checkout has one. A column holds every open PR — number, title,
+  author, how long ago it moved, and a dot for its checks — with quick filters
+  (all, ready, drafts, failing) and a sort that remembers itself. The filter box
+  takes GitHub's own qualifiers beside the words it matches: `is:merged`,
+  `is:closed` and `is:all` reach past the open ones, and `is:draft`, `is:fork`
+  and `review:approved` / `review:changes-requested` / `review:required` narrow
+  what came back. One call brings back the 50 most recently updated, and the
+  column says so when that is all of them. Selecting a pull request shows it in
+  full, whatever branch the checkout is on and whether or not it is still open —
+  its status line reads Open, Draft, Merged or Closed, and says where the review
+  stands beside the checks and the conflicts. The column collapses to a rail
+  when the pull request wants the width, and stays collapsed until it is asked
+  back. A worktree's own pull request card is untouched: it still opens that one
+  pull request alone, without the list. **Open in Session**, beside Merge, checks
+  the PR's head branch out into its own worktree and starts a session in it, with
+  the pull request card already parked so the session carries its PR. A branch
+  already checked out is reused rather than checked out twice — the button reads
+  "Go to session" once one is live — and a pull request from a fork is refused
+  up front, since its commits could never be pushed back.
+
 ## [0.19.0] - 2026-07-25
 
 ### Added

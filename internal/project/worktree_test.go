@@ -1,12 +1,16 @@
 package project
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // initRepo creates a git repository with one commit on branch main and returns
@@ -314,4 +318,267 @@ func TestWorktreeDirty(t *testing.T) {
 	if _, err := svc.WorktreeDirty(t.TempDir()); err == nil {
 		t.Error("WorktreeDirty(non-repo) = nil error, want error")
 	}
+}
+
+// scriptedGH fakes the gh CLI for the PR checkout flow: `pr view` answers with
+// headJSON, and `pr checkout` either fails with checkoutErr or does what gh
+// would — create the head branch in the worktree it was called in. It records
+// the directory each call ran in, which is the whole point of the flow (the
+// checkout must happen inside the new worktree, not the project).
+type scriptedGH struct {
+	headJSON    string
+	checkoutErr error
+	// lockOnFail locks the worktree before failing. git refuses to remove a
+	// locked worktree, which is how the cleanup itself is made to fail.
+	lockOnFail  bool
+	viewDir     string
+	checkoutDir string
+	calls       []string
+}
+
+func (g *scriptedGH) run(_ time.Duration, dir string, args ...string) ([]byte, error) {
+	g.calls = append(g.calls, strings.Join(args, " "))
+	if len(args) > 1 && args[1] == "checkout" {
+		g.checkoutDir = dir
+		if g.checkoutErr != nil {
+			if g.lockOnFail {
+				if out, err := exec.Command("git", "-C", dir, "worktree", "lock", dir).CombinedOutput(); err != nil {
+					return nil, fmt.Errorf("fake lock: %v (%s)", err, out)
+				}
+			}
+			return nil, g.checkoutErr
+		}
+		var head prHead
+		if err := json.Unmarshal([]byte(g.headJSON), &head); err != nil {
+			return nil, err
+		}
+		if out, err := exec.Command("git", "-C", dir, "checkout", "-b", head.RefName).CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("fake checkout: %v (%s)", err, out)
+		}
+		return nil, nil
+	}
+	g.viewDir = dir
+	return []byte(g.headJSON), nil
+}
+
+func TestCreateWorktreeFromPR(t *testing.T) {
+	t.Run("checks the head branch out into its own worktree", func(t *testing.T) {
+		data := t.TempDir()
+		t.Setenv("XDG_DATA_HOME", data)
+		repo, git := initRepo(t)
+		gh := &scriptedGH{headJSON: `{"headRefName":"fix/poll","isCrossRepository":false}`}
+		svc := &Service{gh: gh.run}
+
+		wt, err := svc.CreateWorktreeFromPR(repo, "proj", 105)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := filepath.Join(data, "lich", "worktrees", "proj", "fix/poll")
+		if wt.Path != want || wt.Name != "fix/poll" {
+			t.Errorf("worktree = %+v, want name fix/poll at %s", wt, want)
+		}
+		// The checkout has to run inside the new worktree: run in the project it
+		// would move the project's own HEAD instead.
+		if gh.checkoutDir != wt.Path {
+			t.Errorf("gh pr checkout ran in %q, want %q", gh.checkoutDir, wt.Path)
+		}
+		if gh.viewDir != repo {
+			t.Errorf("gh pr view ran in %q, want %q", gh.viewDir, repo)
+		}
+		out, err := exec.Command("git", "-C", wt.Path, "symbolic-ref", "--short", "HEAD").Output()
+		if err != nil || strings.TrimSpace(string(out)) != "fix/poll" {
+			t.Errorf("worktree is not on the head branch: %q (%v)", out, err)
+		}
+		if !strings.Contains(git("worktree", "list"), wt.Path) {
+			t.Errorf("the worktree is not registered with git: %s", git("worktree", "list"))
+		}
+	})
+
+	t.Run("a fork pull request is refused before anything is created", func(t *testing.T) {
+		t.Setenv("XDG_DATA_HOME", t.TempDir())
+		repo, _ := initRepo(t)
+		gh := &scriptedGH{headJSON: `{"headRefName":"patch-1","isCrossRepository":true}`}
+
+		_, err := (&Service{gh: gh.run}).CreateWorktreeFromPR(repo, "proj", 103)
+		if err == nil || !strings.Contains(err.Error(), "fork") {
+			t.Fatalf("want a fork refusal, got %v", err)
+		}
+		if gh.checkoutDir != "" {
+			t.Error("gh pr checkout ran for a fork pull request")
+		}
+	})
+
+	t.Run("a failed checkout leaves no worktree behind", func(t *testing.T) {
+		data := t.TempDir()
+		t.Setenv("XDG_DATA_HOME", data)
+		repo, git := initRepo(t)
+		gh := &scriptedGH{
+			headJSON:    `{"headRefName":"fix/poll","isCrossRepository":false}`,
+			checkoutErr: errors.New("fatal: 'fix/poll' is already checked out"),
+		}
+
+		_, err := (&Service{gh: gh.run}).CreateWorktreeFromPR(repo, "proj", 105)
+		if err == nil || !strings.Contains(err.Error(), "already checked out") {
+			t.Fatalf("want gh's own refusal, got %v", err)
+		}
+		wtPath := filepath.Join(data, "lich", "worktrees", "proj", "fix/poll")
+		if _, statErr := os.Stat(wtPath); statErr == nil {
+			t.Error("the failed checkout left its directory behind")
+		}
+		// A husk would also stay registered and block the next attempt.
+		if strings.Contains(git("worktree", "list"), "fix/poll") {
+			t.Error("the failed checkout stayed registered with git")
+		}
+	})
+
+	// The cleanup is best-effort; what it must never do is bury the reason the
+	// checkout failed under the reason the cleanup failed.
+	t.Run("a cleanup that fails too still names gh's own refusal", func(t *testing.T) {
+		t.Setenv("XDG_DATA_HOME", t.TempDir())
+		repo, _ := initRepo(t)
+		gh := &scriptedGH{
+			headJSON:    `{"headRefName":"fix/poll","isCrossRepository":false}`,
+			checkoutErr: errors.New("fatal: could not fetch the head ref"),
+			lockOnFail:  true,
+		}
+
+		_, err := (&Service{gh: gh.run}).CreateWorktreeFromPR(repo, "proj", 105)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if !strings.Contains(err.Error(), "could not fetch the head ref") {
+			t.Errorf("gh's own cause was lost: %q", err)
+		}
+		if !strings.Contains(err.Error(), "could not be removed") {
+			t.Errorf("the failed cleanup went unreported: %q", err)
+		}
+	})
+
+	t.Run("a number that cannot name a pull request never reaches gh", func(t *testing.T) {
+		gh := &scriptedGH{}
+		if _, err := (&Service{gh: gh.run}).CreateWorktreeFromPR(t.TempDir(), "proj", 0); err == nil {
+			t.Error("expected an error for pull request 0")
+		}
+		if len(gh.calls) != 0 {
+			t.Errorf("gh was called %v, want no calls", gh.calls)
+		}
+	})
+
+	t.Run("an occupied path is refused", func(t *testing.T) {
+		data := t.TempDir()
+		t.Setenv("XDG_DATA_HOME", data)
+		repo, _ := initRepo(t)
+		wtPath := filepath.Join(data, "lich", "worktrees", "proj", "fix/poll")
+		if err := os.MkdirAll(wtPath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		gh := &scriptedGH{headJSON: `{"headRefName":"fix/poll","isCrossRepository":false}`}
+
+		_, err := (&Service{gh: gh.run}).CreateWorktreeFromPR(repo, "proj", 105)
+		if err == nil || !strings.Contains(err.Error(), "already exists") {
+			t.Fatalf("want an already-exists refusal, got %v", err)
+		}
+	})
+}
+
+// TestPullRequestHead covers what gh can answer with that is not a head branch:
+// the flow has to stop at the lookup rather than build a worktree named "".
+func TestPullRequestHead(t *testing.T) {
+	tests := []struct {
+		name string
+		gh   *scriptedGH
+		want string
+	}{
+		{"payload gh could not have meant", &scriptedGH{headJSON: `{not json`}, "decode"},
+		{"a pull request with no head branch", &scriptedGH{headJSON: `{}`}, "no head branch"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := (&Service{gh: tt.gh.run}).pullRequestHead("/repo", 7)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("want an error naming %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+// TestCreateWorktreeFromPRRejectsRefName proves the branch name reaches git's
+// own check-ref-format before it is joined into a path: gh names the branch, so
+// nothing else stands between a hostile head ref and the worktrees directory.
+func TestCreateWorktreeFromPRRejectsRefName(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+	repo, _ := initRepo(t)
+	gh := &scriptedGH{headJSON: `{"headRefName":"../../escaped","isCrossRepository":false}`}
+
+	if _, err := (&Service{gh: gh.run}).CreateWorktreeFromPR(repo, "proj", 105); err == nil {
+		t.Fatal("expected check-ref-format to refuse the head branch")
+	}
+	if gh.checkoutDir != "" {
+		t.Error("gh pr checkout ran for a name git had already refused")
+	}
+	if _, err := os.Stat(filepath.Join(data, "lich", "worktrees")); err == nil {
+		t.Error("a refused name still created the worktrees directory")
+	}
+}
+
+// TestListCheckouts proves the main checkout is included — the omission that
+// let "Open in Session" try to check out a branch the project itself held.
+func TestListCheckouts(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	repo, git := initRepo(t)
+	svc := &Service{}
+
+	t.Run("the project's own checkout counts", func(t *testing.T) {
+		checkouts, err := svc.ListCheckouts(repo)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(checkouts) != 1 || checkouts[0].Name != "main" {
+			t.Fatalf("want the main checkout on main, got %+v", checkouts)
+		}
+		// ListBranches drops it on purpose; the two must not be confused again.
+		branches, err := svc.ListBranches(repo)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(branches.Worktrees) != 0 {
+			t.Errorf("ListBranches should still omit the main checkout, got %+v", branches.Worktrees)
+		}
+	})
+
+	t.Run("linked worktrees come along", func(t *testing.T) {
+		wt, err := svc.CreateWorktree(repo, "proj", "feature", "main", false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		checkouts, err := svc.ListCheckouts(repo)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		var names []string
+		for _, c := range checkouts {
+			names = append(names, c.Name)
+		}
+		slices.Sort(names)
+		if !slices.Equal(names, []string{"feature", "main"}) {
+			t.Errorf("checkouts = %v, want [feature main]", names)
+		}
+		if !slices.ContainsFunc(checkouts, func(c Worktree) bool { return c.Path == wt.Path }) {
+			t.Errorf("the linked worktree's path is missing from %+v", checkouts)
+		}
+	})
+
+	t.Run("a detached checkout holds no branch", func(t *testing.T) {
+		git("worktree", "add", "--detach", filepath.Join(t.TempDir(), "loose"))
+		checkouts, err := svc.ListCheckouts(repo)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, c := range checkouts {
+			if c.Name == "" || strings.HasSuffix(c.Path, "loose") {
+				t.Errorf("a detached entry leaked in: %+v", c)
+			}
+		}
+	})
 }

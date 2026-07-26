@@ -1,5 +1,5 @@
 import { useMatch, useNavigate } from "react-router-dom"
-import { Plus, Settings } from "lucide-react"
+import { GitPullRequestArrow, Plus, Settings } from "lucide-react"
 import { DndContext, closestCenter } from "@dnd-kit/core"
 import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable"
 import { cn } from "@/lib/utils"
@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { useProjects } from "@/providers/projects"
 import { sessionsOf } from "@/lib/session/sessions"
 import { openSettings } from "@/lib/settings-card-store"
+import { openPullsList } from "@/lib/pulls-list-card-store"
 import { NotificationsButton } from "./NotificationsButton"
 import { horizontalAxis, useSortableList } from "@/lib/use-sortable-list"
 import { ProjectTab } from "./ProjectTab"
@@ -19,6 +20,7 @@ export function ProjectTabs() {
   // back to Home when the app is on the bare landing screen.
   const activeProjectId = useMatch("/projects/:projectId/*")?.params.projectId ?? homeId
   const onSettings = !!useMatch("/projects/:projectId/settings")
+  const onPulls = !!useMatch("/projects/:projectId/pulls/all/*")
 
   const openProjectSettings = () => {
     if (!activeProjectId) {
@@ -26,6 +28,19 @@ export function ProjectTabs() {
     }
     openSettings(activeProjectId)
     navigate(`/projects/${activeProjectId}/settings`)
+  }
+
+  // The repository's pull requests, and the only way in that does not already
+  // require one: every other entry — the session card's badge, the footer's,
+  // the worktree's parked card — appears once that checkout has a pull request,
+  // which is exactly when a list of the others is not what is missing. Those
+  // stay what they were, a single pull request on its own; this one is the list.
+  const openProjectPulls = () => {
+    if (!activeProjectId) {
+      return
+    }
+    openPullsList(activeProjectId)
+    navigate(`/projects/${activeProjectId}/pulls/all`)
   }
   // Home is pinned first and stays out of the drag list so it never reorders.
   const rest = projects.filter((project) => project.id !== homeId)
@@ -67,6 +82,20 @@ export function ProjectTabs() {
       </div>
       <div aria-hidden className="mx-1 h-5 w-px shrink-0 bg-border" />
       <NotificationsButton />
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={openProjectPulls}
+        disabled={!activeProjectId}
+        title="Pull requests"
+        aria-label="Pull requests"
+        className={cn(
+          "shrink-0 text-muted-foreground",
+          onPulls && "bg-accent text-accent-foreground",
+        )}
+      >
+        <GitPullRequestArrow className="size-4" />
+      </Button>
       <Button
         variant="ghost"
         size="icon-sm"

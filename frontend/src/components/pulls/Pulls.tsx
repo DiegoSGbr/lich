@@ -1,29 +1,29 @@
-import { useState, type ReactNode } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
 import {
-  Check,
   ChevronDown,
-  CircleDashed,
-  Clock,
   ExternalLink,
   GitBranch,
   GitMerge,
   GitPullRequestArrow,
   RefreshCw,
-  X,
-  type LucideIcon,
+  SquareTerminal,
 } from "lucide-react"
 import { ProjectService, Store, System } from "@/lib/rpc"
-import type { ChecksRollup, MergeMethod, PullRequestDetail } from "@/lib/api-types"
+import type { MergeMethod, PullRequestDetail } from "@/lib/api-types"
 import { useProjects } from "@/providers/projects"
 import { baseName } from "@/lib/paths"
 import { Notice } from "@/components/common/Notice"
-import { closePulls } from "@/lib/pulls-card-store"
+import { closePulls, openPulls } from "@/lib/pulls-card-store"
 import { activeTarget, sessionsOf } from "@/lib/session/sessions"
+import { queueSetup } from "@/lib/terminal/setup-queue"
 import { useGitStatus } from "@/lib/git/use-git-status"
+import { useCheckouts } from "@/lib/git/use-checkouts"
 import { invalidatePullRequests } from "@/lib/pulls/pull-request-lookup"
+import { parsePullsQuery, readPullsSort, type PullsSort } from "@/lib/pulls/pull-request-list"
 import { usePullRequestDetail } from "@/lib/pulls/use-pull-request-detail"
+import { usePullRequests } from "@/lib/pulls/use-pull-requests"
 import { useInject } from "@/lib/use-inject"
 import { cn, errorText } from "@/lib/utils"
 import { Markdown } from "@/components/Markdown"
@@ -49,26 +49,70 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { PullsChecks } from "./PullsChecks"
 import { PullsCommits } from "./PullsCommits"
 import { PullsFiles } from "./PullsFiles"
+import { PullsList } from "./PullsList"
+import { ChecksStat, MergeableStat, ReviewStat, StateStat } from "./PullsStats"
 
 // Ragged widths, so the body placeholder reads as prose instead of a block.
 const BODY_ROWS = ["w-full", "w-11/12", "w-4/5", "w-2/3", "w-5/6", "w-1/2"]
 
+// The merge toast carries the only offer to remove the branch's worktree, so it
+// outstays the default: long enough to be read and acted on after the eye goes
+// back to the diff, short enough not to sit over the screen.
+const CLEANUP_TOAST_MS = 10_000
+
+interface PullsProps {
+  /** Show the repository's pull requests in a column beside the one in view.
+   * Off, the screen is one pull request and nothing else — the shape a
+   * worktree's own card opens, where a list of the repository's others is not
+   * what was asked for. */
+  list?: boolean
+}
+
 // Pulls is the per-project pull-request screen: it fills the main area on top of
-// the persistent terminals (like Settings), showing the active session's branch
-// PR — status, body and the full diff — with merge, create and open actions. It
-// resolves its path from the route's project id plus the active session (the
-// exact-match useActiveSession returns empty on this subroute).
-export function Pulls() {
-  const { projectId } = useParams()
+// the persistent terminals (like Settings), holding one pull request in full —
+// status, body and the full diff — with merge, create, open, and a session on
+// the PR's own branch. It resolves its path from the route's project id plus the
+// active session (the exact-match useActiveSession returns empty on this
+// subroute).
+export function Pulls({ list = false }: PullsProps) {
+  const { projectId, number } = useParams()
   const navigate = useNavigate()
-  const { projects, sessions, closeSession } = useProjects()
+  const {
+    projects,
+    sessions,
+    closeSession,
+    newSession,
+    newWorktreeSession,
+    reopenWorktreeSession,
+    activateSession,
+  } = useProjects()
   const projectPath = projects.find((p) => p.id === projectId)?.path ?? ""
   const { sessionId, path } = activeTarget(sessions, projectId ?? null, projectPath)
   const status = useGitStatus(path)
   const branch = status?.branch ?? ""
   const head = status?.head ?? ""
-  const { detail, loading, error, refresh } = usePullRequestDetail(path, branch, head)
+  // No number in the route means the PR of whatever branch this checkout is on
+  // — the whole screen without the list, and the default row with it. A number
+  // addresses one directly, which only the list can produce.
+  const selected = Number(number) || 0
+  const { detail, loading, error, refresh } = usePullRequestDetail(path, branch, head, selected)
+  // The filter box lives here, not in the column: its `is:` state decides which
+  // pull requests gh is asked for, and that is a fetch rather than a filter.
+  const [query, setQuery] = useState("")
+  const parsedQuery = useMemo(() => parsePullsQuery(query), [query])
+  // An empty path is the hook's own "nothing to look up", so the single pull
+  // request screen never spends a gh call on a list it does not show.
+  const pulls = usePullRequests(list ? projectPath || path : "", parsedQuery.state)
+  const { checkouts, refresh: refreshCheckouts } = useCheckouts(projectPath)
+  // Where the pull request's own branch already lives, if anywhere. Every
+  // "work on this PR" decision hangs off it: whether to create a checkout,
+  // whether the button says go rather than open, whether a merge leaves a
+  // worktree behind. The project's own directory counts — git refuses a second
+  // checkout of a branch just as hard when the project itself holds it.
+  const checkedOut = checkouts.find((c) => c.name === detail?.headRefName)
   const inject = useInject(sessionId)
+  const [sort, setSort] = useState<PullsSort>(readPullsSort)
+  const [opening, setOpening] = useState(false)
 
   // This screen and the badges around it read the same pull request through two
   // separate lookups, so a change with HEAD standing still — a merge, a PR
@@ -83,43 +127,106 @@ export function Pulls() {
   // otherwise walk back to the sidebar for. Refuse a dirty worktree: whatever
   // was never committed lives only there, and the sidebar's flow is the one that
   // knows how to confirm discarding it.
-  const removeWorktree = async () => {
-    if (!projectId || !path) {
+  const removeWorktree = async (wtPath: string) => {
+    if (!projectId) {
       return
     }
-    if (await ProjectService.WorktreeDirty(path).catch(() => false)) {
+    if (await ProjectService.WorktreeDirty(wtPath).catch(() => false)) {
       toast.error("Worktree has uncommitted changes — remove it from the sidebar.")
       return
     }
     // The PTYs living in the checkout must die before git pulls the directory
     // out from under them, and no parked row may survive to offer a resume.
-    for (const session of sessionsOf(sessions, projectId).filter((s) => s.path === path)) {
+    for (const session of sessionsOf(sessions, projectId).filter((s) => s.path === wtPath)) {
       closeSession(projectId, session.id)
     }
-    void Store.PurgeWorktreeSessions(projectId, path)
-    closePulls(path)
-    navigate(`/projects/${projectId}`)
+    void Store.PurgeWorktreeSessions(projectId, wtPath)
+    closePulls(wtPath)
+    // Only leave the screen when the checkout under it is the one going away.
+    if (wtPath === path) {
+      navigate(`/projects/${projectId}`)
+    }
     try {
-      await ProjectService.RemoveWorktree(projectPath, path, false)
-      toast.success(`Removed ${baseName(path)}`)
+      await ProjectService.RemoveWorktree(projectPath, wtPath, false)
+      toast.success(`Removed ${baseName(wtPath)}`)
     } catch (err: unknown) {
       toast.error(`Failed to remove worktree: ${errorText(err)}`)
     }
+    refreshCheckouts()
   }
 
   const onMerged = () => {
     reload()
     const merged = `Merged #${detail?.number} into ${detail?.baseRefName}`
-    // Only a worktree checkout has something to clean up; the project's own
-    // directory stays where it is.
-    if (path === projectPath) {
+    // The offer is about the merged branch's own checkout, which is not
+    // necessarily the one this screen is standing in — the list can merge a
+    // pull request belonging to a worktree next door, or to none at all. The
+    // project's own directory is never offered: it is not a worktree, and git
+    // would refuse to remove it.
+    const wt = checkedOut?.path !== projectPath ? checkedOut : undefined
+    if (!wt) {
       toast.success(merged)
       return
     }
     toast.success(merged, {
-      duration: 10_000,
-      action: { label: "Remove worktree", onClick: () => void removeWorktree() },
+      duration: CLEANUP_TOAST_MS,
+      action: { label: "Remove worktree", onClick: () => void removeWorktree(wt.path) },
     })
+  }
+
+  // Opening a session on a pull request means working on its own head branch.
+  // git refuses to check one branch out twice, so a checkout that already holds
+  // it is reused rather than recreated — and that includes the project's own
+  // directory, which is where a branch usually is.
+  const openInSession = async () => {
+    if (!projectId || !detail) {
+      return
+    }
+    const existing = checkedOut
+    if (existing) {
+      const live = sessionsOf(sessions, projectId).find((s) => s.path === existing.path)
+      if (live) {
+        activateSession(projectId, live.id)
+      } else if (existing.path === projectPath) {
+        // The project's own checkout is not a worktree: it has no parked
+        // session to resume and must never be handed to the worktree flows.
+        newSession(projectId)
+      } else {
+        await reopenWorktreeSession(projectId, existing)
+      }
+      openPulls(existing.path)
+      navigate(`/projects/${projectId}`)
+      return
+    }
+    setOpening(true)
+    try {
+      const wt = await ProjectService.CreateWorktreeFromPR(projectPath, projectId, detail.number)
+      if (!wt) {
+        return
+      }
+      // A fresh checkout is the one moment the project's setup script runs, and
+      // the pull request card rides along so the session carries its PR.
+      queueSetup(newWorktreeSession(projectId, wt))
+      openPulls(wt.path)
+      refreshCheckouts()
+      navigate(`/projects/${projectId}`)
+    } catch (err: unknown) {
+      toast.error(`Couldn’t open a session: ${errorText(err)}`)
+    } finally {
+      setOpening(false)
+    }
+  }
+
+  const session: SessionAction = {
+    label:
+      checkedOut && sessionsOf(sessions, projectId ?? "").some((s) => s.path === checkedOut.path)
+        ? "Go to session"
+        : "Open in Session",
+    blocked: detail?.isCrossRepository
+      ? "The head branch lives on a fork — its commits could not be pushed back"
+      : null,
+    busy: opening,
+    run: () => void openInSession(),
   }
 
   let body: ReactNode
@@ -133,6 +240,7 @@ export function Pulls() {
         path={path}
         head={head}
         detail={detail}
+        session={session}
         onRefresh={reload}
         onMerged={onMerged}
         onInject={inject}
@@ -144,7 +252,26 @@ export function Pulls() {
     body = <EmptyState path={path} branch={branch} onOpened={reload} />
   }
 
-  return <div className="absolute inset-0 z-10 flex flex-col bg-background">{body}</div>
+  return (
+    <div className="absolute inset-0 z-10 flex bg-background">
+      {list && (
+        <PullsList
+          list={pulls.list}
+          loading={pulls.loading}
+          error={pulls.error}
+          selected={selected || (detail?.number ?? 0)}
+          onSelect={(picked) => navigate(`/projects/${projectId}/pulls/all/${picked}`)}
+          sort={sort}
+          onSortChange={setSort}
+          query={query}
+          onQueryChange={setQuery}
+          parsed={parsedQuery}
+          checkedOutBranches={new Set(checkouts.map((c) => c.name))}
+        />
+      )}
+      <div className="flex min-w-0 flex-1 flex-col">{body}</div>
+    </div>
+  )
 }
 
 // Looking the pull request up is a gh round-trip, and the screen covers the
@@ -192,11 +319,23 @@ interface EditState {
   body: string
 }
 
+// SessionAction is the header's "work on this pull request" button, resolved by
+// the screen: what it should say, whether it can run at all, and what it does.
+interface SessionAction {
+  /** "Open in Session", or "Go to session" once one is live on the branch. */
+  label: string
+  /** Why it cannot run (a fork PR), or null when it can. */
+  blocked: string | null
+  busy: boolean
+  run: () => void
+}
+
 interface PullRequestViewProps {
   path: string
   /** The checkout's HEAD; changing it refetches the diff under the Files tab. */
   head: string
   detail: PullRequestDetail
+  session: SessionAction
   /** Re-run the lookup — the manual reload, for what HEAD can't announce. */
   onRefresh: () => void
   /** The merge landed; the screen decides what follows (a toast, the worktree). */
@@ -208,6 +347,7 @@ function PullRequestView({
   path,
   head,
   detail,
+  session,
   onRefresh,
   onMerged,
   onInject,
@@ -216,16 +356,21 @@ function PullRequestView({
   const [edit, setEdit] = useState<EditState | null>(null)
   const [tab, setTab] = useState<"overview" | "commits" | "files" | "checks">("overview")
   const commitCount = detail.commits?.length ?? 0
-  const blocked = detail.isDraft
-    ? "Pull request is a draft"
-    : detail.mergeable === "CONFLICTING"
-      ? `Conflicts with ${detail.baseRefName}`
-      : null
+  // A pull request the list reached by number may be over already, in which
+  // case there is nothing to merge and gh would refuse anyway.
+  const blocked =
+    detail.state !== "OPEN"
+      ? `Pull request is ${detail.state.toLowerCase()}`
+      : detail.isDraft
+        ? "Pull request is a draft"
+        : detail.mergeable === "CONFLICTING"
+          ? `Conflicts with ${detail.baseRefName}`
+          : null
 
   const merge = async (method: MergeMethod, subject = "", body = "") => {
     setMerging(true)
     try {
-      await ProjectService.MergePullRequest(path, method, subject, body)
+      await ProjectService.MergePullRequest(path, detail.number, method, subject, body)
       setEdit(null)
       onMerged()
     } catch (err: unknown) {
@@ -261,6 +406,20 @@ function PullRequestView({
             <span className="text-muted-foreground">#{detail.number}</span> {detail.title}
           </h1>
           <div className="flex flex-none items-center gap-2">
+            {/* The same wrapper trick as the merge button below: a disabled
+                button takes no pointer events, so its own title never shows. */}
+            <span title={session.blocked ?? undefined}>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={session.busy || session.blocked !== null}
+                onClick={session.run}
+                className="bg-accent/55 text-foreground hover:bg-accent"
+              >
+                <SquareTerminal />
+                {session.busy ? "Opening…" : session.label}
+              </Button>
+            </span>
             {/* The reason rides on a wrapper: a disabled button takes no pointer
                 events, so its own title would never surface. */}
             <span title={blocked ?? undefined}>
@@ -307,15 +466,7 @@ function PullRequestView({
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
-          <span
-            className={cn(
-              "flex items-center gap-1.5 font-medium",
-              detail.isDraft ? "text-amber-500" : "text-emerald-500",
-            )}
-          >
-            <GitPullRequestArrow className="size-3.5" />
-            {detail.isDraft ? "Draft" : "Open"}
-          </span>
+          <StateStat state={detail.state} isDraft={detail.isDraft} />
           <span className="flex items-center gap-1.5 font-mono text-muted-foreground">
             <GitBranch className="size-3.5" />
             {detail.headRefName} → {detail.baseRefName}
@@ -333,7 +484,12 @@ function PullRequestView({
           ) : (
             <ChecksStat checks={detail.checks} />
           )}
-          <MergeableStat mergeable={detail.mergeable} base={detail.baseRefName} />
+          <MergeableStat
+            mergeable={detail.mergeable}
+            base={detail.baseRefName}
+            state={detail.state}
+          />
+          <ReviewStat decision={detail.reviewDecision} />
         </div>
 
         <div role="tablist" className="mt-4 flex gap-1">
@@ -363,7 +519,13 @@ function PullRequestView({
 
       <div role="tabpanel" className="flex-1 overflow-hidden">
         {tab === "files" ? (
-          <PullsFiles path={path} head={head} pullRequest={detail.url} onInject={onInject} />
+          <PullsFiles
+            path={path}
+            number={detail.number}
+            head={head}
+            pullRequest={detail.url}
+            onInject={onInject}
+          />
         ) : (
           <div className="h-full overflow-y-auto">
             {tab === "checks" && <PullsChecks checks={detail.checkRuns} />}
@@ -476,80 +638,6 @@ function MergeMessageDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  )
-}
-
-type Tone = "pass" | "fail" | "pending" | "muted"
-
-const toneClass: Record<Tone, string> = {
-  pass: "text-emerald-500",
-  fail: "text-destructive",
-  pending: "text-amber-500",
-  muted: "text-muted-foreground",
-}
-
-function Stat({
-  icon: Icon,
-  tone,
-  children,
-}: {
-  icon: LucideIcon
-  tone: Tone
-  children: ReactNode
-}) {
-  return (
-    <span className={cn("flex items-center gap-1.5 font-medium", toneClass[tone])}>
-      <Icon className="size-3.5" />
-      {children}
-    </span>
-  )
-}
-
-function ChecksStat({ checks }: { checks: ChecksRollup }) {
-  const { passed, failed, pending, total } = checks
-  if (total === 0) {
-    return null
-  }
-  if (failed > 0) {
-    return (
-      <Stat icon={X} tone="fail">
-        {failed} of {total} checks failing
-      </Stat>
-    )
-  }
-  if (pending > 0) {
-    return (
-      <Stat icon={Clock} tone="pending">
-        {pending} of {total} checks running
-      </Stat>
-    )
-  }
-  return (
-    <Stat icon={Check} tone="pass">
-      {passed === 1 ? "1 check passed" : `${passed} checks passed`}
-    </Stat>
-  )
-}
-
-function MergeableStat({ mergeable, base }: { mergeable: string; base: string }) {
-  if (mergeable === "CONFLICTING") {
-    return (
-      <Stat icon={X} tone="fail">
-        Conflicts with {base}
-      </Stat>
-    )
-  }
-  if (mergeable === "MERGEABLE") {
-    return (
-      <Stat icon={GitMerge} tone="pass">
-        Mergeable
-      </Stat>
-    )
-  }
-  return (
-    <Stat icon={CircleDashed} tone="muted">
-      Checking mergeability…
-    </Stat>
   )
 }
 
