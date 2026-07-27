@@ -121,6 +121,9 @@ export const ProjectService = {
   ReadFile: (path: string, rel: string) => call<string>("project.ReadFile", [path, rel]),
   DiscardFile: (path: string, rel: string) => call<null>("project.DiscardFile", [path, rel]),
   ListBranches: (path: string) => call<Branches>("project.ListBranches", [path]),
+  /** The logins gh is authenticated as, for the project's account picker;
+   * errors when gh is missing or logged out. */
+  GitHubAccounts: () => call<string[] | null>("project.GitHubAccounts", []),
   /** Every checkout holding a branch, the project's own directory included —
    * which ListBranches omits, since it cannot be resumed as a worktree. */
   ListCheckouts: (path: string) => call<Worktree[] | null>("project.ListCheckouts", [path]),
@@ -140,6 +143,10 @@ export const ProjectService = {
     subject: string,
     body: string,
   ) => call<null>("project.MergePullRequest", [path, number, method, subject, body]),
+  /** Submit an approving review (0 = the checkout's branch). GitHub refuses a
+   * PR opened by the same account. */
+  ApprovePullRequest: (path: string, number: number) =>
+    call<null>("project.ApprovePullRequest", [path, number]),
   /** Open GitHub's "new pull request" page in the browser (gh pr create --web). */
   CreatePullRequest: (path: string) => call<null>("project.CreatePullRequest", [path]),
   /** A PR's unified diff (gh pr diff) for the Files changed tab; 0 = the checkout's branch. */

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -22,15 +23,17 @@ const (
 	prReadTimeout   = 8 * time.Second
 	prMergeTimeout  = 30 * time.Second
 	prCreateTimeout = 20 * time.Second
+	prReviewTimeout = 20 * time.Second
 	// A checkout fetches the head ref, so it is bounded by the size of the
 	// branch rather than by a round-trip.
 	prCheckoutTimeout = 90 * time.Second
 )
 
-// ghRunner runs one gh subcommand inside dir and returns its stdout. It is a
-// field on Service so the pull request flows can be exercised without a GitHub
-// remote; production wiring is runGH.
-type ghRunner func(timeout time.Duration, dir string, args ...string) ([]byte, error)
+// ghRunner runs one gh subcommand inside dir as the account token (empty: gh's
+// own active account) and returns its stdout. It is a field on Service so the
+// pull request flows can be exercised without a GitHub remote; production
+// wiring is runGH.
+type ghRunner func(timeout time.Duration, dir, token string, args ...string) ([]byte, error)
 
 // errNoPullRequest marks gh's "no pull requests found" — the one failure that
 // means the branch simply has no PR, which the read flows turn into an empty
@@ -38,13 +41,17 @@ type ghRunner func(timeout time.Duration, dir string, args ...string) ([]byte, e
 var errNoPullRequest = errors.New("no pull request for this branch")
 
 // runGH shells out to gh with the call capped by timeout, and turns a failure
-// into an error carrying gh's own stderr (it names the cause — not mergeable,
-// branch protection, auth, missing repo).
-func runGH(timeout time.Duration, dir string, args ...string) ([]byte, error) {
+// into the message the screen shows (gherror.go); gh's own stderr reaches the
+// log, never the page. A non-empty token rides in GH_TOKEN, which is how gh is
+// told to answer as one specific account.
+func runGH(timeout time.Duration, dir, token string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "gh", args...)
 	cmd.Dir = dir
+	if token != "" {
+		cmd.Env = append(os.Environ(), "GH_TOKEN="+token)
+	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	winexec.Hide(cmd)
@@ -53,7 +60,7 @@ func runGH(timeout time.Duration, dir string, args ...string) ([]byte, error) {
 		if isNoPullRequest(stderr.String()) {
 			return nil, errNoPullRequest
 		}
-		return nil, errors.New(ghError(stderr.String(), err))
+		return nil, ghFailure(args, stderr.String(), err, ctx.Err())
 	}
 	return out, nil
 }
@@ -208,7 +215,7 @@ func (s *Service) PullRequestDetail(path string, number int) (*PRDetail, error) 
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gh pr view: %w", err)
+		return nil, err
 	}
 	// The OPEN-only gate belongs to the branch lookup alone. Naming a number is
 	// asking for that pull request, whatever became of it — the list can show
@@ -223,7 +230,7 @@ func (s *Service) PullRequestDetail(path string, number int) (*PRDetail, error) 
 func parsePRDetail(out []byte, openOnly bool) (*PRDetail, error) {
 	var v ghPRView
 	if err := json.Unmarshal(out, &v); err != nil {
-		return nil, fmt.Errorf("decode gh pr view: %w", err)
+		return nil, errUnreadableAnswer(err)
 	}
 	if v.Number == 0 || (openOnly && v.State != "OPEN") {
 		return nil, nil
@@ -382,7 +389,7 @@ func (s *Service) MergePullRequest(path string, number int, method, subject, bod
 		return err
 	}
 	if _, err := s.gh(prMergeTimeout, path, args...); err != nil {
-		return fmt.Errorf("gh pr merge: %w", err)
+		return err
 	}
 	return nil
 }
@@ -404,13 +411,28 @@ func mergeArgs(number int, method, subject, body string) ([]string, error) {
 	return args, nil
 }
 
+// ApprovePullRequest submits an approving review on GitHub — the given number,
+// or the PR of the branch checked out at path when number is zero. The review is
+// filed by whichever account the project talks to (ghaccount.go), which is also
+// why GitHub can refuse it: nobody may approve their own pull request.
+//
+// Deliberately no review body: a comment belongs to the line it is about, and
+// the screen has no diff-commenting surface to attach one to. Approve is the
+// verdict, nothing more.
+func (s *Service) ApprovePullRequest(path string, number int) error {
+	if _, err := s.gh(prReviewTimeout, path, prArgs("review", number, "--approve")...); err != nil {
+		return err
+	}
+	return nil
+}
+
 // CreatePullRequest opens GitHub's "new pull request" page in the browser for
 // the path's branch (gh pushes the branch first when it has no upstream).
 // Deliberately the web flow, not an in-app form — GitHub's page already owns the
 // title, body, reviewers and template. Returns once the browser is launched.
 func (s *Service) CreatePullRequest(path string) error {
 	if _, err := s.gh(prCreateTimeout, path, "pr", "create", "--web"); err != nil {
-		return fmt.Errorf("gh pr create: %w", err)
+		return err
 	}
 	return nil
 }
@@ -431,7 +453,7 @@ func (s *Service) PullRequestDiff(path string, number int) (string, error) {
 		return "", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("gh pr diff: %w", err)
+		return "", err
 	}
 	return string(out), nil
 }
@@ -511,7 +533,7 @@ func (s *Service) ListPullRequests(path, state string) ([]PRSummary, error) {
 	out, err := s.gh(prReadTimeout, path,
 		"pr", "list", "--state", state, "--limit", strconv.Itoa(prListLimit), "--json", prListFields)
 	if err != nil {
-		return nil, fmt.Errorf("gh pr list: %w", err)
+		return nil, err
 	}
 	return parsePRList(out)
 }
@@ -520,7 +542,7 @@ func (s *Service) ListPullRequests(path, state string) ([]PRSummary, error) {
 func parsePRList(out []byte) ([]PRSummary, error) {
 	var items []ghPRListItem
 	if err := json.Unmarshal(out, &items); err != nil {
-		return nil, fmt.Errorf("decode gh pr list: %w", err)
+		return nil, errUnreadableAnswer(err)
 	}
 	if len(items) == 0 {
 		return nil, nil
@@ -547,13 +569,4 @@ func parsePRList(out []byte) ([]PRSummary, error) {
 // failure that means an empty panel rather than a real error.
 func isNoPullRequest(stderr string) bool {
 	return strings.Contains(strings.ToLower(stderr), "no pull requests found")
-}
-
-// ghError prefers gh's own stderr (it names the cause — not mergeable, auth,
-// missing repo) and falls back to the bare exec error when stderr is empty.
-func ghError(stderr string, err error) string {
-	if msg := strings.TrimSpace(stderr); msg != "" {
-		return msg
-	}
-	return err.Error()
 }

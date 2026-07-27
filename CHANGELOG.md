@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Approving a pull request no longer means leaving lich.** An Approve button
+  sits beside Merge on the pull request screen and files the approving review
+  through the project's GitHub account. Once the review lands, the button reads
+  Approved and stops offering itself — GitHub would happily take a second one,
+  but nobody means to send it. A pull request that is already merged or closed
+  cannot be reviewed and says so; a draft or a conflicting one still can. GitHub
+  refuses an account approving its own pull request, and that refusal now reads
+  as the sentence it is. Reviews with a body, and requesting changes, are not
+  here: a review comment belongs to the line it is about, and lich has nowhere to
+  attach one yet.
+
+- **A project can pick which GitHub account it talks to.** `gh` keeps one active
+  account per host, so a repository only a second account can see answered every
+  pull request lookup with "Could not resolve to a Repository" — the same message
+  GitHub gives for a repository that does not exist. A new **Version Control**
+  section in Settings names the account for the project at hand, chosen from the
+  ones `gh auth status` lists, and every GitHub call lich makes for that project
+  — the badge, the pull request list, checks, diffs, merges and PR checkouts —
+  runs as it. Left at "gh's active account", nothing changes. The account governs
+  what lich reads from GitHub, not what git does: a push still rides the remote's
+  ssh key and signs with the global `user.email`.
+
+### Fixed
+
+- **git failures read as sentences too.** The worktree dialog, the discard flow
+  and the sidebar used to show git's own stderr, prefixed by the subcommand lich
+  had run — `git worktree: fatal: '…' contains modified or untracked files, use
+  --force to delete it`, or, when git refuses by exit status alone, the words
+  `exit status 1`. A rejected branch name now names the branch, a taken name says
+  it is taken, a folder that is not a repository says so, and a dirty worktree
+  says where to remove it. git's own text goes to lich's log.
+- **GitHub failures now read as sentences instead of `gh` output.** The pull
+  request screens used to paste whatever `gh` printed — `GraphQL: Could not
+  resolve to a Repository with the name 'acme/private'. (repository)`, prefixed
+  by the command lich had run. Each failure lich can actually hit now says what
+  happened and what to do about it: an invisible repository points at the account
+  picker, a signed-out `gh` names `gh auth login`, a rate limit says to wait, a
+  refused merge says why. Anything unrecognised says so plainly; `gh`'s own text
+  goes to lich's log, where it was always the more useful place for it.
+- **The pull request badge follows the project's GitHub account too.** It looked
+  the branch's PR up on its own path, so it kept answering as `gh`'s active
+  account while the screen beside it used the project's — a badge that vanished
+  on the repositories the account picker exists for.
+
 ## [0.20.0] - 2026-07-26
 
 ### Added
