@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   just the one that was loading — stopped dead until the socket recovered.
   Output now leaves each session through a queue of its own, so a window that
   falls behind slows down the session producing the flood and nothing else.
+- **Terminals stop degrading after a dozen tab switches.** Hiding a session
+  destroys its terminal and showing it builds a new one, but the renderer's
+  graphics context was only handed back when the browser got around to
+  collecting it. Chromium keeps sixteen alive and force-loses the oldest beyond
+  that, so switching between sessions eventually killed the renderer of a
+  terminal in use: it froze for the three seconds spent waiting for a restore
+  that never came, then fell back to the slower text renderer for good, with
+  cell metrics that no longer matched the ones its grid had been fitted to. The
+  context is now released the moment the terminal is destroyed.
 
 ## [0.21.0] - 2026-07-27
 
