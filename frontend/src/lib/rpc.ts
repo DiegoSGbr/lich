@@ -85,6 +85,15 @@ async function post(path: string): Promise<void> {
 }
 
 export const Terminal = {
+  /** Whether a session cannot start in cwd because the directory is gone — a
+   * worktree removed outside lich. False for every uncertainty, so only a
+   * provable absence closes a session. */
+  WorkdirMissing: (cwd: string) => call<boolean>("terminal.WorkdirMissing", [cwd]),
+  /** Whether the conversation providerSessionID names can still be reopened —
+   * false once the provider has pruned its transcript, which is the resume the
+   * prompt must not offer. */
+  ResumeAvailable: (kind: string, providerSessionID: string) =>
+    call<boolean>("terminal.ResumeAvailable", [kind, providerSessionID]),
   /** resume: a provider session id to reopen (--resume); "" starts fresh.
    * setup: run the project's worktree setup script ahead of the provider —
    * passed once, by the first Start after the worktree is created. */
