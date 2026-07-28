@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Settings › Font lists your installed fonts on Windows.** The picker read the
+  font list from fontconfig, which Windows does not have, so it offered nothing
+  beyond the bundled default and whatever was already selected. It now reads the
+  fonts Windows itself records, folding every weight of a family onto one entry.
+- **Links open in your browser on Windows.** Clicking an external link — a pull
+  request, a release page — called the Linux opener and did nothing at all, with
+  only a line in `lich.log` to show for it. Each platform now uses its own
+  opener.
+- **Open in editor works on a Windows path with a space in it.** The command
+  handed to the session was quoted for a Unix shell, which cmd.exe does not
+  understand, so a file under `C:\Users\First Last\` opened as a path cut at the
+  space — and a file whose own name held one never opened at all. The quoting is
+  now the session shell's own.
+- **A file cannot open something else on Windows.** Opening a file with no
+  `$EDITOR` set passed its path through a shell that reads `&` as the end of a
+  command, so a file named `a&calc.txt` — which any branch you check out is free
+  to carry — ran `calc` when you opened it. The path is now handed over as a
+  plain argument, with no shell in between. A path cmd.exe cannot express at all
+  opens with the default handler rather than being run.
 - **lich no longer vanishes mid-session on Windows.** Tracking a session's
   working directory reads it out of the child process's own memory, and a length
   that memory reported odd — which a 32-bit child, or one exiting mid-read, does
