@@ -108,6 +108,13 @@ nobody knows it and that the call site never shows. The mechanism and the histor
   land on the same number and only the dev server started second finds out. Stability is the trade — a probe
   would move the port every time the previous server still held it. The main checkout is assigned one like any
   worktree; the range is fixed, not per-project.
+- **The cost readout is priced from a table, not from the provider**: no provider publishes an API for what a
+  turn cost, so `internal/pricing` bills the transcript's token counts against a baked table that refreshes
+  itself from LiteLLM's published one when it meets an unknown model. Two consequences: a model nobody has
+  priced yet makes the readout go *absent* (the scan stops at that line — a total missing a turn is worse than
+  no total), and the accounting is per `(session, transcript)` in `session_costs`, so a conversation forked
+  inside the PTY — which copies its history into a new transcript — bills that history twice. lich's own
+  resume continues the same transcript and is unaffected.
 - **git status is polled** — one shared poller per repository path (`frontend/src/lib/git/git-status-store.ts`); the
   lich plugin's `session-touched` hook nudges an immediate refresh. An fs watcher is the upgrade path.
 - **Persistence is hybrid**: UI prefs in the page's localStorage (`lich.*` keys — the reason the listener port is
