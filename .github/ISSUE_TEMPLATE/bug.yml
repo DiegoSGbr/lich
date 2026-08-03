@@ -1,0 +1,49 @@
+name: Bug report
+description: Something in lich is broken
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Settings → Help → **Report a bug** opens this form with the version and
+        platform already filled in, and **Open log folder** puts you next to the
+        file to attach.
+
+        The log holds absolute paths, project and branch names, and your gh
+        login — never a session token. Read it before you attach it.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: lich version
+      description: Settings → Help, or `lich --version`.
+      placeholder: "0.23.0"
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: linux/amd64
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log
+      description: |
+        Attach `lich.log` (drag it in), or paste the lines around the failure.
+        `lich.log.old` is the previous generation — if the bug is older than
+        today's session, it is probably in there.
+    validations:
+      required: false

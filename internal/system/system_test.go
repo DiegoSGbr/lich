@@ -77,6 +77,53 @@ func captureRun(name *string, args *[]string) func(string, ...string) error {
 	}
 }
 
+// TestRevealLogOpensTheDirectory proves the reveal hands the log's *directory*
+// to the opener, so the rotated generation is in view beside the live file.
+func TestRevealLogOpensTheDirectory(t *testing.T) {
+	var name string
+	var args []string
+	dir := filepath.Join("/config", "lich")
+	s := &Service{logPath: filepath.Join(dir, "lich.log"), run: captureRun(&name, &args)}
+
+	if err := s.RevealLog(); err != nil {
+		t.Fatalf("RevealLog: %v", err)
+	}
+	if name == "cmd" || name == "sh" || name == "bash" {
+		t.Errorf("launcher is %q: the path must not route through a shell", name)
+	}
+	if len(args) == 0 || args[len(args)-1] != dir {
+		t.Errorf("args = %v, want the directory %q as the last argument", args, dir)
+	}
+}
+
+// TestRevealLogWithoutAFileLaunchesNothing proves that a run with no log file
+// (Init fell back to stderr) reports it instead of opening filepath.Dir("") —
+// the working directory, which has nothing to do with the report.
+func TestRevealLogWithoutAFileLaunchesNothing(t *testing.T) {
+	launched := false
+	s := &Service{run: func(string, ...string) error {
+		launched = true
+		return nil
+	}}
+	if err := s.RevealLog(); err == nil {
+		t.Error("want an error when there is no log file")
+	}
+	if launched {
+		t.Error("something was opened for a log file that does not exist")
+	}
+}
+
+func TestDiagnosticsReportsTheRunningBuild(t *testing.T) {
+	s := New(nil, "/config/lich/lich.log", "0.23.0")
+	got := s.Diagnostics()
+	if got.Version != "0.23.0" || got.LogPath != "/config/lich/lich.log" {
+		t.Errorf("Diagnostics() = %+v, want the version and log path it was built with", got)
+	}
+	if want := runtime.GOOS + "/" + runtime.GOARCH; got.Platform != want {
+		t.Errorf("Platform = %q, want %q", got.Platform, want)
+	}
+}
+
 func TestOpenInEditorTerminalReturnsCommand(t *testing.T) {
 	launched := false
 	s := &Service{env: []string{"EDITOR=nvim"}, run: func(string, ...string) error {

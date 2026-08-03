@@ -1,6 +1,7 @@
 // Package system holds the few OS integrations the frontend needs that are
-// not tied to any domain service — opening a URL in the user's default browser
-// and opening a work-tree file in their editor.
+// not tied to any domain service — opening a URL in the user's default browser,
+// opening a work-tree file in their editor, and the handful of facts a bug
+// report needs (version, platform, where the log lives).
 package system
 
 import (
@@ -8,6 +9,7 @@ import (
 	"net/url"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/omartelo/lich/internal/relpath"
@@ -17,17 +19,51 @@ type Service struct {
 	// env is the resolved login-shell environment (see terminal.ResolveShellEnv),
 	// the source of $VISUAL/$EDITOR — a GUI launch never sourced the user's rc.
 	env []string
+	// logPath is the running build's log file (see logging.Path). The page cannot
+	// derive it: the config dir is resolved by the process, not by the browser.
+	logPath string
+	// version is the running build's version, "dev" outside a release.
+	version string
 	// run launches a detached process; injected in tests, exec in production.
 	run func(name string, args ...string) error
 }
 
-func New(env []string) *Service {
+func New(env []string, logPath, version string) *Service {
 	return &Service{
-		env: env,
+		env:     env,
+		logPath: logPath,
+		version: version,
 		run: func(name string, args ...string) error {
 			return exec.Command(name, args...).Start()
 		},
 	}
+}
+
+// Diagnostics is what a bug report opens with: the three facts that decide
+// whether a report is actionable, and the log path the user attaches.
+type Diagnostics struct {
+	Version  string `json:"version"`
+	Platform string `json:"platform"`
+	LogPath  string `json:"logPath"`
+}
+
+func (s *Service) Diagnostics() Diagnostics {
+	return Diagnostics{
+		Version:  s.version,
+		Platform: runtime.GOOS + "/" + runtime.GOARCH,
+		LogPath:  s.logPath,
+	}
+}
+
+// RevealLog opens the log's directory with the platform's file manager, not the
+// file itself: the rotated generation (*.old) is often the one holding the bug,
+// and a log file handed to its default handler opens in an editor, not beside
+// the sibling the reporter also needs.
+func (s *Service) RevealLog() error {
+	if s.logPath == "" {
+		return fmt.Errorf("no log file: lich is logging to stderr only")
+	}
+	return s.openDefault(filepath.Dir(s.logPath))
 }
 
 // OpenExternal opens an http(s) URL in the default browser. Scheme-gated so a

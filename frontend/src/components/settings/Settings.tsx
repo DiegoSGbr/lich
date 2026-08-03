@@ -8,17 +8,19 @@ import { ProviderBinSettings } from "./ProviderBinSettings"
 import { WorktreeSetupSettings } from "./WorktreeSetupSettings"
 import { VersionControlSettings } from "./VersionControlSettings"
 import { UpdatesSettings } from "./UpdatesSettings"
+import { HelpSettings } from "./HelpSettings"
 import { SearchInput } from "@/components/common/SearchInput"
 import { enabledProviders, useProviders } from "@/lib/providers-store"
 import { cn } from "@/lib/utils"
 
 // A settings category: a nav entry plus the pane it renders. "app" sections are
 // global; "provider" sections are the per-provider config that appears when a
-// provider is enabled, and render under a "Provider settings" nav header.
+// provider is enabled, and render under a "Provider settings" nav header;
+// "footer" sections sit at the bottom of the nav, apart from the rest.
 interface Section {
   id: string
   label: string
-  group: "app" | "provider"
+  group: "app" | "provider" | "footer"
   render: (projectId?: string) => ReactNode
 }
 
@@ -40,7 +42,13 @@ const BASE_SECTIONS: Section[] = [
     group: "app",
     render: (id) => <VersionControlSettings projectId={id} />,
   },
-  { id: "updates", label: "Updates", group: "app", render: () => <UpdatesSettings /> },
+]
+
+// The two sections that configure nothing: they are about the app itself, and
+// are reached once in a while rather than while setting a project up.
+const FOOTER_SECTIONS: Section[] = [
+  { id: "updates", label: "Updates", group: "footer", render: () => <UpdatesSettings /> },
+  { id: "help", label: "Help", group: "footer", render: () => <HelpSettings /> },
 ]
 
 // Settings is the per-project settings screen (not a modal): it fills the main
@@ -59,13 +67,14 @@ export function Settings() {
     group: "provider",
     render: (id) => <ProviderBinSettings providerId={provider.id} projectId={id} />,
   }))
-  const sections = [...BASE_SECTIONS, ...providerSections]
+  const sections = [...BASE_SECTIONS, ...providerSections, ...FOOTER_SECTIONS]
 
   const filtered = sections.filter((section) =>
     section.label.toLowerCase().includes(query.toLowerCase()),
   )
   const appSections = filtered.filter((section) => section.group === "app")
   const provSections = filtered.filter((section) => section.group === "provider")
+  const footerSections = filtered.filter((section) => section.group === "footer")
   // Fall back to the first section when the active one vanished (a provider was
   // disabled) or was filtered out of view.
   const current = sections.find((section) => section.id === active) ?? sections[0]
@@ -95,7 +104,9 @@ export function Settings() {
             aria-label="Search settings"
           />
         </div>
-        <nav className="flex flex-col gap-0.5 px-2 pb-3">
+        {/* Scrolls on its own so a short window with several providers enabled
+            shrinks this list instead of pushing the footer out of view. */}
+        <nav className="flex min-h-0 flex-col gap-0.5 overflow-y-auto px-2 pb-3">
           {appSections.map(navButton)}
           {provSections.length > 0 && (
             <div className="mt-4 mb-1 px-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -104,6 +115,12 @@ export function Settings() {
           )}
           {provSections.map(navButton)}
         </nav>
+
+        {footerSections.length > 0 && (
+          <nav className="mt-auto flex flex-col gap-0.5 border-t border-border px-2 py-2">
+            {footerSections.map(navButton)}
+          </nav>
+        )}
       </aside>
 
       <div className="flex-1 overflow-auto">
