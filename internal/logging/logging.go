@@ -72,7 +72,7 @@ func openLogFile(dir string) (*os.File, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create log dir: %w", err)
 	}
-	path := filepath.Join(dir, fileName(os.Getenv("LICH_DEV") != ""))
+	path := Path(dir)
 	if info, err := os.Stat(path); err == nil && info.Size() >= maxLogSize {
 		if err := os.Rename(path, path+".old"); err != nil {
 			return nil, fmt.Errorf("rotate log: %w", err)
@@ -83,6 +83,12 @@ func openLogFile(dir string) (*os.File, error) {
 		return nil, fmt.Errorf("open log file: %w", err)
 	}
 	return file, nil
+}
+
+// Path is the file Init writes to under dir — what a bug report attaches, and
+// the only place the naming rule below is readable from outside the package.
+func Path(dir string) string {
+	return filepath.Join(dir, fileName(os.Getenv("LICH_DEV") != ""))
 }
 
 // fileName mirrors the store's database split: a `task dev` session logs

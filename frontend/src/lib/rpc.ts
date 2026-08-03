@@ -11,6 +11,7 @@ import type {
   BranchRules,
   Branches,
   DetectedProvider,
+  Diagnostics as DiagnosticsData,
   DiffStats,
   DraftReviewComment,
   MergeMethod,
@@ -291,6 +292,10 @@ export const System = {
    * Returns "" when it launched a GUI editor detached, or a shell command line
    * to run in a terminal session when the editor is a terminal editor. */
   OpenInEditor: (dir: string, rel: string) => call<string>("system.OpenInEditor", [dir, rel]),
+  /** Version, platform and log path — the page cannot derive any of the three. */
+  Diagnostics: () => call<DiagnosticsData>("system.Diagnostics", []),
+  /** Open the log's folder in the platform's file manager, for attaching it. */
+  RevealLog: () => call<null>("system.RevealLog", []),
 }
 
 export const Providers = {

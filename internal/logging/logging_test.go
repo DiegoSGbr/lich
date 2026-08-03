@@ -62,6 +62,27 @@ func TestFileName(t *testing.T) {
 	}
 }
 
+// TestPathIsWhatInitWrites proves the path the frontend reveals is the file
+// Init actually opened, under both the dev and the release name — the two
+// would drift apart the moment they were spelled out twice.
+func TestPathIsWhatInitWrites(t *testing.T) {
+	for _, dev := range []string{"", "1"} {
+		restoreDefault(t)
+		t.Setenv("LICH_DEV", dev)
+		dir := logDir(t)
+
+		closer, err := Init(dir)
+		if err != nil {
+			t.Fatalf("LICH_DEV=%q Init: %v", dev, err)
+		}
+		defer closer.Close()
+
+		if _, err := os.Stat(Path(dir)); err != nil {
+			t.Errorf("LICH_DEV=%q: Path reports %q, which Init did not write: %v", dev, Path(dir), err)
+		}
+	}
+}
+
 // TestInitWritesRecordWithSource proves a record lands in the file carrying
 // the message, the attributes and the source file:line the audit trail
 // promises.

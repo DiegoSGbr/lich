@@ -62,8 +62,13 @@ func main() {
 	}
 	// File logging as early as possible: every startup failure below must be
 	// readable after the fact — on Windows the console may not exist at all.
-	if closer, err := logging.Init(filepath.Join(configDir, "lich")); err != nil {
+	logDir := filepath.Join(configDir, "lich")
+	logPath := logging.Path(logDir)
+	if closer, err := logging.Init(logDir); err != nil {
 		slog.Warn("file log unavailable, stderr only", "err", err)
+		// Nothing to reveal or attach to a bug report; the Help section says so
+		// rather than pointing at a file that was never written.
+		logPath = ""
 	} else {
 		defer closer.Close()
 	}
@@ -100,7 +105,7 @@ func main() {
 	dispatcher.Register("appupdate", appupdate.New(version))
 	dispatcher.Register("patchnotes", patchnotes.New(version, changelog))
 	dispatcher.Register("store", db)
-	dispatcher.Register("system", system.New(env))
+	dispatcher.Register("system", system.New(env, logPath, version))
 	dispatcher.Register("providers", providers.New())
 	dispatcher.Deny("store.Close")
 	term.Mount("/rpc/", dispatcher)

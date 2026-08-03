@@ -284,6 +284,16 @@ export interface PatchNotes {
   groups: PatchNotesGroup[] | null
 }
 
+/** internal/system.Diagnostics — what a bug report opens with. */
+export interface Diagnostics {
+  /** "dev" outside a release build. */
+  version: string
+  /** GOOS/GOARCH, e.g. "linux/amd64". */
+  platform: string
+  /** "" when the log file could not be opened and lich logs to stderr only. */
+  logPath: string
+}
+
 /** internal/providers.Detected — a known provider and whether it is on PATH. */
 export interface DetectedProvider {
   id: string

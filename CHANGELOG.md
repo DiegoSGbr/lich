@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Report a bug without being told where the log file is.** Reporting anything
+  meant being walked to a directory you had no reason to know, to a file whose
+  name nobody had said out loud. Settings now ends in **Help**: one button opens
+  the log's folder in your file manager — the rotated generation in view beside
+  the live one, since a bug older than today's session is usually in there — and
+  another opens the bug form in your browser with the version and platform
+  already filled in. lich never files the issue for you, and never needs `gh`
+  installed or logged in to do any of this: it hands you the form and the file,
+  you write the report and attach it. The section also says what the log carries
+  — paths, project and branch names, your gh login, and never a session token —
+  so you know what you are sending before you send it. It sits at the foot of
+  the settings nav next to **Updates**, the two of them apart from the sections
+  that configure a project: neither is something you set, and neither is
+  something you open twice in a session.
+
 - **Reopen a recent project without the file picker.** A closed project keeps
   everything it was closed with — its sessions, its name, its tab position —
   but finding it again meant walking the directory picker back to it. The "+"
