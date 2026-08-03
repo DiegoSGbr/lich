@@ -10,7 +10,27 @@ import {
   type Hotkeys,
 } from "@/lib/hotkeys"
 import { zoomIntent } from "@/lib/terminal/zoom-keys"
-import { parseBoolPref, parseEnumPref, parseNumberPref, readPref, writePref } from "@/lib/prefs"
+import { parseBoolPref, parseNumberPref, readPref, writePref } from "@/lib/prefs"
+import { Themes as ThemeRPC } from "@/lib/rpc"
+import {
+  applyAppTheme,
+  BUNDLED_THEMES,
+  DARK_THEME_SCHEME,
+  DEFAULT_TERMINAL_THEME,
+  DEFAULT_THEME,
+  mergeImportedTheme,
+  mergeThemes,
+  reconcileThemeSelections,
+  resolveTerminalTheme,
+  resolveTheme,
+  selectionsAfterThemeRemoval,
+  SYSTEM_THEME,
+} from "@/lib/themes"
+import type { TerminalTheme, Theme, ResolvedTheme } from "@/lib/themes"
+import type { ThemeDefinition, ThemeImportResult } from "@/lib/api-types"
+
+export type { TerminalTheme, Theme, ResolvedTheme } from "@/lib/themes"
+export { DEFAULT_TERMINAL_THEME, DEFAULT_THEME } from "@/lib/themes"
 
 const FONT_STORAGE_KEY = "lich.terminal.font"
 const TERMINAL_FONT_SIZE_STORAGE_KEY = "lich.terminal.fontSize"
@@ -22,20 +42,6 @@ const CONTEXT_USAGE_STORAGE_KEY = "lich.footer.contextUsage"
 // DEFAULT_FONT is the bundled FiraCode Nerd Font Mono. It is not installed via
 // fontconfig, so it must be offered explicitly alongside the system fonts.
 export const DEFAULT_FONT = "FiraCode Nerd Font Mono"
-
-// THEMES drives both the persisted value and the Appearance picker options.
-// "system" follows the OS color scheme live.
-export const THEMES = ["system", "light", "dark"] as const
-export type Theme = (typeof THEMES)[number]
-export const DEFAULT_THEME: Theme = "system"
-
-// TERMINAL_THEMES: "match" tracks the resolved app theme; the others force it.
-export const TERMINAL_THEMES = ["match", "light", "dark"] as const
-export type TerminalTheme = (typeof TERMINAL_THEMES)[number]
-export const DEFAULT_TERMINAL_THEME: TerminalTheme = "match"
-
-// A theme resolved to a concrete color scheme (system/match already applied).
-export type ResolvedTheme = "light" | "dark"
 
 export const ZOOM_MIN = 0.5
 export const ZOOM_MAX = 2
@@ -72,10 +78,13 @@ const readTerminalFontSize = (): number =>
     clampTerminalFontSize,
   )
 
-const readTheme = (): Theme => parseEnumPref(readPref(THEME_STORAGE_KEY), THEMES, DEFAULT_THEME)
+// Both preferences are read raw: the stored id is an open value, and the only
+// check worth making is membership, which reconcileThemeSelections applies once
+// the theme list lands. Until then an unknown id resolves to the system theme.
+const readTheme = (): Theme => readPref(THEME_STORAGE_KEY) ?? DEFAULT_THEME
 
 const readTerminalTheme = (): TerminalTheme =>
-  parseEnumPref(readPref(TERMINAL_THEME_STORAGE_KEY), TERMINAL_THEMES, DEFAULT_TERMINAL_THEME)
+  readPref(TERMINAL_THEME_STORAGE_KEY) ?? DEFAULT_TERMINAL_THEME
 
 const readZoom = (): number => parseNumberPref(readPref(ZOOM_STORAGE_KEY), DEFAULT_ZOOM, clampZoom)
 
@@ -92,7 +101,11 @@ interface SettingsValue {
   /** Color theme applied to the whole app via the `.dark` class on <html>. */
   theme: Theme
   setTheme: (theme: Theme) => void
-  /** Theme resolved to a concrete scheme (system already mapped to the OS). */
+  /** Bundled and imported themes available to the app. */
+  themes: ThemeDefinition[]
+  importTheme: (path: string, overwrite: boolean) => Promise<ThemeImportResult>
+  removeTheme: (id: string) => Promise<void>
+  /** Theme resolved to concrete colors (system already mapped to the OS). */
   resolvedTheme: ResolvedTheme
   /** UI zoom factor applied to the whole app (1 = 100%). */
   zoom: number
@@ -116,12 +129,44 @@ const SettingsContext = createContext<SettingsValue | null>(null)
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [font, setFontState] = useState<string>(readFont)
   const [terminalFontSize, setTerminalFontSizeState] = useState<number>(readTerminalFontSize)
+  const [themes, setThemes] = useState<ThemeDefinition[]>(BUNDLED_THEMES)
+  const [themesLoaded, setThemesLoaded] = useState(false)
   const [theme, setThemeState] = useState<Theme>(readTheme)
-  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>("light")
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(BUNDLED_THEMES[0])
   const [zoom, setZoomState] = useState<number>(readZoom)
   const [terminalTheme, setTerminalThemeState] = useState<TerminalTheme>(readTerminalTheme)
   const [hotkeys, setHotkeys] = useState<Hotkeys>(loadHotkeys)
   const [showContextUsage, setShowContextUsageState] = useState<boolean>(readContextUsage)
+
+  useEffect(() => {
+    let cancelled = false
+    ThemeRPC.List()
+      .then((loaded) => {
+        if (!cancelled) {
+          setThemes(mergeThemes(loaded))
+          setThemesLoaded(true)
+        }
+      })
+      .catch((error) => {
+        console.warn("[settings] failed to load custom themes", error)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!themesLoaded) return
+    const reconciled = reconcileThemeSelections({ theme, terminalTheme }, themes)
+    if (reconciled.theme !== theme) {
+      setThemeState(reconciled.theme)
+      writePref(THEME_STORAGE_KEY, reconciled.theme)
+    }
+    if (reconciled.terminalTheme !== terminalTheme) {
+      setTerminalThemeState(reconciled.terminalTheme)
+      writePref(TERMINAL_THEME_STORAGE_KEY, reconciled.terminalTheme)
+    }
+  }, [theme, terminalTheme, themes, themesLoaded])
 
   const setFont = useCallback((next: string) => {
     setFontState(next)
@@ -160,6 +205,35 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     writePref(TERMINAL_THEME_STORAGE_KEY, next)
   }, [])
 
+  const importTheme = useCallback(
+    async (path: string, overwrite: boolean) => {
+      const result = await ThemeRPC.Import(path, overwrite)
+      if (!result.needsOverwrite) {
+        setThemes((prev) => mergeImportedTheme(prev, result.theme))
+        setTheme(result.theme.id)
+      }
+      return result
+    },
+    [setTheme],
+  )
+
+  const removeTheme = useCallback(
+    async (id: string) => {
+      await ThemeRPC.Remove(id)
+      setThemes((prev) => mergeThemes(prev.filter((item) => item.id !== id)))
+      const next = selectionsAfterThemeRemoval(id, { theme, terminalTheme })
+      if (next.theme !== theme) {
+        setThemeState(next.theme)
+        writePref(THEME_STORAGE_KEY, next.theme)
+      }
+      if (next.terminalTheme !== terminalTheme) {
+        setTerminalThemeState(next.terminalTheme)
+        writePref(TERMINAL_THEME_STORAGE_KEY, next.terminalTheme)
+      }
+    },
+    [theme, terminalTheme],
+  )
+
   const setHotkey = useCallback((id: HotkeyId, combo: Combo) => {
     setHotkeys((prev) => {
       const next = { ...prev, [id]: combo }
@@ -181,20 +255,25 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     writePref(CONTEXT_USAGE_STORAGE_KEY, next)
   }, [])
 
-  // Toggle the `.dark` class on <html> and track the resolved scheme. For
-  // "system", follow the OS scheme and keep following it live.
+  // Apply the resolved theme's CSS variables and toggle `.dark` for existing
+  // dark variants. For "system", follow the OS scheme and keep following it
+  // live.
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)")
     const apply = () => {
-      const dark = theme === "dark" || (theme === "system" && media.matches)
-      document.documentElement.classList.toggle("dark", dark)
-      setResolvedTheme(dark ? "dark" : "light")
+      const resolved = resolveTheme(theme, themes, media.matches)
+      applyAppTheme(resolved, document.documentElement)
+      document.documentElement.classList.toggle(
+        DARK_THEME_SCHEME,
+        resolved.scheme === DARK_THEME_SCHEME,
+      )
+      setResolvedTheme(resolved)
     }
     apply()
-    if (theme !== "system") return
+    if (theme !== SYSTEM_THEME) return
     media.addEventListener("change", apply)
     return () => media.removeEventListener("change", apply)
-  }, [theme])
+  }, [theme, themes])
 
   // Scale the app by moving the root font size: every Tailwind spacing and type
   // utility resolves in rem (--spacing is 0.25rem, --text-* are rem), so one
@@ -251,8 +330,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
   }, [zoomBy, setZoom])
 
-  const resolvedTerminalTheme: ResolvedTheme =
-    terminalTheme === "match" ? resolvedTheme : terminalTheme
+  const resolvedTerminalTheme = resolveTerminalTheme(terminalTheme, resolvedTheme, themes)
 
   return (
     <SettingsContext.Provider
@@ -261,8 +339,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setFont,
         terminalFontSize,
         setTerminalFontSize,
+        themes,
         theme,
         setTheme,
+        importTheme,
+        removeTheme,
         resolvedTheme,
         zoom,
         setZoom,

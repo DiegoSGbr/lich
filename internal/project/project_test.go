@@ -1,11 +1,61 @@
 package project
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 )
+
+type pickerStub struct {
+	filePath  string
+	fileError error
+	fileTitle string
+	saveName  string
+}
+
+func (*pickerStub) PickDirectory(string) (string, error) { return "", nil }
+
+func (p *pickerStub) PickFile(title string) (string, error) {
+	p.fileTitle = title
+	return p.filePath, p.fileError
+}
+
+func (p *pickerStub) PickSaveFile(title, defaultName string) (string, error) {
+	p.fileTitle = title
+	p.saveName = defaultName
+	return p.filePath, p.fileError
+}
+
+func TestPickFileUsesRequestedTitle(t *testing.T) {
+	picker := &pickerStub{filePath: "/tmp/theme.json"}
+	path, err := New(picker).PickFile("Import Theme")
+	if err != nil || path != picker.filePath || picker.fileTitle != "Import Theme" {
+		t.Fatalf("PickFile = %q, %v; title = %q", path, err, picker.fileTitle)
+	}
+
+	picker.fileError = errors.New("picker failed")
+	if _, err := New(picker).PickFile("Import Theme"); err == nil {
+		t.Fatal("PickFile error was swallowed")
+	}
+}
+
+func TestPickSaveFileSeedsTheDefaultName(t *testing.T) {
+	picker := &pickerStub{filePath: "/tmp/lich-theme-template.json"}
+	path, err := New(picker).PickSaveFile("Save Theme Template", "lich-theme-template.json")
+	if err != nil || path != picker.filePath {
+		t.Fatalf("PickSaveFile = %q, %v", path, err)
+	}
+	if picker.fileTitle != "Save Theme Template" || picker.saveName != "lich-theme-template.json" {
+		t.Fatalf("dialog seeded with title %q, name %q", picker.fileTitle, picker.saveName)
+	}
+
+	picker.fileError = errors.New("picker failed")
+	if _, err := New(picker).PickSaveFile("Save Theme Template", "x.json"); err == nil {
+		t.Fatal("PickSaveFile error was swallowed")
+	}
+}
 
 // TestProjectID proves the ID is deterministic per path and differs across
 // paths.

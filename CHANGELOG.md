@@ -32,6 +32,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A project whose directory has been moved or deleted says so and leaves the
   list for good. With nothing closed yet the button is the picker it always was.
 
+- **Save a ready-to-edit template for a custom theme.** Appearance now puts a
+  template beside the theme importer, so making a theme can start from a valid
+  JSON file instead of the documentation alone. The example names every
+  supported app and terminal color, uses valid values throughout, and is ready
+  to rename, recolor and import back into lich. Both sides go through the same
+  native dialogs the rest of lich uses, so the template lands where you choose
+  it instead of somewhere you have to go find afterwards.
 - **Merge past a rule that is holding a pull request back.** Once GitHub answers
   that a rule on the base branch stands in the way, gh refuses the merge without
   ever calling GitHub — so there was nothing lich could do with that pull request
@@ -89,6 +96,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whole exchange in the order it happened — verdicts, comments on the pull
   request itself, and the threads whose lines the branch has since rewritten,
   which no diff can show. Settled threads fold themselves away behind a count.
+- **Appearance can import custom color themes.** lich still ships the bundled
+  Light and Dark themes, but Settings › Appearance now accepts theme JSON files
+  saved under the app config directory. Imported themes can recolor both the
+  interface tokens and the terminal palette, can be selected independently for
+  the app and terminal, and can be removed without touching the bundled themes.
+  Re-importing an existing id asks before replacing it, and a deleted selected
+  theme returns both pickers to their automatic system behavior.
 - **Review comments, handed to the session as one prompt.** A diff could give
   the session a *reference* — a file, a line range — but never an instruction,
   so anything you actually wanted changed had to be typed out by hand while

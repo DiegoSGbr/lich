@@ -29,6 +29,7 @@ type Project struct {
 type Picker interface {
 	PickDirectory(title string) (string, error)
 	PickFile(title string) (string, error)
+	PickSaveFile(title, defaultName string) (string, error)
 }
 
 // Service opens project directories via the native file picker.
@@ -137,10 +138,20 @@ func (s *Service) Exists(path string) bool {
 
 // PickFile shows the native file picker and returns the chosen file path, or ""
 // if the user cancels the dialog.
-func (s *Service) PickFile() (string, error) {
-	path, err := s.picker.PickFile("Attach File")
+func (s *Service) PickFile(title string) (string, error) {
+	path, err := s.picker.PickFile(title)
 	if err != nil {
 		return "", fmt.Errorf("open dialog failed: %w", err)
+	}
+	return path, nil
+}
+
+// PickSaveFile shows the native save dialog seeded with defaultName and returns
+// the chosen destination, or "" if the user cancels.
+func (s *Service) PickSaveFile(title, defaultName string) (string, error) {
+	path, err := s.picker.PickSaveFile(title, defaultName)
+	if err != nil {
+		return "", fmt.Errorf("save dialog failed: %w", err)
 	}
 	return path, nil
 }

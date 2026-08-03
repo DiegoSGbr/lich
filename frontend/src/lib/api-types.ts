@@ -270,6 +270,22 @@ export interface AppUpdateStatus {
   installCommand: string
 }
 
+/** internal/themes.Theme — a color theme for the UI tokens and xterm. */
+export interface ThemeDefinition {
+  id: string
+  name: string
+  scheme: "light" | "dark"
+  origin: "bundled" | "custom"
+  app: Record<string, string>
+  terminal: Record<string, string>
+}
+
+/** internal/themes.ImportResult — import outcome before an optional overwrite. */
+export interface ThemeImportResult {
+  theme: ThemeDefinition
+  needsOverwrite: boolean
+}
+
 /** internal/patchnotes.Group — one "### Added/Changed/Fixed" block of a release. */
 export interface PatchNotesGroup {
   label: string

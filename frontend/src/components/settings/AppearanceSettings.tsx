@@ -1,14 +1,17 @@
 import {
   CaseSensitive,
+  ChevronDown,
+  Download,
   Minus,
-  Monitor,
-  Moon,
   Plus,
   SquareTerminal,
-  Sun,
+  Trash2,
+  Upload,
   ZoomIn,
   ZoomOut,
 } from "lucide-react"
+import { useState } from "react"
+import { toast } from "sonner"
 import {
   DEFAULT_TERMINAL_FONT_SIZE,
   DEFAULT_ZOOM,
@@ -17,47 +20,54 @@ import {
   TERMINAL_FONT_SIZE_STEP,
   ZOOM_MAX,
   ZOOM_MIN,
-  THEMES,
-  TERMINAL_THEMES,
   ZOOM_STEP,
   useSettings,
 } from "@/providers/settings"
 import type { TerminalTheme, Theme } from "@/providers/settings"
+import type { ThemeDefinition } from "@/lib/api-types"
+import { ProjectService, Themes } from "@/lib/rpc"
+import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { Stepper } from "@/components/common/Stepper"
-import { SegmentedControl } from "./SegmentedControl"
 import { SettingBlock, SettingGroup } from "./SettingBlock"
 import { FontSetting } from "./FontSetting"
-
-// How each theme value presents itself. Built off THEMES/TERMINAL_THEMES so the
-// picker cannot drift from what the provider persists — adding a theme there
-// is what puts it on screen, and forgetting an entry here is a type error.
-const THEME_LABELS: Record<Theme, { label: string; icon: JSX.Element }> = {
-  system: { label: "System", icon: <Monitor /> },
-  light: { label: "Light", icon: <Sun /> },
-  dark: { label: "Dark", icon: <Moon /> },
-}
-
-const TERMINAL_THEME_LABELS: Record<TerminalTheme, { label: string; icon: JSX.Element }> = {
-  match: { label: "Match app", icon: <Monitor /> },
-  light: { label: "Light", icon: <Sun /> },
-  dark: { label: "Dark", icon: <Moon /> },
-}
-
-const THEME_OPTIONS = THEMES.map((value) => ({ value, ...THEME_LABELS[value] }))
-
-const TERMINAL_THEME_OPTIONS = TERMINAL_THEMES.map((value) => ({
-  value,
-  ...TERMINAL_THEME_LABELS[value],
-}))
+import { Button } from "@/components/ui/button"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import {
+  bundledThemes,
+  customThemes,
+  MATCH_TERMINAL_THEME,
+  SYSTEM_THEME,
+  THEME_TEMPLATE_FILENAME,
+  themeSelectItems,
+} from "@/lib/themes"
+import { errorText } from "@/lib/utils"
 
 // Appearance holds every look-and-feel control, split into an Interface group
 // (theme, zoom) and a Terminal group (background, text size, font) so the two
 // concerns read apart instead of as one flat list. The group label supplies the
 // context, so the block titles drop their "Interface"/"Terminal" prefix.
 export function AppearanceSettings() {
+  const [themePendingRemoval, setThemePendingRemoval] = useState<ThemeDefinition | null>(null)
+  const [themePendingOverwrite, setThemePendingOverwrite] = useState<{
+    path: string
+    theme: ThemeDefinition
+  } | null>(null)
+  const [importedThemesOpen, setImportedThemesOpen] = useState(false)
   const {
+    themes,
     theme,
     setTheme,
+    importTheme,
+    removeTheme,
     zoom,
     setZoom,
     terminalFontSize,
@@ -65,17 +75,191 @@ export function AppearanceSettings() {
     terminalTheme,
     setTerminalTheme,
   } = useSettings()
+  const importedThemes = customThemes(themes)
+  const hasCustomThemes = importedThemes.length > 0
+
+  const onImportTheme = async () => {
+    try {
+      const path = await ProjectService.PickFile("Import Theme")
+      if (!path) return
+      const result = await importTheme(path, false)
+      if (result.needsOverwrite) {
+        setThemePendingOverwrite({ path, theme: result.theme })
+        return
+      }
+      toast.success(`Imported theme: ${result.theme.name}`)
+    } catch (error) {
+      toast.error(`Theme import failed: ${errorText(error)}`)
+    }
+  }
+
+  const onOverwriteTheme = async () => {
+    if (!themePendingOverwrite) return
+    try {
+      const result = await importTheme(themePendingOverwrite.path, true)
+      toast.success(`Imported theme: ${result.theme.name}`)
+      setThemePendingOverwrite(null)
+    } catch (error) {
+      toast.error(`Theme import failed: ${errorText(error)}`)
+    }
+  }
+
+  const onRemoveTheme = async () => {
+    if (!themePendingRemoval) {
+      return
+    }
+    try {
+      await removeTheme(themePendingRemoval.id)
+      toast.success(`Removed theme: ${themePendingRemoval.name}`)
+      setThemePendingRemoval(null)
+    } catch (error) {
+      toast.error(`Theme removal failed: ${errorText(error)}`)
+    }
+  }
+
+  const onDownloadThemeTemplate = async () => {
+    try {
+      const path = await ProjectService.PickSaveFile("Save Theme Template", THEME_TEMPLATE_FILENAME)
+      if (!path) return
+      await Themes.SaveTemplate(path)
+      toast.success(`Saved theme template to ${path}`)
+    } catch (error) {
+      toast.error(`Theme template failed: ${errorText(error)}`)
+    }
+  }
 
   return (
     <>
       <SettingGroup label="Interface">
-        <SettingBlock title="Theme">
-          <SegmentedControl
-            ariaLabel="Interface theme"
-            value={theme}
-            onChange={setTheme}
-            options={THEME_OPTIONS}
-          />
+        <SettingBlock
+          title="Theme"
+          description="Controls the app color tokens. System follows your OS and uses the bundled light or dark theme."
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <Select
+              value={theme}
+              items={themeSelectItems(themes, SYSTEM_THEME, "System")}
+              onValueChange={(value) => value && setTheme(value as Theme)}
+            >
+              <SelectTrigger className="w-64">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectLabel>Automatic</SelectLabel>
+                  <SelectItem value={SYSTEM_THEME}>System</SelectItem>
+                </SelectGroup>
+                <ThemeOptions themes={themes} />
+              </SelectContent>
+            </Select>
+            <Button type="button" variant="outline" onClick={() => void onImportTheme()}>
+              <Upload />
+              Import
+            </Button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Download Theme Template"
+                    onClick={() => void onDownloadThemeTemplate()}
+                  />
+                }
+              >
+                <Download />
+              </TooltipTrigger>
+              <TooltipContent>Download Theme Template</TooltipContent>
+            </Tooltip>
+          </div>
+          {hasCustomThemes && (
+            <div className="mt-3 w-full max-w-md">
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-8 w-full justify-start px-1.5 text-muted-foreground"
+                aria-expanded={importedThemesOpen}
+                onClick={() => setImportedThemesOpen((open) => !open)}
+              >
+                <ChevronDown
+                  className={
+                    importedThemesOpen ? "transition-transform" : "-rotate-90 transition-transform"
+                  }
+                />
+                Imported themes ({importedThemes.length})
+              </Button>
+              {importedThemesOpen && (
+                <div className="mt-1 space-y-0.5">
+                  {importedThemes.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex min-h-10 items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent/50"
+                    >
+                      <span
+                        aria-hidden
+                        className="size-4 shrink-0 rounded-sm border border-border"
+                        style={{ backgroundColor: item.app.background }}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm">{item.name}</span>
+                        <span className="block truncate font-mono text-xs text-muted-foreground">
+                          {item.id}
+                        </span>
+                      </span>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label={`Remove ${item.name}`}
+                              onClick={() => setThemePendingRemoval(item)}
+                            />
+                          }
+                        >
+                          <Trash2 />
+                        </TooltipTrigger>
+                        <TooltipContent>{`Remove ${item.name}`}</TooltipContent>
+                      </Tooltip>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          <ConfirmDialog
+            open={themePendingRemoval !== null}
+            onCancel={() => setThemePendingRemoval(null)}
+            title="Remove imported theme?"
+            description={
+              <>
+                Delete <span className="font-medium">{themePendingRemoval?.name}</span>? This
+                removes the imported theme file from lich.
+              </>
+            }
+          >
+            <Button variant="destructive" onClick={() => void onRemoveTheme()}>
+              Remove theme
+            </Button>
+          </ConfirmDialog>
+          <ConfirmDialog
+            open={themePendingOverwrite !== null}
+            onCancel={() => setThemePendingOverwrite(null)}
+            title="Replace imported theme?"
+            description={
+              <>
+                A theme with the id{" "}
+                <span className="font-medium">{themePendingOverwrite?.theme.id}</span> already
+                exists. Import anyway? This permanently deletes the previous theme.
+              </>
+            }
+          >
+            <Button variant="destructive" onClick={() => void onOverwriteTheme()}>
+              Replace theme
+            </Button>
+          </ConfirmDialog>
         </SettingBlock>
 
         <SettingBlock
@@ -102,15 +286,25 @@ export function AppearanceSettings() {
       <SettingGroup label="Terminal">
         <SettingBlock
           icon={<SquareTerminal className="size-4" />}
-          title="Appearance"
-          description="Background color of the terminal. Match app keeps it in sync with the interface theme so text stays legible."
+          title="Theme"
+          description="Match app keeps the terminal in sync with the interface theme so text stays legible."
         >
-          <SegmentedControl
-            ariaLabel="Terminal appearance"
+          <Select
             value={terminalTheme}
-            onChange={setTerminalTheme}
-            options={TERMINAL_THEME_OPTIONS}
-          />
+            items={themeSelectItems(themes, MATCH_TERMINAL_THEME, "Match app")}
+            onValueChange={(value) => value && setTerminalTheme(value as TerminalTheme)}
+          >
+            <SelectTrigger className="w-64">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectLabel>Automatic</SelectLabel>
+                <SelectItem value={MATCH_TERMINAL_THEME}>Match app</SelectItem>
+              </SelectGroup>
+              <ThemeOptions themes={themes} />
+            </SelectContent>
+          </Select>
         </SettingBlock>
 
         <SettingBlock
@@ -135,6 +329,37 @@ export function AppearanceSettings() {
 
         <FontSetting />
       </SettingGroup>
+    </>
+  )
+}
+
+interface ThemeOptionsProps {
+  themes: readonly ThemeDefinition[]
+}
+
+function ThemeOptions({ themes }: ThemeOptionsProps) {
+  const bundled = bundledThemes(themes)
+  const custom = customThemes(themes)
+  return (
+    <>
+      <SelectGroup>
+        <SelectLabel>Bundled</SelectLabel>
+        {bundled.map((item) => (
+          <SelectItem key={item.id} value={item.id}>
+            {item.name}
+          </SelectItem>
+        ))}
+      </SelectGroup>
+      {custom.length > 0 && (
+        <SelectGroup>
+          <SelectLabel>Custom</SelectLabel>
+          {custom.map((item) => (
+            <SelectItem key={item.id} value={item.id}>
+              {item.name}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      )}
     </>
   )
 }
