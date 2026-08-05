@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   did, and is still the right way to try a theme you are writing — it simply
   reads as unversioned, because it is.
 
+### Fixed
+
+- **Ctrl+Click on a link inside a session opens one tab, not two.** Claude Code
+  reads the mouse itself and opens the links it prints, so the same click was
+  being served twice: once by the session, once by lich. Whenever the running
+  app is reading the mouse, the click is now its own — lich opens the link only
+  where nothing else will.
+
 ## [0.24.0] - 2026-08-04
 
 ### Added
