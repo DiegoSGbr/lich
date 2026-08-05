@@ -6,8 +6,8 @@
   <h1>lich</h1>
   <p><strong>A terminal-first harness for coding with AI agents.</strong></p>
   <p>
-    Open your projects, run agents like Claude Code, Codex, Opencode in
-    real terminals, and keep git — worktrees, diffs and pull requests — in view
+    Open your projects, run agents like Claude Code, Codex and Opencode in real
+    terminals, and keep git — worktrees, diffs and pull requests — in view
     without leaving the window.
   </p>
   <p>
