@@ -17,7 +17,7 @@
     <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-333" />
     <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue" /></a>
   </p>
-  <img src="docs/media/session.png" alt="A Claude Code session running in a lich worktree, with the session card showing its branch and diff badge and the footer showing the model and context ring" width="900" />
+  <img src="docs/media/session.png" alt="Four projects on the tab bar and five sessions in the sidebar — each with its worktree, branch and diff badge — while a Claude Code session works in the terminal and the footer shows the model and context ring" width="900" />
 </div>
 
 ## About
