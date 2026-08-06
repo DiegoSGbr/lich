@@ -141,8 +141,11 @@ nobody knows it and that the call site never shows. The mechanism and the histor
   the running window (best-effort, untested against a real window) and exits 0.
 - **Reordering rides dnd-kit's pointer sensors** (`frontend/src/lib/use-sortable-list.ts`); the activation distance
   is load-bearing — without it plain clicks stop selecting a session.
+- **Windows and macOS run in the field, but not here**: five colleagues use them daily (four Windows, one macOS)
+  and talk to the author every day — no bug has come back yet. Neither OS is available for development, so that
+  channel, not a suite, is what catches a regression: a report from one of them is the only path to a repro, and
+  "it cross-compiles and CI is green" is not evidence either platform works.
 - **Windows is experimental**: cmd.exe is the shell, and the GUI subsystem build has no console — diagnostics only
   reach `%AppData%\lich\lich.log`. The PTY has no Windows tests.
-- **macOS is experimental**: unsigned (Gatekeeper quarantines them) and never run on real hardware. Three darwin
-  seams: `internal/chromium`, `internal/system`, and `internal/terminal`'s cwd reader, which hardcodes libSystem
-  struct offsets.
+- **macOS is experimental**: unsigned (Gatekeeper quarantines them). Three darwin seams: `internal/chromium`,
+  `internal/system`, and `internal/terminal`'s cwd reader, which hardcodes libSystem struct offsets.
