@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The command palette searches what was said, not just what things are
+  called.** Finding the session where you worked something out meant remembering
+  the name you gave it — and the name is usually the one thing you don't
+  remember. Type three characters or more and a **Messages** group appears under
+  the sessions and projects, listing the sessions whose conversation mentions
+  them, each with the sentence it matched and how many of its messages did;
+  Enter opens the session as any other palette row does. It reads your turns and
+  the agent's, not tool output, and it looks inside the conversation a session is
+  running now — what was said before a `/clear` is in a transcript lich can no
+  longer name. Claude Code sessions only, like the rest of the transcript
+  readouts.
+
+- **A spend ceiling for the footer cost readout.** The cost of a session was a
+  number you had to go and read; a session left running past what you meant to
+  spend on it looked exactly like a cheap one. Set a ceiling in dollars under
+  **Settings › Providers › Claude Code** and the figure takes the same colour ramp
+  the context ring already uses — amber from 80% of it, red from 95% — with the
+  tooltip naming the ceiling it is measured against. It is a warning and nothing
+  more: no turn is stopped, and the number it watches is API pricing from lich's
+  own table, so leave it empty on a subscription. The setting appears with the
+  cost readout and hides with it.
+
 - **A session waiting on you now reaches the desktop.** The bell on the card and
   the toast beside it only ever worked while you were looking at lich — walk away
   to a browser or another workspace and a session blocked on a permission prompt
