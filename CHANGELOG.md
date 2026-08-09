@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The sidebar says how long a session has been waiting.** With several agents
+  running, every bell looked the same: nothing on screen told you which session
+  had been blocked on you for twenty minutes and which had just asked. A card
+  that is waiting on you, or busy producing, now carries a short elapsed readout
+  beside its status ring — `40s`, `12m`, `3h` — counting from the moment it
+  entered that state, not from the last time the hook reported it. A finished
+  turn shows nothing: it is over, and its number would only climb. The readout
+  survives switching projects, so a session that started waiting while you were
+  looking elsewhere comes back with its real age, not a fresh clock.
+
 - **The command palette searches what was said, not just what things are
   called.** Finding the session where you worked something out meant remembering
   the name you gave it — and the name is usually the one thing you don't
