@@ -12,7 +12,7 @@ import { EmptySessions } from "@/components/EmptySessions"
 import { Settings } from "@/components/settings/Settings"
 import { Pulls } from "@/components/pulls/Pulls"
 import { Toaster } from "@/components/ui/sonner"
-import { ClaudePluginGate } from "@/components/ClaudePluginGate"
+import { AgentPluginGate } from "@/components/AgentPluginGate"
 import { AppUpdateGate } from "@/components/AppUpdateGate"
 import { PatchNotesGate } from "@/components/PatchNotesGate"
 import { ProviderSetupGate } from "@/components/ProviderSetupGate"
@@ -93,7 +93,9 @@ function App() {
           <CommandPalette />
         </ProjectsProvider>
       </HashRouter>
-      <ClaudePluginGate />
+      {/* Holds its prompt until a provider has been chosen, so a first launch
+          asks which harnesses you use before offering to install into them. */}
+      <AgentPluginGate />
       <PatchNotesGate />
       {/* Last, so that on the one launch where it can coincide with another gate
           it is the dialog on top: choosing a provider comes before reading about

@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A Codex session resumes, and wears its own icon.** The companion plugin now
+  installs on Codex as well as Claude Code, and lich no longer treats every
+  session that reports itself as a Claude one. A Codex card reopens the
+  conversation it was running before the last restart — the same prompt a Claude
+  card raises, spawning `codex resume <id>` — and only offers it when the
+  conversation is still on disk. A `codex` running by hand inside a shell session
+  now puts Codex's mark on that card instead of Claude's.
+
+- **The plugin prompt installs into whichever CLIs you have.** The startup
+  dialog was about Claude Code alone; it now lists every provider that can run
+  the plugin and is present on the machine, ticked, so one **Install** covers
+  both. Settings › Updates follows: one row per CLI with its installed version,
+  an install or update button, and a plain "CLI not installed" for the ones you
+  do not use. Installing into Codex adds one manual step lich cannot do for you —
+  Codex will not run a plugin's hooks until you review them once with `/hooks` —
+  so the prompt says so where it applies.
 - **Closing a session can be undone.** The × was the one button in the app with
   no way back: a stray click deleted the card and the agent's conversation went
   with it, and pinning only ever protected the session you remembered to pin.

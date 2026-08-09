@@ -78,9 +78,9 @@ export function SessionCard({
   // the bells all look alike and the one blocked longest is the one to answer
   // first. "" for the states that have no clock (see useSessionStatusAge).
   const age = useSessionStatusAge(session.id)
-  // The provider CLI live inside the PTY right now — a hand-run `claude` in a
-  // shell session puts Claude's mark on the card while it runs; null falls
-  // back to the session's own kind.
+  // The provider CLI live inside the PTY right now — a hand-run `claude` or
+  // `codex` in a shell session puts that provider's mark on the card while it
+  // runs; null falls back to the session's own kind.
   const agent = useSessionAgent(session.id)
   // The live working directory the backend's cwd watcher reports ("" until it
   // does): a `cd` in the terminal moves the card with it. Falls back to the
