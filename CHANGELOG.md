@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **lich says when its last run ended badly.** A crash, a kill, or a machine
+  that went down took the sessions with it — and the next launch restored the
+  workspace looking exactly as it does after a deliberate close, so the turn an
+  agent never finished was gone with nothing on screen saying so. That launch
+  now opens with a notice that the previous run ended unexpectedly, and a button
+  onto the log folder where that run's log sits. Closing the window as usual
+  says nothing, and neither does the relaunch an in-place update performs.
 - **`lich rage` packs a bug report you can actually attach.** Reporting a
   problem meant being walked through it: find the log folder, notice that the
   rotated generation beside it is usually the one holding the crash, say which
@@ -23,7 +30,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is filed: the archive stays on disk until you attach it to one you wrote. It
   reads the file system only, so it still works when the window never opened —
   the case where there was no Settings › Help to ask through.
-
 - **Closing a project asks when an agent is still working.** The tab's × took a
   project's terminals down with it, killing whatever was mid-turn — with a
   spinner on that very tab as the only warning, and no undo. Closing a project
