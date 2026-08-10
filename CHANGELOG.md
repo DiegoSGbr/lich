@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Closing a project asks when an agent is still working.** The tab's × took a
+  project's terminals down with it, killing whatever was mid-turn — with a
+  spinner on that very tab as the only warning, and no undo. Closing a project
+  whose sessions are busy or waiting on you now names how many and asks first;
+  a project where nothing is running still closes on the click.
+
 - **One session can hand work to another, whatever it is running.** Claude Code
   sessions can already message each other; Codex, OpenCode and Crush cannot, and
   nothing in lich reached across a card. Every session now carries a `lich`
