@@ -213,6 +213,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A session that is working can be handed a task again.** Before typing at
+  another session's prompt, lich checks that the agent — and not the checkout's
+  setup script — is what reads that terminal, by waiting for the terminal to
+  stop drawing. It only ever asked that question at the moment a task arrived,
+  and an agent in the middle of a turn redraws its spinner several times a
+  second: a session that had been sitting at its prompt for hours failed the
+  check the first time anything was ever sent to it, and the sender was told, at
+  length, that the project's setup script was still running — in a session with
+  no worktree and no setup script. lich now notices the quiet when it happens
+  rather than asking after the fact, so a busy session is handed the task and
+  answers it a turn later, the way every other busy session already did. The
+  same check was too eager at the other end: a session whose setup script had
+  just handed over could be handed a task while its agent was still drawing its
+  opening screen, and that task appeared there as literal paste markers instead
+  of reaching the prompt. The wait for an agent to start is no longer mistaken
+  for an agent that has settled. When the check does time out, the message no
+  longer names a cause it cannot see: it says what is certain, and points at the
+  screen that knows the rest.
+
 - **The session list's scrollbar no longer sits on the cards.** With enough
   sessions to scroll, the scrollbar came down flush against the right edge of
   every card, reading as part of them. It now keeps a gap, and the cards stay
