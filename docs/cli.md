@@ -356,12 +356,18 @@ own command line (`providers.AcceptsMCPServer`):
 
 | Provider | How | Registered |
 |---|---|---|
-| Claude Code | `--mcp-config` with a JSON string, no file on disk | yes |
-| Codex | `-c mcp_servers.lich.command=…` and `…args=["mcp"]` | yes |
-| opencode · oh-my-pi · Crush | no flag for it — Crush's whole flag list is cwd, data-dir, session and debug | no |
+| Claude Code | `--mcp-config` with a JSON string, no file on disk | at spawn |
+| Codex | `-c mcp_servers.lich.command=…` and `…args=["mcp"]` | at spawn |
+| Crush | an `mcp add` line in the block the plugin install writes into `crushrc` | with the plugin |
+| opencode | its plugin defines the same seven as tools of its own — a plugin there cannot register an MCP server | with the plugin |
+| oh-my-pi | no flag, no plugin | no |
 
-The three without a flag would need lich to write a config file it does not own,
-so it does not: their sessions use the command line above.
+Only the first two can be told on their own command line, which is what makes
+their registration per-session and secret-free. The next two arrive with the
+plugin instead (Settings › lich plugin), because that install already writes
+into those harnesses' own directories — so the server is registered where the
+hooks are, removed by the same uninstall, and absent for anyone who never
+installed it. oh-my-pi has neither, and its sessions use the command line above.
 
 Two rules the registration must keep:
 
@@ -419,7 +425,10 @@ shell — opens with `Message relayed by the lich command line` instead. The
 distinction is the point: the receiving agent must not read either as its user
 speaking, and the two are not the same kind of "not your user".
 
-A target whose provider has the registered server is offered the tool first:
+A target that **has** lich's tools is offered one first — Claude Code and Codex
+always, opencode and Crush once the installed plugin is new enough to carry them
+(`agentplugin.HasTools`). A session pointed at a tool it does not have loses the
+turn to an error, where the command works everywhere:
 
 ```
 When you have an answer, send it back with the lich tool `reply_to_session`
