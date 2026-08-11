@@ -13,7 +13,9 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/omartelo/lich/internal/events"
 	"github.com/omartelo/lich/internal/pricing"
@@ -94,6 +96,15 @@ type session struct {
 	done   chan struct{}
 	replay *replayBuffer
 	outbox *outbox
+	// settingUp is true while the project's worktree setup script still owns
+	// this PTY, before the provider it execs into. Cleared by the marker the
+	// wrapper prints (see setupDone). Guarded by the service's mu.
+	settingUp bool
+	// lastOut is when this PTY last produced output, and ready records that it
+	// has since gone quiet once — that its program finished drawing itself and
+	// is waiting on input. Both guarded by the service's mu.
+	lastOut time.Time
+	ready   bool
 }
 
 // Store is the persistence the terminal service depends on: the binary to spawn
@@ -145,6 +156,50 @@ type Service struct {
 	// without answering (internal/relay). Guarded by mu: wired after the
 	// transport is already serving.
 	onState func(id, state string)
+	// lastCols/lastRows is the last terminal size the window reported, and the
+	// size a session spawned with none of its own is started at. See
+	// sizeFor. Guarded by mu.
+	lastCols, lastRows int
+}
+
+// readySettle is how long a session's PTY must stay quiet before lich hands it
+// work: long enough that a provider drawing its opening screen is not mistaken
+// for one waiting at a prompt, short enough to sit inside the wait an agent
+// gives a tool call. Measured against Claude Code, whose splash lands in
+// several bursts.
+const readySettle = 600 * time.Millisecond
+
+// The size a session is started at when nothing has ever measured a terminal —
+// no window has opened yet, so there is no real one to copy. A conventional
+// terminal, which every TUI draws itself into.
+const (
+	fallbackCols = 80
+	fallbackRows = 24
+)
+
+// sizeFor resolves the size to start a PTY at. A caller that measured a
+// terminal passes it and gets it back; one that has no terminal to measure
+// (internal/spawn, opening a session for an agent) passes zero and gets the
+// last size the window reported.
+//
+// Copying that size is what keeps such a session readable. Its provider draws
+// its whole conversation into whatever grid it is given, and the window replays
+// those exact bytes into the terminal it builds when somebody finally opens the
+// card. Started at a size the window does not have, the session is redrawn on
+// the first view — at which point the TUI repaints and what it had already
+// written is gone from the screen. The conversation survives in the provider,
+// not on the screen the user came to read.
+//
+// Called under s.mu.
+func (s *Service) sizeFor(cols, rows int) (int, int) {
+	if cols > 0 && rows > 0 {
+		s.lastCols, s.lastRows = cols, rows
+		return cols, rows
+	}
+	if s.lastCols > 0 && s.lastRows > 0 {
+		return s.lastCols, s.lastRows
+	}
+	return fallbackCols, fallbackRows
 }
 
 // New returns a ready-to-use terminal service that resolves the binary to spawn
@@ -361,6 +416,7 @@ func (s *Service) spawnSession(id, projectID, cwd, kind, resume, name string, se
 	if _, running := s.sessions[id]; running {
 		return nil, "", nil
 	}
+	cols, rows = s.sizeFor(cols, rows)
 
 	if cwd == "" {
 		home, err := os.UserHomeDir()
@@ -402,11 +458,16 @@ func (s *Service) spawnSession(id, projectID, cwd, kind, resume, name string, se
 	}, outboxDepth)
 	out := newCoalescer(box.push, visibleFlushInterval, hiddenFlushInterval)
 	sess := &session{
-		pty:    p,
-		out:    out,
-		done:   make(chan struct{}),
-		replay: newReplayBuffer(replayCapBytes),
-		outbox: box,
+		pty:       p,
+		out:       out,
+		done:      make(chan struct{}),
+		replay:    newReplayBuffer(replayCapBytes),
+		outbox:    box,
+		settingUp: spec.bin == "sh" && setup,
+		// Timed from the spawn, so a program that never writes anything still
+		// becomes ready once: quiet is the signal, and silence from the start
+		// is quiet too.
+		lastOut: time.Now(),
 	}
 	s.sessions[id] = sess
 	go s.stream(id, sess)
@@ -424,6 +485,7 @@ func (s *Service) stream(id string, sess *session) {
 	for {
 		n, err := p.Read(buf)
 		if n > 0 {
+			s.noteOutput(sess, buf[:n])
 			sess.replay.append(buf[:n])
 			sess.out.Write(buf[:n])
 		}
@@ -512,11 +574,69 @@ func (s *Service) Replay(id string) (string, error) {
 // the visible terminal; a hidden terminal is resized on the next time it is
 // shown.
 func (s *Service) Resize(id string, cols, rows int) error {
+	// Recorded even when the session it names is gone: it is the window's own
+	// terminal being measured, and the next session spawned without one starts
+	// at that size (see sizeFor).
+	if cols > 0 && rows > 0 {
+		s.mu.Lock()
+		s.lastCols, s.lastRows = cols, rows
+		s.mu.Unlock()
+	}
 	p := s.ptyOf(id)
 	if p == nil {
 		return nil
 	}
 	return p.Resize(cols, rows)
+}
+
+// noteOutput reads one chunk of a session's output for the one thing lich has
+// to know about it from outside: whether the worktree setup script is still the
+// program on the other end of this PTY (see setupDone).
+func (s *Service) noteOutput(sess *session, chunk []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess.lastOut = time.Now()
+	if sess.settingUp && strings.Contains(string(chunk), setupDone) {
+		sess.settingUp = false
+		// The provider starts drawing from here, so the quiet this waits for is
+		// measured from the exec, not from the setup script's last line.
+		sess.ready = false
+	}
+}
+
+// Ready reports whether a session can be given work — whether what reads this
+// PTY is the provider rather than the project's setup script. False for a
+// session that is not running at all.
+//
+// Live is not this question. A session whose checkout is still installing its
+// dependencies has a PTY, appears in the roster, and accepts writes that go
+// straight into `pnpm install`'s stdin and are discarded before the provider
+// ever starts. It looked delivered to everyone involved: the sender waited out
+// its ticket on an agent that was never asked anything.
+func (s *Service) Ready(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[id]
+	if !ok || sess.settingUp {
+		return false
+	}
+	if sess.ready {
+		return true
+	}
+	// A TUI that has stopped drawing is one that has taken the terminal and is
+	// waiting on input. Before that, a message is written into a program still
+	// setting the tty up, which discards what it finds there — the bracketed
+	// paste then lands on screen as literal text, ahead of a prompt that never
+	// received it.
+	//
+	// Asked once: after the first quiet the session stays ready. A busy agent
+	// draws continuously, and a target mid-turn has always been written to —
+	// its provider queues the input and answers a turn later.
+	if !sess.lastOut.IsZero() && time.Since(sess.lastOut) >= readySettle {
+		sess.ready = true
+		return true
+	}
+	return false
 }
 
 // Close terminates a session's shell, if any.

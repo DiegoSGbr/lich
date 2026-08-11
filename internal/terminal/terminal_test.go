@@ -873,3 +873,186 @@ func TestSessionStateWithoutAWatcherIsHarmless(t *testing.T) {
 		t.Fatalf("status = %d, want 204", resp.StatusCode)
 	}
 }
+
+// The size a session starts at is a contract with the window, not an
+// implementation detail: a session drawn into a grid the window does not have
+// is repainted on its first view, and whatever its provider had already written
+// is gone from the screen (see sizeFor).
+
+func TestSizeForKeepsAMeasuredSize(t *testing.T) {
+	svc := New(stubBins{}, nil, events.New())
+
+	svc.mu.Lock()
+	cols, rows := svc.sizeFor(174, 51)
+	svc.mu.Unlock()
+
+	if cols != 174 || rows != 51 {
+		t.Errorf("sizeFor(174, 51) = %dx%d, want the caller's own terminal", cols, rows)
+	}
+}
+
+func TestSizeForFallsBackWhenNothingHasBeenMeasured(t *testing.T) {
+	svc := New(stubBins{}, nil, events.New())
+
+	svc.mu.Lock()
+	cols, rows := svc.sizeFor(0, 0)
+	svc.mu.Unlock()
+
+	// Pinned, not read off the constants: a conventional terminal is the whole
+	// reason this number is safe to hand a TUI that nobody is watching yet.
+	if cols != 80 || rows != 24 {
+		t.Errorf("sizeFor(0, 0) with no window = %dx%d, want 80x24", cols, rows)
+	}
+}
+
+func TestSizeForCopiesTheWindowsLastSize(t *testing.T) {
+	svc := New(stubBins{}, nil, events.New())
+
+	svc.mu.Lock()
+	svc.sizeFor(174, 51)
+	cols, rows := svc.sizeFor(0, 0)
+	svc.mu.Unlock()
+
+	if cols != 174 || rows != 51 {
+		t.Errorf("sizeFor(0, 0) = %dx%d, want the window's own 174x51", cols, rows)
+	}
+}
+
+// A resize is the window measuring its terminal, which is the freshest size
+// lich has — including for the session an agent opens next, whose own PTY
+// nobody is looking at.
+func TestResizeRecordsTheWindowsSize(t *testing.T) {
+	svc := New(stubBins{}, nil, events.New())
+
+	if err := svc.Resize("ghost", 174, 51); err != nil {
+		t.Fatalf("Resize = %v, want nil", err)
+	}
+
+	svc.mu.Lock()
+	cols, rows := svc.sizeFor(0, 0)
+	svc.mu.Unlock()
+	if cols != 174 || rows != 51 {
+		t.Errorf("a session spawned after the resize starts at %dx%d, want 174x51", cols, rows)
+	}
+}
+
+// TestStartWithoutASizeCopiesTheWindow drives the whole path: a card the window
+// measured, then a session opened with no terminal of its own.
+func TestStartWithoutASizeCopiesTheWindow(t *testing.T) {
+	bin := stayAliveBin(t)
+	svc := New(stubBins{bin: bin}, nil, events.New())
+	t.Cleanup(func() { _ = svc.Close("s1"); _ = svc.Close("s2") })
+
+	if err := svc.Start("s1", "p1", t.TempDir(), "claude", "", "", false, 174, 51); err != nil {
+		t.Fatalf("Start = %v, want nil", err)
+	}
+	if err := svc.Start("s2", "p1", t.TempDir(), "claude", "", "", false, 0, 0); err != nil {
+		t.Fatalf("Start without a size = %v, want nil", err)
+	}
+
+	svc.mu.Lock()
+	cols, rows := svc.lastCols, svc.lastRows
+	svc.mu.Unlock()
+	if cols != 174 || rows != 51 {
+		t.Errorf("the agent's session moved the window's size to %dx%d", cols, rows)
+	}
+}
+
+// TestReadyWaitsForTheSetupScript drives the whole seam: a session spawned with
+// the project's setup script is live but has nothing on the other end that can
+// read a message, until the wrapper's marker comes through its own output.
+func TestReadyWaitsForTheSetupScript(t *testing.T) {
+	bin := stayAliveBin(t)
+	svc := New(stubBins{bin: bin, setup: "echo installing"}, nil, events.New())
+	t.Cleanup(func() { _ = svc.Close("s1") })
+
+	if err := svc.Start("s1", "p1", t.TempDir(), "claude", "", "", true, 80, 24); err != nil {
+		t.Fatalf("Start = %v, want nil", err)
+	}
+	if !svc.Live("s1") {
+		t.Fatal("the session is not live")
+	}
+	if svc.Ready("s1") {
+		t.Fatal("a session still running its setup script was offered work")
+	}
+
+	svc.mu.Lock()
+	sess := svc.sessions["s1"]
+	svc.mu.Unlock()
+	svc.noteOutput(sess, []byte("Progress: resolved 551"+setupDone))
+
+	// The marker is the exec, not the prompt: the provider draws its opening
+	// screen from here, and a message written into that is the one that landed
+	// on screen as literal paste markers.
+	if svc.Ready("s1") {
+		t.Error("work was offered the instant the setup script exec'd the provider")
+	}
+	time.Sleep(readySettle + 100*time.Millisecond)
+	if !svc.Ready("s1") {
+		t.Error("the session stayed unready after its provider settled")
+	}
+}
+
+// TestReadyWaitsForTheProviderToStopDrawing covers the spawn with no setup
+// script at all: the provider still takes the terminal over, and a message
+// written before it does is lost the same way.
+func TestReadyWaitsForTheProviderToStopDrawing(t *testing.T) {
+	svc := New(stubBins{}, nil, events.New())
+	sess := &session{}
+
+	svc.noteOutput(sess, []byte("Claude Code v2.1.227"))
+	svc.mu.Lock()
+	svc.sessions["s1"] = sess
+	svc.mu.Unlock()
+
+	if svc.Ready("s1") {
+		t.Error("a session still drawing its opening screen was offered work")
+	}
+	time.Sleep(readySettle + 100*time.Millisecond)
+	if !svc.Ready("s1") {
+		t.Error("a session that went quiet was not offered work")
+	}
+}
+
+// Once a session has been ready it stays ready: a working agent draws
+// continuously, and a target mid-turn has always been written to — its provider
+// queues the input and answers a turn later.
+func TestReadyStaysTrueThroughABusyTurn(t *testing.T) {
+	svc := New(stubBins{}, nil, events.New())
+	sess := &session{lastOut: time.Now().Add(-time.Second)}
+	svc.mu.Lock()
+	svc.sessions["s1"] = sess
+	svc.mu.Unlock()
+
+	if !svc.Ready("s1") {
+		t.Fatal("a settled session was not ready")
+	}
+	svc.noteOutput(sess, []byte("...thinking..."))
+	if !svc.Ready("s1") {
+		t.Error("a session that started working again stopped accepting work")
+	}
+}
+
+func TestReadyWaitsOnlyTheSettleWithoutASetupScript(t *testing.T) {
+	bin := stayAliveBin(t)
+	svc := New(stubBins{bin: bin}, nil, events.New())
+	t.Cleanup(func() { _ = svc.Close("s1") })
+
+	if err := svc.Start("s1", "p1", t.TempDir(), "claude", "", "", false, 80, 24); err != nil {
+		t.Fatalf("Start = %v, want nil", err)
+	}
+	// No setup script to wait out, but the provider still has to take the
+	// terminal: readiness is the quiet after it draws, never the spawn itself.
+	time.Sleep(readySettle + 100*time.Millisecond)
+	if !svc.Ready("s1") {
+		t.Error("a session with no setup script to wait for was held back")
+	}
+}
+
+func TestReadyIsFalseForASessionThatIsNotRunning(t *testing.T) {
+	svc := New(stubBins{}, nil, events.New())
+
+	if svc.Ready("ghost") {
+		t.Error("a session with no PTY was reported ready for work")
+	}
+}

@@ -144,6 +144,13 @@ A prompt is capped at 8192 characters and stripped of control characters — the
 text is typed into a terminal, and an escape sequence inside it would stop being
 text.
 
+**A target still running its setup script is waited for, not written to.** The
+wait is bounded by the caller's own `--timeout`; running out is an error saying
+nothing was sent, never a ticket — an errand nobody can answer would otherwise
+be waited out in full. `internal/terminal` tells the two apart by a marker the
+setup wrapper prints between the script and the provider (`setupDone`): the PTY
+and the pid are the same across the `exec`, so nothing else can.
+
 ### `lich wait [--timeout <seconds>] <ticket>`
 
 Waits again on a ticket a previous `send` handed back. Same output as `send`.
@@ -486,20 +493,35 @@ whoever asked.
   the exception, and only for the session it creates: it starts that PTY itself,
   which is why the card it leaves behind is one you can send to unseen.
 - **A session is addressable before its agent can read.** `open` returns when
-  the PTY exists, not when the provider inside it has finished starting — there
-  is no signal for the latter that every provider gives. A message sent in that
-  window is written into a TUI that may not be reading yet, and lich cannot tell
-  that apart from a delivered one (delivery is proven, receipt is not). Hence
-  the line the command prints; opening and sending are two steps on purpose.
-- **`open` starts the PTY at 80×24.** Nothing is watching it, so there is no
-  terminal to measure. The window resizes it the first time the card is viewed,
-  and a TUI that drew itself into the smaller grid redraws — but output produced
-  before that view was wrapped for 80 columns, and the replayed scrollback keeps
-  those wraps.
+  the PTY exists, not when the provider inside it has finished starting. The one
+  stretch lich *can* see is the project's worktree setup script, which owns that
+  PTY before the provider and can run for minutes: `send` waits it out rather
+  than typing into it (see below), because a message handed to a running
+  `pnpm install` is read and discarded, and the sender then waits out a ticket
+  nobody was ever asked to answer. What is left is the second or two the
+  provider's own TUI takes to start reading. lich waits that out as quiet — a
+  PTY that has stopped drawing has taken the terminal — which is a heuristic and
+  not a signal: no provider offers one.
+- **`open` starts the PTY at the size the window last reported**, because there
+  is no terminal at this end to measure (`terminal.sizeFor`); 80×24 only when no
+  window has ever measured one. It is a copy, not a subscription: a window
+  resized between the spawn and the first view of the card leaves that session
+  drawn for the old grid, and the first view resizes it — at which point the TUI
+  repaints and the conversation it had already written is gone from the screen,
+  though not from the provider. The same seam a hidden session's replay has.
 - **An opened session takes the project's active slot.** The row is written the
   way the window writes one, so the project's `active_session_id` moves to it —
   the card is not focused now, but a reload lands on it. Two of them and the
   last one wins.
+- **A provider may open on a question of its own.** Claude Code asks whether a
+  directory is trusted the first time it runs in one, and a session sitting on
+  that prompt looks exactly like one waiting at its own: quiet, live, ready. The
+  first task sent to it answers the trust prompt instead of being read. It
+  applies to a directory the provider has never seen, so the worktrees of a
+  project already in use are unaffected — but the first worktree of a new one,
+  on a machine where nobody has answered it yet, needs a human at that card
+  once. lich cannot see it without reading the screen, which is the one thing
+  this feature does not do.
 - **Delivery is proven, receipt is not.** `send` knows the bytes reached the
   PTY. Whether the target's TUI queued them, and whether its agent ever runs the
   reply command, is what the wait and the ticket are for. A provider that does
