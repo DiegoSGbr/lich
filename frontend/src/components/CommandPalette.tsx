@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom"
 import { CornerDownLeft, Folder, MessageSquareText, Search } from "lucide-react"
 import { useProjects } from "@/providers/projects"
 import { useSettings } from "@/providers/settings"
-import { isRecordingTarget, matchesCombo } from "@/lib/hotkeys"
+import { useHotkey } from "@/lib/use-hotkey"
 import { useSessionStatus } from "@/lib/session/use-session-status"
 import { SessionStatusIcon } from "@/components/sidebar/SessionStatusIcon"
 import {
@@ -14,6 +14,7 @@ import {
   type PaletteSession,
 } from "@/lib/session/command-palette"
 import { useTranscriptSearch } from "@/lib/session/use-transcript-search"
+import { Keys } from "@/components/common/Keys"
 import type { Project } from "@/lib/api-types"
 import { cn } from "@/lib/utils"
 
@@ -34,22 +35,11 @@ export function CommandPalette() {
   const [query, setQuery] = useState("")
   const [selected, setSelected] = useState(0)
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (isRecordingTarget(event)) {
-        return
-      }
-      if (matchesCombo(event, hotkeys.commandPalette)) {
-        event.preventDefault()
-        event.stopPropagation()
-        setOpen((v) => !v)
-        setQuery("")
-        setSelected(0)
-      }
-    }
-    window.addEventListener("keydown", onKey, true)
-    return () => window.removeEventListener("keydown", onKey, true)
-  }, [hotkeys])
+  useHotkey(hotkeys.commandPalette, () => {
+    setOpen((v) => !v)
+    setQuery("")
+    setSelected(0)
+  })
 
   const all = useMemo(() => paletteSessions(projects, sessions), [projects, sessions])
   const results = useMemo(() => filterPalette(query, all, projects), [query, all, projects])
@@ -348,12 +338,7 @@ function Hint({ keys, children }: { keys: string[]; children: React.ReactNode })
     <span className="inline-flex items-center gap-1.5">
       <span className="inline-flex gap-1">
         {keys.map((k) => (
-          <kbd
-            key={k}
-            className="rounded border border-b-2 bg-muted px-1.5 py-0.5 font-mono text-[0.625rem] leading-none text-muted-foreground"
-          >
-            {k}
-          </kbd>
+          <Keys key={k}>{k}</Keys>
         ))}
       </span>
       {children}

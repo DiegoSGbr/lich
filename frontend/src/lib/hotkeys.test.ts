@@ -3,6 +3,7 @@ import {
   comboFromEvent,
   DEFAULT_HOTKEYS,
   formatCombo,
+  hotkeyConflicts,
   matchesCombo,
   mergeHotkeys,
   sameCombo,
@@ -97,6 +98,24 @@ describe("mergeHotkeys", () => {
     expect(mergeHotkeys(override).commandPalette).toEqual(DEFAULT_HOTKEYS.commandPalette)
   })
 
+  it("defaults an action absent from stored settings, keeping the rest", () => {
+    // What an install predating a new action has on disk.
+    const stored = { newSession: { mod: true, shift: false, alt: true, key: "n" } }
+    const merged = mergeHotkeys(stored)
+    expect(merged.newSession).toEqual(stored.newSession)
+    expect(merged.shortcuts).toEqual(DEFAULT_HOTKEYS.shortcuts)
+  })
+
+  it("normalizes a stored key, so an uppercase one still fires", () => {
+    // Well formed enough to survive validation, but matchesCombo compares
+    // against a normalized event key: kept as "T" the shortcut would be dead.
+    const merged = mergeHotkeys({ newSession: { mod: true, shift: true, alt: false, key: "T" } })
+    expect(merged.newSession.key).toBe("t")
+    expect(matchesCombo(key({ ctrlKey: true, shiftKey: true, key: "T" }), merged.newSession)).toBe(
+      true,
+    )
+  })
+
   it("ignores ids that are no longer actions (the old zoom hotkeys)", () => {
     expect(mergeHotkeys({ zoomIn: { mod: true, shift: false, alt: false, key: "+" } })).toEqual(
       DEFAULT_HOTKEYS,
@@ -107,6 +126,39 @@ describe("mergeHotkeys", () => {
     expect(mergeHotkeys({ newSession: { mod: 1, key: "" } })).toEqual(DEFAULT_HOTKEYS)
     expect(mergeHotkeys(null)).toEqual(DEFAULT_HOTKEYS)
     expect(mergeHotkeys("nope")).toEqual(DEFAULT_HOTKEYS)
+  })
+})
+
+describe("hotkeyConflicts", () => {
+  it("reports nothing when every action holds its own combo", () => {
+    expect(hotkeyConflicts(DEFAULT_HOTKEYS)).toEqual({})
+  })
+
+  it("names the other action on both sides of a collision", () => {
+    const clashing = { ...DEFAULT_HOTKEYS, newSession: DEFAULT_HOTKEYS.commandPalette }
+    const conflicts = hotkeyConflicts(clashing)
+    expect(conflicts.newSession).toEqual(["commandPalette"])
+    expect(conflicts.commandPalette).toEqual(["newSession"])
+    expect(conflicts.nextSession).toBeUndefined()
+  })
+
+  it("names both others when three actions share a combo", () => {
+    const combo: Combo = { mod: true, shift: true, alt: false, key: "j" }
+    const conflicts = hotkeyConflicts({
+      ...DEFAULT_HOTKEYS,
+      newSession: combo,
+      nextSession: combo,
+      prevSession: combo,
+    })
+    expect(conflicts.nextSession).toEqual(["newSession", "prevSession"])
+  })
+
+  it("treats combos differing only in a modifier as distinct", () => {
+    const conflicts = hotkeyConflicts({
+      ...DEFAULT_HOTKEYS,
+      newSession: { ...DEFAULT_HOTKEYS.commandPalette, alt: true },
+    })
+    expect(conflicts).toEqual({})
   })
 })
 

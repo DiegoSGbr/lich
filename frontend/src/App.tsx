@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { HashRouter, Outlet, Route, Routes } from "react-router-dom"
-import { SettingsProvider } from "@/providers/settings"
+import { SettingsProvider, useSettings } from "@/providers/settings"
+import { useHotkey } from "@/lib/use-hotkey"
 import { ProjectsProvider } from "@/providers/projects"
 import { ProjectTabs } from "@/components/tabs/ProjectTabs"
 import { SessionSidebar } from "@/components/sidebar/SessionSidebar"
@@ -18,13 +19,24 @@ import { PatchNotesGate } from "@/components/PatchNotesGate"
 import { ProviderSetupGate } from "@/components/ProviderSetupGate"
 import { UncleanExitGate } from "@/components/UncleanExitGate"
 import { CommandPalette } from "@/components/CommandPalette"
+import { ShortcutsOverlay } from "@/components/ShortcutsOverlay"
 
 // Layout is persistent across navigation: the project tabs, session sidebar and
 // TerminalHost stay mounted while the Outlet swaps screens (Home, Settings) on
 // top of the terminals.
 function Layout() {
+  const { hotkeys } = useSettings()
   const [dock, setDock] = useState<DockTab | null>(null)
   const toggleDock = (tab: DockTab) => setDock((cur) => (cur === tab ? null : tab))
+  // The shortcut toggles the dock as a whole, so it reopens on the tab it was
+  // last showing — the two tabs have their own footer buttons.
+  const lastTab = useRef<DockTab>("files")
+  useEffect(() => {
+    if (dock) {
+      lastTab.current = dock
+    }
+  }, [dock])
+  useHotkey(hotkeys.toggleDock, () => setDock((cur) => (cur ? null : lastTab.current)))
   return (
     <div className="flex h-screen w-screen flex-col bg-background">
       <ProjectTabs />
@@ -92,6 +104,9 @@ function App() {
           {/* Global quick switcher; also needs the provider (sessions/projects)
               and the router (navigation). */}
           <CommandPalette />
+          {/* Read-only list of what is bound; beside the palette because both
+              are app-wide overlays opened by a shortcut. */}
+          <ShortcutsOverlay />
         </ProjectsProvider>
       </HashRouter>
       {/* Holds its prompt until a provider has been chosen, so a first launch
