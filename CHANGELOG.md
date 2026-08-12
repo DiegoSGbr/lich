@@ -85,6 +85,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other action: lich stores the binding either way, but only one of the two will
   answer to it, and now you can see which pair to fix.
 
+- **Delegating work to a session is a search now, not a scroll.** "Delegate to
+  session" opened a flat, unfiltered submenu of every other open session — fine
+  with three, tedious with fifteen, and it named the session but never how it
+  was doing. The submenu is now the command palette's own surface, scoped to
+  delegating: type to filter by label or project, and each row carries the same
+  busy/done/waiting ring the sidebar card does, so you can tell which sessions
+  are free before picking one.
+
+- **A session's name in another session's terminal output is a link.** When a
+  provider's output mentions the label of another open session, that text is
+  now clickable, and jumps straight to that session's card the way Pulls' "Open
+  in Session" already does. The label has to stand as a word of its own to
+  count: a session called `auth` links where the output says `auth`, and stays
+  plain text inside `authentication` or `src/auth.ts`. A label shared by more
+  than one open session is left as plain text too — the terminal has no way to
+  tell which one was meant.
+
 ### Changed
 
 - **A session blocked on you says so in words.** Being asked a question looked
@@ -94,6 +111,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   says which one to answer instead of leaving you to read the hue. It takes the
   line the running tool was using rather than a new one, so no card grows, and
   the ring is unchanged.
+
+### Removed
+
+- **"Mention session" is gone from the card's context menu.** It shipped one
+  release ago and only ever appeared on Claude Code cards, because writing
+  `@name` at the prompt only means anything to a Claude that has the messaging
+  tool — so a menu of four providers had an entry that three of them never saw,
+  with nothing on screen saying why. "Delegate to session" right above it aims
+  at the same thing and works from any provider to any provider, so the
+  asymmetric half is the one to drop rather than the one to keep explaining.
+  The name a session answers to is still on its card's tooltip, and nothing
+  changed about what Claude Code can do with it once you type it yourself.
 
 ### Fixed
 
