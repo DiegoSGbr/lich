@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pinned sessions get a block of their own.** A pin used to lift a card to the
+  top of the list and, with it, the whole worktree block it belonged to — so
+  pinning one session quietly reordered a group you had arranged by hand. Now
+  the pinned cards gather under a `Pinned` divider above everything else, in the
+  same shape as the worktree dividers beside it, and their old blocks stay put.
+  Each card still names its own directory and branch, so a pin never costs you
+  the checkout it belongs to, and unpinning still drops the card back among the
+  neighbours it was lifted over. `Ctrl/Cmd + Shift + ↓/↑` walks the new order,
+  and dragging inside one block no longer moves the blocks around it.
+
+- **The session sidebar collapses to a rail.** `Ctrl/Cmd + Shift + S`, or the
+  button beside New Session, narrows the list to a 3rem column: one provider
+  glyph per session, each still wearing the status ring it wears on its card, in
+  the same order and under the same worktree grouping — a hairline where the
+  open sidebar draws a titled divider, since a checkout's name does not fit.
+  Hover gives you the card's own tooltip, unabridged — directory, the name the
+  session answers to, branch, pull request, diff and how it stands against its
+  base — because at that width the tooltip is where the card's words go.
+
+  The rail selects a session and starts one, and that is deliberately all of it:
+  renaming, closing, pinning, reordering and the worktree menus all aim at a
+  32px target for something the open sidebar already does better, so the rail
+  sends you back to it rather than growing a poorer copy of the card. Collapsed
+  is never *gone* — the rings are what a list of running agents is read for, and
+  hiding them to win the width would be the wrong trade. Whether it is open or
+  railed survives a restart.
+
 - **The dock's file tree has a filter, and it keeps its place.** A field above
   the tree narrows it to the paths matching what you type — every token has to
   appear, so a directory name is a search too, and what it matches comes back
