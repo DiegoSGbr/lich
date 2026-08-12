@@ -2,7 +2,15 @@ import { useEffect, useState, type ReactNode } from "react"
 import { useNavigate } from "react-router-dom"
 import { openPulls } from "@/lib/pulls-card-store"
 import { toast } from "sonner"
-import { Code, FileText, GitBranch, Folder, Plus, Diff, GitPullRequestArrow } from "lucide-react"
+import {
+  Code,
+  FileText,
+  GitBranch,
+  Folder,
+  Paperclip,
+  Diff,
+  GitPullRequestArrow,
+} from "lucide-react"
 import { ProjectService, Terminal as TerminalService } from "@/lib/rpc"
 import type { DockTab } from "@/components/dock/RightDock"
 import { useActiveSession } from "@/lib/session/use-active-session"
@@ -190,7 +198,7 @@ export function FooterBar({ dock, onDock }: FooterBarProps) {
   return (
     <footer className="flex h-9 shrink-0 items-center gap-2 border-t border-border bg-sidebar px-3 text-xs text-muted-foreground">
       <FooterButton label="Attach file" onClick={() => void attachFile()} disabled={!sessionId}>
-        <Plus className="size-4" />
+        <Paperclip className="size-4" />
       </FooterButton>
       {path && (
         <FooterButton
