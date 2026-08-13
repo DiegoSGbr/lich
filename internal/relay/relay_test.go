@@ -29,6 +29,10 @@ type fakeTerminal struct {
 	settingUp map[string]bool
 	writes    map[string][]string
 	writeErr  error
+	refused   int
+	// onWrite runs after a write is recorded, outside the fake's own lock, so a
+	// test can make the target report state from inside a delivery.
+	onWrite func(id, data string)
 }
 
 func newFakeTerminal(live ...string) *fakeTerminal {
@@ -65,13 +69,37 @@ func (f *fakeTerminal) setUp(id string, running bool) {
 }
 
 func (f *fakeTerminal) Write(id, data string) error {
-	if f.writeErr != nil {
-		return f.writeErr
+	f.mu.Lock()
+	err := f.writeErr
+	if err != nil {
+		f.refused++
+	} else {
+		f.writes[id] = append(f.writes[id], data)
 	}
+	hook := f.onWrite
+	f.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if hook != nil {
+		hook(id, data)
+	}
+	return nil
+}
+
+// failWrites makes every write fail from here on, and refusals counts what was
+// turned away — a test waiting for a failed delivery has nothing else to look
+// at, and sleeping instead would race it.
+func (f *fakeTerminal) failWrites(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.writes[id] = append(f.writes[id], data)
-	return nil
+	f.writeErr = err
+}
+
+func (f *fakeTerminal) refusals() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.refused
 }
 
 // writesTo is every write a session received, in order — the submit is its own,
@@ -182,6 +210,20 @@ func awaitWritten(term *fakeTerminal, id, want string) bool {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if strings.Contains(term.written(id), want) {
+			return true
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return false
+}
+
+// awaitWrites blocks until a session has taken n writes, and returns whether it
+// did. It is how a test outlasts a delivery it deliberately slowed down: the
+// second write is the Enter, and until it lands the delivery window is open.
+func awaitWrites(term *fakeTerminal, id string, n int) bool {
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(term.writesTo(id)) >= n {
 			return true
 		}
 		time.Sleep(time.Millisecond)
@@ -803,6 +845,71 @@ func TestAnUndeliveredTicketIgnoresTheTargetsTurns(t *testing.T) {
 	svc.mu.Unlock()
 	if !still {
 		t.Fatal("a turn on the target closed a ticket whose message was never delivered")
+	}
+}
+
+// A delivery is two writes a beat apart, and the target can report in between:
+// a provider that picks the message up as it lands, or one whose running turn
+// ends there. Both belong to this ticket, and turn accounting only counts what
+// a delivered ticket saw — so the window has to be inside the delivery, not
+// after it.
+
+// TestABusyReportInsideTheDeliveryWindowCountsForTheTicket: the target starts
+// working while the Enter is still pending. Missing that report leaves the
+// ticket looking unread, and the receipt check closes it — with the message
+// queued and working, so the reply the target eventually sends has no ticket
+// left to land on.
+func TestABusyReportInsideTheDeliveryWindowCountsForTheTicket(t *testing.T) {
+	term := newFakeTerminal("s1", "s2")
+	svc := withReceipts(term)
+	svc.submitDelay = 50 * time.Millisecond
+	term.onWrite = func(id, data string) {
+		if id == "s2" && strings.Contains(data, "run the tests") {
+			svc.Observe("s2", stateBusy)
+		}
+	}
+
+	result, err := svc.Send("s1", "docs", "", "run the tests", 1)
+	if err != nil {
+		t.Fatalf("Send = %v, want nil", err)
+	}
+	if result.Status != StatusPending {
+		t.Fatalf("status = %q, want the errand still open", result.Status)
+	}
+	if err := svc.Reply(result.Ticket, "all green"); err != nil {
+		t.Errorf("the target's own answer was refused: %v", err)
+	}
+}
+
+// TestADoneInsideTheDeliveryWindowSpendsTheSkip: the target was already busy,
+// so one turn ending is owed to the work that was running — and that ending
+// arrives inside the window. Losing it spends the skip on the turn that carries
+// this request instead, and the errand never closes.
+func TestADoneInsideTheDeliveryWindowSpendsTheSkip(t *testing.T) {
+	term := newFakeTerminal("s1", "s2")
+	svc := newRelay(workspace(), term, nil)
+	svc.submitDelay = 50 * time.Millisecond
+	svc.Observe("s2", stateBusy)
+	term.onWrite = func(id, data string) {
+		if id == "s2" && strings.Contains(data, "run the tests") {
+			svc.Observe("s2", stateDone)
+		}
+	}
+
+	done := make(chan Result, 1)
+	go func() {
+		got, _ := svc.Send("s1", "docs", "", "run the tests", 2)
+		done <- got
+	}()
+	if !awaitWrites(term, "s2", 2) {
+		t.Fatal("the message was never fully delivered")
+	}
+
+	// The queued request now runs as its own turn, and ends without an answer.
+	svc.Observe("s2", stateBusy)
+	svc.Observe("s2", stateDone)
+	if got := <-done; got.Status != StatusUnanswered {
+		t.Fatalf("status = %q, want %q — the turn that answered was skipped", got.Status, StatusUnanswered)
 	}
 }
 
@@ -1587,6 +1694,36 @@ func TestAWaiterGivingUpAsTheTaskGoesUnreadHearsSo(t *testing.T) {
 	}
 }
 
+// The same instant, with an answer instead: Reply saw a waiter still attending
+// and left the answer for it, and that waiter's wait ran out before it could
+// read it. Whoever leaves last owns what is left behind — the answer is
+// written, accepted and gone otherwise, on a ticket already out of the map.
+func TestAnAnswerLandingAsItsLastWaiterGivesUpIsStashed(t *testing.T) {
+	svc := newRelay(workspace(), newFakeTerminal("s1", "s2"), nil)
+	tk := &ticket{
+		fromID:   "s1",
+		target:   "docs",
+		done:     make(chan struct{}),
+		stalled:  make(chan struct{}),
+		unread:   make(chan struct{}),
+		attended: 1,
+		answered: true,
+		answer:   "all green",
+	}
+	close(tk.done)
+
+	if got := svc.giveUp("tk1", tk); got != StatusPending {
+		t.Errorf("status = %q, want the caller sent to pick the answer up", got)
+	}
+	result, err := svc.Wait("tk1", 1)
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if result.Status != StatusAnswered || result.Answer != "all green" {
+		t.Errorf("Wait = %+v, want the answer that landed as the waiter left", result)
+	}
+}
+
 // Which providers carry lich's operations stopped being a fact about the
 // provider the day the plugin started carrying them: Claude Code and Codex are
 // told about the server at spawn, opencode and Crush get it with the plugin, and
@@ -1732,6 +1869,34 @@ func TestANudgeIsNotRepeatedOnLaterTurnEnds(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if writes := term.writesTo("s1"); len(writes) != 2 {
 		t.Errorf("an uncollected result was nudged again: %q", writes)
+	}
+}
+
+// One nudge per result, unless the one nudge never landed. The results
+// themselves are never typed, so a notice lost to a failed write is a result
+// the sender is never told about — the entry has to go back to unnudged and be
+// tried again at the next turn end.
+func TestANudgeThatNeverLandedIsSentAgain(t *testing.T) {
+	term := newFakeTerminal("s1", "s2")
+	svc := newRelay(workspace(), term, nil)
+	term.failWrites(errors.New("pty closed"))
+	plant(svc, "t1", "s1", "s2", "docs")
+
+	if err := svc.Reply("t1", "all green"); err != nil {
+		t.Fatalf("Reply: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for term.refusals() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if term.refusals() == 0 {
+		t.Fatal("the nudge was never attempted")
+	}
+
+	term.failWrites(nil)
+	svc.Observe("s1", stateDone)
+	if !awaitWritten(term, "s1", "[lich]") {
+		t.Fatalf("a nudge that failed to land was never sent again: %q", term.writesTo("s1"))
 	}
 }
 

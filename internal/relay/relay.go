@@ -17,8 +17,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"log/slog"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -79,11 +77,6 @@ const (
 	ToolCollect = "wait_for_answer"
 )
 
-// defaultNudgeDelay is how long a result sits before the nudge naming it is
-// typed. Parallel workers finish in bursts — a fan-out answered within seconds
-// of itself would otherwise cost one nudge, and one restarted turn, per worker.
-const defaultNudgeDelay = 2 * time.Second
-
 // Status values a Result carries.
 const (
 	// StatusAnswered means the target's agent replied and Answer holds it.
@@ -121,18 +114,6 @@ const (
 	DirectionOut = "out"
 	DirectionIn  = "in"
 )
-
-// InboxEventName carries how many uncollected results a session has waiting,
-// so its card can say so — the nudge tells the agent, and this tells the
-// person. Emitted whenever a sender's inbox changes size; zero clears the
-// mark. Global for the same reason the relay event is.
-const InboxEventName = "session-inbox"
-
-// InboxEvent is the payload of InboxEventName.
-type InboxEvent struct {
-	ID    string `json:"id"`
-	Count int    `json:"count"`
-}
 
 // StalledEventName carries a request whose target ended its turn without
 // answering through lich. The window turns it into a toast that opens the
@@ -207,33 +188,6 @@ type Result struct {
 	Answer string `json:"answer"`
 }
 
-// Collected is what a drain returns: every outcome that was waiting for the
-// caller, oldest first, and the labels of the sessions still owing one.
-type Collected struct {
-	Results []Result `json:"results"`
-	Open    []string `json:"open"`
-}
-
-// inboxEntry is one finished errand whose outcome nobody was holding the line
-// for. The result is kept here until the sender collects it instead of being
-// typed at the sender's prompt in full: N results arriving as N prompt
-// submissions each restart the sender's turn and leave the whole text in its
-// context window — exactly the cost an orchestrating session cannot pay per
-// worker. What is typed instead is one short nudge (nudgeNotice), debounced so
-// a burst of workers finishing together costs one.
-type inboxEntry struct {
-	ticket string
-	fromID string
-	target string
-	status string
-	answer string
-	ready  time.Time
-	// nudged is whether a notice naming this entry was already typed. One nudge
-	// per entry: re-nudging on every turn end would start a turn per nudge,
-	// forever, for a sender that chose not to collect.
-	nudged bool
-}
-
 // ticket is one outstanding errand. answer is written once, before done is
 // closed, so every waiter reads it safely after the close.
 //
@@ -247,7 +201,7 @@ type ticket struct {
 	targetID string
 	target   string
 	created  time.Time
-	// delivered is when the message actually reached the target's PTY — zero
+	// delivered is when the message started going into the target's PTY — zero
 	// while the ticket is still waiting out the target's setup script. Turn
 	// accounting reads it twice over: a turn observed on the target says nothing
 	// about an undelivered message, and when one turn ends with several errands
@@ -287,8 +241,11 @@ type ticket struct {
 // exists for as long as its errand does, and a lich that restarted has no PTY
 // left to answer into anyway.
 type Service struct {
-	mu      sync.Mutex
-	tickets map[string]*ticket
+	mu sync.Mutex
+	// announceMu orders the inbox announcements, which are counted and emitted
+	// outside s.mu. See announceInbox.
+	announceMu sync.Mutex
+	tickets    map[string]*ticket
 	// state is the last thing each session reported, so a delivery knows whether
 	// it is landing in the middle of a turn. Only sessions the relay has heard
 	// about appear; an unknown one is treated as not working, which is what a
@@ -303,6 +260,12 @@ type Service struct {
 	// nudgeTimer is the armed debounce per sender, so a burst of results costs
 	// one nudge rather than one per result.
 	nudgeTimer map[string]*time.Timer
+	// nudging serializes flushNudge per sender: it marks an entry nudged before
+	// attempting delivery and only unmarks it after a failed attempt, so a second
+	// flush racing that window — the debounce timer and Observe's end-of-turn
+	// call both reach the same sender — must see the outcome of the first before
+	// deciding, or it finds the entry still marked and gives up wrongly silent.
+	nudging map[string]*sync.Mutex
 
 	sessions Sessions
 	term     Terminal
@@ -348,6 +311,7 @@ func New(sessions Sessions, term Terminal, events Events) *Service {
 		ready:         make(map[string]*inboxEntry),
 		collectors:    make(map[string][]chan struct{}),
 		nudgeTimer:    make(map[string]*time.Timer),
+		nudging:       make(map[string]*sync.Mutex),
 		sessions:      sessions,
 		term:          term,
 		events:        events,
@@ -418,7 +382,7 @@ func (s *Service) Send(fromID, target, project, prompt string, waitSeconds int) 
 		unread:   make(chan struct{}),
 	}
 	s.mu.Lock()
-	expired, inboxEvents := s.sweep()
+	expired, senders := s.sweep()
 	busy := s.state[dest.ID] == stateBusy
 	if busy {
 		t.skipTurns = 1
@@ -426,7 +390,7 @@ func (s *Service) Send(fromID, target, project, prompt string, waitSeconds int) 
 	s.tickets[id] = t
 	s.mu.Unlock()
 	s.clearAll(expired)
-	s.announceInboxAll(inboxEvents)
+	s.announceInboxAll(senders)
 
 	// One deadline covers the whole call: the setup wait and the answer wait
 	// spend the same budget. Each taking a full waitFor of its own would let a
@@ -441,15 +405,21 @@ func (s *Service) Send(fromID, target, project, prompt string, waitSeconds int) 
 		return Result{}, err
 	}
 	message := compose(sender, id, prompt, s.offersTools(dest.Peer.Kind))
+	// Stamped before the write, not after: a delivery is two writes a beat apart
+	// (see deliver), and turn accounting ignores an undelivered ticket. A target
+	// reporting inside that beat would be lost — its busy report, and the ticket
+	// is closed unread with the message queued and the reply that follows landing
+	// on nothing; its done, and the skip meant for the turn already running is
+	// spent on the turn that carries the answer.
+	s.mu.Lock()
+	t.delivered = s.now()
+	s.mu.Unlock()
 	if err := s.deliver(dest.ID, message); err != nil {
 		s.mu.Lock()
 		delete(s.tickets, id)
 		s.mu.Unlock()
 		return Result{}, fmt.Errorf("deliver to %q: %w", dest.Peer.Label, err)
 	}
-	s.mu.Lock()
-	t.delivered = s.now()
-	s.mu.Unlock()
 	// Announced only once the message is actually in the PTY: a mark raised
 	// before the write would survive a delivery that never happened.
 	s.announce(t.targetID, t.sender, DirectionIn)
@@ -576,132 +546,23 @@ func (s *Service) watchReceipt(id string, t *ticket) {
 // An outcome already sitting in the inbox is handed over on the spot.
 func (s *Service) Wait(ticketID string, waitSeconds int) (Result, error) {
 	s.mu.Lock()
-	expired, inboxEvents := s.sweep()
+	expired, senders := s.sweep()
 	if e, ok := s.ready[ticketID]; ok {
 		delete(s.ready, ticketID)
-		count := s.countLocked(e.fromID)
 		s.mu.Unlock()
 		s.clearAll(expired)
-		s.announceInboxAll(inboxEvents)
-		s.announceInbox(e.fromID, count)
+		s.announceInboxAll(senders)
+		s.announceInbox(e.fromID)
 		return Result{Ticket: e.ticket, Target: e.target, Status: e.status, Answer: e.answer}, nil
 	}
 	t, ok := s.tickets[ticketID]
 	s.mu.Unlock()
 	s.clearAll(expired)
-	s.announceInboxAll(inboxEvents)
+	s.announceInboxAll(senders)
 	if !ok {
 		return Result{}, fmt.Errorf("unknown ticket %q — it was answered long ago, or expired", ticketID)
 	}
 	return s.await(ticketID, t, waitFor(waitSeconds)), nil
-}
-
-// Collect drains every outcome waiting for fromID, oldest first. With nothing
-// ready and errands still open it holds the line for the next one; with
-// nothing ready and nothing open it returns empty at once. It is the batch
-// half of the nudge: one call picks up what any number of workers produced.
-func (s *Service) Collect(fromID string, waitSeconds int) (Collected, error) {
-	if fromID == "" {
-		return Collected{}, fmt.Errorf(
-			"collecting needs a session of your own — outside one, wait on the ticket instead: lich wait <ticket>")
-	}
-	deadline := s.now().Add(waitFor(waitSeconds))
-	for {
-		s.mu.Lock()
-		expired, inboxEvents := s.sweep()
-		results := s.drainLocked(fromID)
-		open := s.openLocked(fromID)
-		if len(results) > 0 || len(open) == 0 {
-			s.mu.Unlock()
-			s.clearAll(expired)
-			s.announceInboxAll(inboxEvents)
-			if len(results) > 0 {
-				s.announceInbox(fromID, 0)
-			}
-			return Collected{Results: results, Open: open}, nil
-		}
-		wake := make(chan struct{}, 1)
-		s.collectors[fromID] = append(s.collectors[fromID], wake)
-		s.mu.Unlock()
-		s.clearAll(expired)
-		s.announceInboxAll(inboxEvents)
-
-		remaining := deadline.Sub(s.now())
-		if remaining <= 0 {
-			s.unregister(fromID, wake)
-			return Collected{Results: []Result{}, Open: open}, nil
-		}
-		timer := time.NewTimer(remaining)
-		select {
-		case <-wake:
-			timer.Stop()
-			s.unregister(fromID, wake)
-		case <-timer.C:
-			s.unregister(fromID, wake)
-			// One last look: the result may have landed in the same instant.
-			s.mu.Lock()
-			results := s.drainLocked(fromID)
-			open := s.openLocked(fromID)
-			s.mu.Unlock()
-			if len(results) > 0 {
-				s.announceInbox(fromID, 0)
-			}
-			return Collected{Results: results, Open: open}, nil
-		}
-	}
-}
-
-// drainLocked empties fromID's inbox, oldest first. Called under s.mu. It
-// never returns nil: a JSON null where a script expects a list is a bug it
-// should not have to defend against.
-func (s *Service) drainLocked(fromID string) []Result {
-	var found []*inboxEntry
-	for id, e := range s.ready {
-		if e.fromID != fromID {
-			continue
-		}
-		delete(s.ready, id)
-		found = append(found, e)
-	}
-	sort.Slice(found, func(i, j int) bool { return found[i].ready.Before(found[j].ready) })
-	results := make([]Result, 0, len(found))
-	for _, e := range found {
-		results = append(results, Result{Ticket: e.ticket, Target: e.target, Status: e.status, Answer: e.answer})
-	}
-	return results
-}
-
-// openLocked is the labels still owing fromID an answer, deduplicated and
-// sorted. Called under s.mu.
-func (s *Service) openLocked(fromID string) []string {
-	seen := map[string]bool{}
-	for _, t := range s.tickets {
-		if t.fromID == fromID {
-			seen[t.target] = true
-		}
-	}
-	labels := make([]string, 0, len(seen))
-	for label := range seen {
-		labels = append(labels, label)
-	}
-	sort.Strings(labels)
-	return labels
-}
-
-// unregister drops one Collect call's wake channel.
-func (s *Service) unregister(fromID string, wake chan struct{}) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	list := s.collectors[fromID]
-	for i, ch := range list {
-		if ch == wake {
-			s.collectors[fromID] = append(list[:i], list[i+1:]...)
-			break
-		}
-	}
-	if len(s.collectors[fromID]) == 0 {
-		delete(s.collectors, fromID)
-	}
 }
 
 // Reply hands an answer back to whoever is waiting on ticketID. It is what the
@@ -741,111 +602,6 @@ func (s *Service) Reply(ticketID, answer string) error {
 		s.stash(ticketID, t, StatusAnswered, answer)
 	}
 	return nil
-}
-
-// stash puts one finished errand's outcome in the inbox and decides how the
-// sender hears about it: a Collect already holding the line is woken, a busy
-// sender is left alone until its turn ends (Observe flushes then), and an idle
-// one gets a nudge after the debounce. A sender that is not a session — the
-// `lich` command from a script — is never nudged; its entry waits to be asked
-// for with `lich wait <ticket>`.
-func (s *Service) stash(id string, t *ticket, status, answer string) {
-	s.mu.Lock()
-	s.ready[id] = &inboxEntry{
-		ticket: id, fromID: t.fromID, target: t.target,
-		status: status, answer: answer, ready: s.now(),
-	}
-	count := s.countLocked(t.fromID)
-	woke := false
-	for _, wake := range s.collectors[t.fromID] {
-		select {
-		case wake <- struct{}{}:
-		default:
-		}
-		woke = true
-	}
-	nudgeable := !woke && t.fromID != "" && s.state[t.fromID] != stateBusy
-	if nudgeable && s.nudgeTimer[t.fromID] == nil {
-		fromID := t.fromID
-		s.nudgeTimer[fromID] = time.AfterFunc(s.nudgeDelay, func() { s.flushNudge(fromID) })
-	}
-	s.mu.Unlock()
-	s.announceInbox(t.fromID, count)
-}
-
-// countLocked is how many results wait for fromID. Called under s.mu.
-func (s *Service) countLocked(fromID string) int {
-	count := 0
-	for _, e := range s.ready {
-		if e.fromID == fromID {
-			count++
-		}
-	}
-	return count
-}
-
-// announceInbox tells the window a sender's inbox changed size. Outside s.mu,
-// like every Emit here.
-func (s *Service) announceInbox(fromID string, count int) {
-	if s.events == nil || fromID == "" {
-		return
-	}
-	s.events.Emit(InboxEventName, InboxEvent{ID: fromID, Count: count})
-}
-
-func (s *Service) announceInboxAll(events []InboxEvent) {
-	for _, e := range events {
-		s.announceInbox(e.ID, e.Count)
-	}
-}
-
-// flushNudge types one nudge naming everything waiting for fromID, if any of
-// it has not been nudged before. Ran by the debounce timer and by Observe when
-// the sender's turn ends — a delivery mid-turn would queue as its own turn,
-// which is the cost this whole path exists to avoid.
-func (s *Service) flushNudge(fromID string) {
-	s.mu.Lock()
-	if timer := s.nudgeTimer[fromID]; timer != nil {
-		timer.Stop()
-		delete(s.nudgeTimer, fromID)
-	}
-	if s.state[fromID] == stateBusy {
-		// The prompt is not free; the end of this turn flushes instead.
-		s.mu.Unlock()
-		return
-	}
-	fresh := 0
-	count := 0
-	targets := map[string]bool{}
-	for _, e := range s.ready {
-		if e.fromID != fromID {
-			continue
-		}
-		if !e.nudged {
-			fresh++
-			e.nudged = true
-		}
-		count++
-		targets[e.target] = true
-	}
-	s.mu.Unlock()
-	if fresh == 0 {
-		return
-	}
-	labels := make([]string, 0, len(targets))
-	for label := range targets {
-		labels = append(labels, label)
-	}
-	sort.Strings(labels)
-	s.tellSender(fromID, nudgeNotice(count, labels, s.offersTools(s.kindOf(fromID))))
-}
-
-// tellSender types one line of news at the prompt of whoever asked, the same
-// way their request reached the target.
-func (s *Service) tellSender(fromID, message string) {
-	if err := s.deliver(fromID, message); err != nil {
-		slog.Warn("relay: news not delivered", "session", fromID, "err", err)
-	}
 }
 
 // await blocks on one ticket until it is answered or the wait runs out. It only
@@ -1103,7 +859,7 @@ func waitFor(seconds int) time.Duration {
 // otherwise grow the inbox by one entry per errand for the life of the
 // process. Called under the lock on the paths that already hold it, which is
 // often enough for a map that grows one entry per errand.
-func (s *Service) sweep() ([]*ticket, []InboxEvent) {
+func (s *Service) sweep() ([]*ticket, []string) {
 	var expired []*ticket
 	cutoff := s.now().Add(-ticketTTL)
 	for id, t := range s.tickets {
@@ -1121,11 +877,11 @@ func (s *Service) sweep() ([]*ticket, []InboxEvent) {
 			}
 		}
 	}
-	var inbox []InboxEvent
+	senders := make([]string, 0, len(touched))
 	for fromID := range touched {
-		inbox = append(inbox, InboxEvent{ID: fromID, Count: s.countLocked(fromID)})
+		senders = append(senders, fromID)
 	}
-	return expired, inbox
+	return expired, senders
 }
 
 // ticketIDBytes is the length of a ticket id before hex encoding. Short enough

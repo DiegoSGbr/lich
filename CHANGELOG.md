@@ -43,6 +43,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A task the target picks up the instant it lands is no longer given up on.**
+  lich types a relayed message and presses Enter a beat later, and anything the
+  target reported in that beat counted for nothing. A session that started
+  working right there looked like one that had never read the task: the errand
+  was closed as "unread" while the message was queued and running, and the
+  worker's own `lich reply` then failed with "unknown ticket". The same beat
+  could swallow the end of a turn that was already in progress instead, leaving
+  an errand whose answering turn was skipped and which never closed at all.
+
+- **A result whose notice never reached the prompt is announced again.** The
+  `[lich]` line naming waiting results is the only thing that tells an agent to
+  collect them — the results themselves are never typed. A write that failed
+  used to count as a notice given, and the sender was never told again. It now
+  goes out at the end of the sender's next turn.
+
+- **The card's "results ready" count no longer settles on the wrong number.**
+  Two workers answering at the same instant could announce their counts out of
+  order, leaving the card saying one result with two of them waiting until
+  something else changed.
+
 - **The update prompt no longer offers an Install that installs nothing.** On
   Windows and macOS, a lich whose own directory is not writable can neither
   swap its binary nor name a package manager to update it — and the prompt
