@@ -43,6 +43,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A plugin install is whole or it fails.** Installing the plugin into
+  opencode or Crush wrote what it fetched straight onto the file the harness
+  loads: a release file larger than the 1MB cap was silently cut short, and a
+  crash or a full disk mid-write left a half-written module or hook script —
+  either one still carrying the version marker that says the install
+  succeeded. An oversized file is now refused, and every file is written
+  through a temporary one, so an interrupted install leaves the previous
+  version in place rather than a broken one lich reports as current.
+
 - **The RPC surface no longer exposes lich's own wiring.** Three methods that
   exist for lich to call itself — the hooks' session-state stream and two
   startup wiring calls — answered a request from the page like any other
