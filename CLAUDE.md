@@ -131,7 +131,7 @@ nobody knows it and that the call site never shows. The mechanism and the histor
   appendable one, so lich rewrites it: every key survives, the user's formatting does not, and a file lich cannot
   parse aborts the install rather than being replaced.
 - **omp's state directory answers to two variables, and the profile wins**
-  (`internal/agentplugin/omp.go`, `internal/terminal/resume.go`, both resolving it independently as the Claude Code
-  pair do): `OMP_PROFILE` moves the whole directory under `~/.omp/profiles/<name>/agent` and beats an explicit
+  (`internal/agentplugin/omp.go`, `internal/terminal/transcript.go`, both resolving it independently as the Claude
+  Code pair do): `OMP_PROFILE` moves the whole directory under `~/.omp/profiles/<name>/agent` and beats an explicit
   `PI_CODING_AGENT_DIR`, which is the order `omp config path` was measured to apply. Get it backwards and the
   install lands where omp is not reading and every restored card silently starts fresh.
