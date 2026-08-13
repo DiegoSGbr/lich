@@ -52,6 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repository root instead of a file is rejected, where before it would have
   emptied the whole index.
 
+- **Searching sessions no longer crashes on some accented text.** A palette
+  search that matched a conversation containing certain uppercase letters —
+  ones that grow when lowercased, like `Ⱥ` or `İ` — brought the window down
+  instead of showing the result.
+
 ## [0.31.0] - 2026-08-13
 
 ### Added
