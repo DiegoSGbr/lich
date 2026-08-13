@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/omartelo/lich/internal/project"
 	"github.com/omartelo/lich/internal/providers"
@@ -128,6 +129,11 @@ type Service struct {
 	worktrees Worktrees
 	term      Terminal
 	events    Events
+	// open serializes Open. Every RPC call arrives on its own goroutine, and
+	// Open reads the project's label counter and writes it back — two of them at
+	// once read the same number and hand both sessions the same label, which is
+	// the one thing `lich send` cannot resolve.
+	open sync.Mutex
 }
 
 func New(sessions Sessions, worktrees Worktrees, term Terminal, events Events) *Service {
@@ -144,11 +150,26 @@ func New(sessions Sessions, worktrees Worktrees, term Terminal, events Events) *
 // worktree, when given, is the branch name of a new git worktree created off
 // base (the project's current branch when base is empty); the session is rooted
 // there, labelled after it, and runs the project's worktree setup script before
-// its provider, exactly as the window's own worktree flow does.
+// its provider, exactly as the window's own worktree flow does. A base without a
+// worktree has nothing to branch, and is refused rather than ignored.
 //
 // model, when given, is the model the provider is spawned on, in that provider's
 // own spelling. It is recorded on the row so every later spawn repeats it.
 func (s *Service) Open(fromID, projectName, kind, worktree, base, model string) (Session, error) {
+	if base != "" && worktree == "" {
+		return Session{}, fmt.Errorf(
+			"a base is the branch a new worktree starts from, and no worktree was asked "+
+				"for, so %q would be dropped in silence — name the worktree to create, or "+
+				"leave the base out",
+			base,
+		)
+	}
+
+	// Held across the spawn as well as the write: the checkout and the PTY are
+	// cheap beside a duplicate label, and one lock is one thing to reason about.
+	s.open.Lock()
+	defer s.open.Unlock()
+
 	projects, err := s.sessions.LoadState()
 	if err != nil {
 		return Session{}, fmt.Errorf("read the workspace: %w", err)
