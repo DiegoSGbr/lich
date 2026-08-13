@@ -92,6 +92,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`lich open --base` without `--worktree` says so.** The base was silently
   dropped and the session opened on whatever branch was current.
 
+- **`lich open feature-x` no longer opens a session and says nothing.**
+  `sessions`, `open` and `worktrees` took a positional argument and ignored
+  it, so a branch name typed without `--worktree` opened a session in the
+  caller's own checkout while reading like it had made one of its own. All
+  three now refuse the stray argument and print the command's usage, as
+  `send`, `wait`, `reply` and `close` already did.
+
 - **Two sessions opened at once no longer take the same label.** Concurrent
   opens in one project read the same label counter, and `lich send` cannot tell
   two cards with one name apart.
