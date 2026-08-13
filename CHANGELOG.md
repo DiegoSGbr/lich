@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A review thread keeps its newest replies.** A pull request thread with more
+  than 50 comments was read from its oldest end, so the replies that mattered —
+  the last ones — were the ones missing from the diff and the Conversation tab.
+  It now reads the newest 50.
+
 - **A dropped file could resolve to the wrong twin.** The search that turns a
   pathless drop back into a real file gives up after a fixed number of entries,
   and when it ran out between two same-named files it kept the one it had
