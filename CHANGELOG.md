@@ -43,6 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The update prompt no longer offers an Install that installs nothing.** On
+  Windows and macOS, a lich whose own directory is not writable can neither
+  swap its binary nor name a package manager to update it — and the prompt
+  still showed an Install button, which opened a terminal and pasted an empty
+  line. The button is now offered only where there is a command to run, and the
+  release page takes its place as the prompt's main action.
+
 - **A theme repository's update stops asking forever.** When a pack dropped or
   renamed the file a theme came from, updating installed the new pack but left
   that theme stamped with the version it arrived at — so the next check saw a
