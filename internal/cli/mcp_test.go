@@ -97,7 +97,13 @@ func TestMCPHandshakeAdvertisesTools(t *testing.T) {
 	// The instructions are the one place the whole journey — fan out, carry
 	// on, collect — is told as one; clients inject them into the system
 	// prompt, so an empty field is an agent that never learns it can delegate.
-	for _, want := range []string{"open_session", "send_to_session", "wait_for_answer", "worktree"} {
+	// "subagent" is in the list because the instructions are the only place the
+	// providers with no --append-system-prompt (Codex, opencode, Crush) are told
+	// the one thing they get wrong on their own: that fanning work out means
+	// these sessions and not the subagents their own harness offers.
+	for _, want := range []string{
+		"open_session", "send_to_session", "wait_for_answer", "worktree", "subagent",
+	} {
 		if !strings.Contains(result.Instructions, want) {
 			t.Errorf("instructions are missing %q:\n%s", want, result.Instructions)
 		}
@@ -531,6 +537,70 @@ func TestMCPOpenSessionReturnsTheNamesItIsAddressedBy(t *testing.T) {
 	// send_to_session is the next call the agent makes, and it addresses the
 	// session by one of these two names.
 	for _, phrase := range []string{`"auth-fix"`, `"auth-fix-9f8e"`} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("result is missing %q:\n%s", phrase, text)
+		}
+	}
+}
+
+// A worker opened for a task is opened and given it in one call — the whole
+// point of the prompt argument, since two calls per worker is what made the
+// harness's own subagents the cheaper thing to reach for.
+func TestMCPOpenSessionHandsOverTheTaskItCameWith(t *testing.T) {
+	f := newFakeLich(t, `{"id":"9f8e","projectId":"p1","project":"lich","label":"auth-fix",
+		"name":"auth-fix-9f8e","kind":"claude","path":"/wt/auth-fix","nextSeq":5}`)
+	f.answers = map[string]answer{
+		"relay.Send": {status: 200, body: `{"ticket":"a1b2c3d4","target":"auth-fix","status":"pending"}`},
+	}
+
+	replies := speak(t, f, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":
+		{"name":"open_session","arguments":{"worktree":"auth-fix","prompt":"port the parser"}}}`)
+
+	text, failed := textOf(t, replies[0])
+	if failed {
+		t.Fatalf("tool reported a failure: %s", text)
+	}
+	if len(f.calls) != 2 || f.calls[0].method != "spawn.Open" || f.calls[1].method != "relay.Send" {
+		t.Fatalf("calls = %+v, want spawn.Open then relay.Send", f.calls)
+	}
+	// The new session is addressed by the label lich just gave it, in its own
+	// project — the sender cannot have been told either one yet. The wait is
+	// spelled out rather than read from deliverWait: what has to hold is that
+	// opening (up to openCall) and delivering together stay under the 120s at
+	// which the client detaches the call, and a constant this test follows
+	// could be raised past that with the suite still green.
+	want := []any{"s1", "auth-fix", "lich", "port the parser", float64(20)}
+	if len(f.calls[1].args) != len(want) {
+		t.Fatalf("send args = %v, want %v", f.calls[1].args, want)
+	}
+	for i := range want {
+		if f.calls[1].args[i] != want[i] {
+			t.Errorf("send argument %d = %v, want %v", i, f.calls[1].args[i], want[i])
+		}
+	}
+	if !strings.Contains(text, "a1b2c3d4") {
+		t.Errorf("result carries no ticket to collect the work with:\n%s", text)
+	}
+}
+
+// The session outlives a delivery that failed, so saying so is the whole
+// answer: reporting a failed call would leave an agent that opened three
+// workers believing it has none.
+func TestMCPOpenSessionKeepsTheSessionWhenTheTaskDoesNotLand(t *testing.T) {
+	f := newFakeLich(t, `{"id":"9f8e","projectId":"p1","project":"lich","label":"auth-fix",
+		"name":"auth-fix-9f8e","kind":"claude","path":"/wt/auth-fix","nextSeq":5}`)
+	f.answers = map[string]answer{
+		"relay.Send": {status: 500, body: `{"error":"the setup script is still running"}`},
+	}
+
+	replies := speak(t, f, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":
+		{"name":"open_session","arguments":{"worktree":"auth-fix","prompt":"port the parser"}}}`)
+
+	text, failed := textOf(t, replies[0])
+	if failed {
+		t.Fatalf("the open was reported as a failure, but the session exists: %s", text)
+	}
+	for _, phrase := range []string{"auth-fix", "the setup script is still running", "send_to_session"} {
 		if !strings.Contains(text, phrase) {
 			t.Errorf("result is missing %q:\n%s", phrase, text)
 		}
