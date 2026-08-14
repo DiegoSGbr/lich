@@ -23,6 +23,8 @@ import { onTerminalFocusRequest } from "@/lib/terminal/focus-request"
 import { recordChunk } from "@/lib/terminal/term-perf"
 import { copyToastMessage, COPY_TOAST_DURATION_MS } from "@/lib/terminal/copy-toast"
 import { computeGrid } from "@/lib/terminal/term-fit"
+import { exitMarker, readSessionExit, type SessionExit } from "@/lib/terminal/session-exit"
+import { TerminalExitBanner } from "./TerminalExitBanner"
 import { linkClickIsOurs, mouseEncodingSequence } from "@/lib/terminal/term-modes"
 import { createSessionLinkProvider } from "@/lib/terminal/session-link-provider"
 import { sessionLinkTargets } from "@/lib/terminal/session-links"
@@ -163,6 +165,12 @@ export interface TerminalViewProps {
   roster: readonly PaletteSession[]
   visible: boolean
   /**
+   * Close this session's card, through the same flow the sidebar's × runs —
+   * raised by the exit banner, which is the only affordance here that ends a
+   * session rather than talking to one.
+   */
+  onClose: () => void
+  /**
    * Whether this session still belongs to the workspace, asked at the moment
    * this component goes away. Unmounting is not the same event as closing a
    * session — React unmounts for reasons of its own (StrictMode's double
@@ -195,6 +203,7 @@ export function TerminalView({
   resume,
   roster,
   visible,
+  onClose,
   stillInWorkspace,
 }: TerminalViewProps) {
   const { font, terminalFontSize, resolvedTerminalTheme } = useSettings()
@@ -241,6 +250,11 @@ export function TerminalView({
   const [dropping, setDropping] = useState(false)
   const dragDepth = useRef(0)
 
+  // Set once this session's process is gone, and the whole of the card's
+  // terminal state: the scrollback stays on screen, the banner below offers the
+  // two ways out of it.
+  const [exited, setExited] = useState<SessionExit | null>(null)
+
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [searchResults, setSearchResults] = useState<SearchResults | null>(null)
@@ -282,6 +296,39 @@ export function TerminalView({
     if (!sendInput(sessionId, data)) {
       void Service.Write(sessionId, data)
     }
+  }
+
+  // Restart spawns the same kind in the same directory again, as a conversation
+  // of its own: the process that died took its with it, and a --resume here
+  // would reopen whatever the provider last saved rather than what is on screen.
+  // The scrollback is left alone — it is the evidence of what happened.
+  const restart = () => {
+    const live = liveRef.current
+    // The band raising this is inside a terminal that is on screen, so there is
+    // always one to measure: a hidden layer is visibility:hidden and takes no
+    // click at all. Guarded rather than asserted because the size is the only
+    // thing wanted from it, and a spawn into a grid nobody measured draws wrong.
+    if (!live) {
+      return
+    }
+    void Service.Start(
+      sessionId,
+      projectId,
+      cwd,
+      kind,
+      "",
+      peerName(cwd, sessionId),
+      false,
+      live.term.cols,
+      live.term.rows,
+    )
+      .then(() => {
+        setExited(null)
+        liveRef.current?.term.focus()
+      })
+      .catch((error: unknown) => {
+        toast.error(`Session failed to restart: ${errorText(error)}`)
+      })
   }
 
   // A session-link click jumps to that session the same way Pulls' "Open in
@@ -628,8 +675,10 @@ export function TerminalView({
         feed(bytes, performance.now() - t0)
       })
       const offWsData = onSessionData(sessionId, (payload) => feed(payload, 0))
-      const offExit = onAppEvent(EXIT_EVENT_PREFIX + sessionId, () => {
-        feed(new TextEncoder().encode("\r\n[process exited]\r\n"), 0)
+      const offExit = onAppEvent(EXIT_EVENT_PREFIX + sessionId, (data) => {
+        const exit = readSessionExit(data)
+        feed(new TextEncoder().encode(exitMarker(exit)), 0)
+        setExited(exit)
       })
       cleanups.push(offData, offWsData, offExit)
 
@@ -802,6 +851,7 @@ export function TerminalView({
           </span>
         </div>
       )}
+      {exited && <TerminalExitBanner exit={exited} onRestart={restart} onClose={onClose} />}
       {searchOpen && (
         <div className="absolute right-3 top-3 z-20 flex items-center gap-1 rounded-md border bg-popover p-1 text-popover-foreground shadow-lg">
           <Input
