@@ -24,6 +24,7 @@ import {
   setActiveSession,
   setSessionPinned,
   type Session,
+  type ProviderKind,
   type SessionKind,
   type SessionState,
 } from "@/lib/session/sessions"
@@ -306,9 +307,12 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const newWorktreeSession = useCallback(
-    (projectId: string, wt: { name: string; path: string }) => {
+    (projectId: string, wt: { name: string; path: string }, requested?: ProviderKind) => {
       const sessionId = newSessionId()
-      const kind = projectDefaultProviderKind(projectId)
+      // The New-worktree dialog picks per checkout; every other caller — a PR
+      // checked out into a worktree, a resume with no parked row — stays on the
+      // project's default.
+      const kind = requested ?? projectDefaultProviderKind(projectId)
       const next = addSession(sessionsRef.current, projectId, sessionId, kind, wt.path, wt.name)
       const project = next[projectId]
       const created = project.sessions[project.sessions.length - 1]

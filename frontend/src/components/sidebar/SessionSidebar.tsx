@@ -30,6 +30,7 @@ import {
   reorderSubset,
   sessionsOf,
   sidebarGroups,
+  type ProviderKind,
   type Session,
   type SidebarGroup,
 } from "@/lib/session/sessions"
@@ -143,12 +144,17 @@ export function SessionSidebar({ onCollapse }: SessionSidebarProps) {
     reorderSessions(projectId, reorderSubset(list, ids, member))
   }
 
-  const createWorktree = async (name: string, base: string, baseIsRemote: boolean) => {
+  const createWorktree = async (
+    name: string,
+    base: string,
+    baseIsRemote: boolean,
+    kind: ProviderKind,
+  ) => {
     const wt = await ProjectService.CreateWorktree(path, projectId, name, base, baseIsRemote)
     if (wt) {
       // A fresh checkout is the one moment the project's setup script runs;
       // reopening an existing worktree never queues it.
-      queueSetup(newWorktreeSession(projectId, wt))
+      queueSetup(newWorktreeSession(projectId, wt, kind))
     }
     setWorktreeOpen(false)
   }
@@ -287,6 +293,7 @@ export function SessionSidebar({ onCollapse }: SessionSidebarProps) {
       <WorktreeDialog
         open={worktreeOpen}
         onOpenChange={setWorktreeOpen}
+        projectId={projectId}
         projectPath={path}
         currentBranch={git?.branch ?? ""}
         onCreate={createWorktree}

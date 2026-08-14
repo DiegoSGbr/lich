@@ -1,6 +1,6 @@
 import { createContext, useContext } from "react"
 import type { Project, RecentProject } from "@/lib/api-types"
-import type { SessionKind, SessionState } from "@/lib/session/sessions"
+import type { ProviderKind, SessionKind, SessionState } from "@/lib/session/sessions"
 
 export interface ProjectsValue {
   projects: Project[]
@@ -21,9 +21,14 @@ export interface ProjectsValue {
   /** Open a new session in a project and focus it, returning its id. Kind
    * defaults to the project's provider choice; path to its own directory. */
   newSession: (projectId: string, kind?: SessionKind, path?: string) => string
-  /** Open a project-default session rooted at a git worktree, labeled after it,
-   * returning its id. */
-  newWorktreeSession: (projectId: string, wt: { name: string; path: string }) => string
+  /** Open a session rooted at a git worktree, labeled after it, returning its
+   * id. Kind defaults to the project's provider choice; the New-worktree dialog
+   * passes one to override it for that checkout only. */
+  newWorktreeSession: (
+    projectId: string,
+    wt: { name: string; path: string },
+    kind?: ProviderKind,
+  ) => string
   /** Resume a worktree: reopen its parked session when one exists, else open a
    * fresh session on it. */
   reopenWorktreeSession: (projectId: string, wt: { name: string; path: string }) => Promise<void>

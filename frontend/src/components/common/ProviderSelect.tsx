@@ -7,6 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { cn } from "@/lib/utils"
 import type { ProviderState } from "@/lib/providers-store"
 import type { ProviderKind } from "@/lib/session/sessions"
 
@@ -14,10 +15,18 @@ interface ProviderSelectProps {
   providers: ProviderState[]
   value: ProviderKind
   ariaLabel: string
+  /** Trigger width override; the settings panes take the default. */
+  className?: string
   onChange: (value: ProviderKind) => void
 }
 
-export function ProviderSelect({ providers, value, ariaLabel, onChange }: ProviderSelectProps) {
+export function ProviderSelect({
+  providers,
+  value,
+  ariaLabel,
+  className,
+  onChange,
+}: ProviderSelectProps) {
   const items = Object.fromEntries(providers.map((provider) => [provider.id, provider.name]))
 
   return (
@@ -26,7 +35,7 @@ export function ProviderSelect({ providers, value, ariaLabel, onChange }: Provid
       items={items}
       onValueChange={(next) => next && onChange(next as ProviderKind)}
     >
-      <SelectTrigger className="w-64" aria-label={ariaLabel}>
+      <SelectTrigger className={cn("w-64", className)} aria-label={ariaLabel}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

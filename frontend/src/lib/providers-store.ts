@@ -334,6 +334,18 @@ export function useDefaultProvider(): ProviderKind {
   return resolveDefaultProvider(providers, defaultId)
 }
 
+// useProjectDefaultProvider returns the kind this project's implicit session
+// actions spawn: its override when that still names an enabled provider, else
+// the global default. It tracks both, so a dialog left open while Settings
+// changes preselects the new answer rather than a copy taken at mount.
+export function useProjectDefaultProvider(projectId: string): ProviderKind {
+  const providers = useSyncExternalStore(store.subscribe, store.getSnapshot)
+  const globalDefault = useSyncExternalStore(store.subscribe, store.getDefaultSnapshot)
+  const projectDefault = useStoredProjectDefaultProvider(projectId)
+  useEffect(store.ensureLoaded, [])
+  return resolveProjectDefaultProvider(providers, globalDefault, projectDefault)
+}
+
 // useStoredProjectDefaultProvider returns the unresolved project value. Empty
 // means the project follows the global default; the Providers settings pane
 // needs that distinction to clear and disable its Use default action.

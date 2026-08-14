@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the select still shows the resolved global provider, and follows later changes
   to the global choice.
 
+- **A new worktree can be opened in a provider other than the project's.** The
+  New-worktree dialog now carries a provider select beside the name field,
+  preselected with the project's default, so "this one in Codex" no longer means
+  creating the worktree and then replacing its session. The choice applies to
+  that checkout only — the standing default stays where it is set, in Settings.
+  The select is absent when there is nothing to choose: only one provider
+  enabled, or a base picked from the Worktrees group, which reopens its parked
+  session in whatever provider that session already used.
+
 - **Every visible checkout group can open another session in place.** Its `+`
   menu offers every enabled coding provider and a plain terminal, rooted in that
   exact project directory or worktree instead of requiring a trip through the

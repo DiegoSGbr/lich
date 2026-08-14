@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import type { KeyboardEvent } from "react"
 import { ProjectService } from "@/lib/rpc"
 import type { Branches, Worktree } from "@/lib/api-types"
+import { ProviderSelect } from "@/components/common/ProviderSelect"
 import { SearchInput } from "@/components/common/SearchInput"
 import { WorktreeSetupRow } from "@/components/sidebar/WorktreeSetupRow"
 import { Button } from "@/components/ui/button"
@@ -17,16 +18,19 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { isValidBranchName } from "@/lib/git/branch-name"
+import { enabledProviders, useProjectDefaultProvider, useProviders } from "@/lib/providers-store"
+import type { ProviderKind } from "@/lib/session/sessions"
 import { cn, errorText } from "@/lib/utils"
 
 interface WorktreeDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  projectId: string
   projectPath: string
   /** The repo's checked-out branch, preselected as the base. */
   currentBranch: string
   /** Create the worktree and open its session; rejections show in the dialog. */
-  onCreate: (name: string, base: string, baseIsRemote: boolean) => Promise<void>
+  onCreate: (name: string, base: string, baseIsRemote: boolean, kind: ProviderKind) => Promise<void>
   /** Reopen a session on an already-existing worktree. */
   onResume: (wt: { name: string; path: string }) => void
 }
@@ -97,13 +101,15 @@ function Group({ title, items, base, onSelect }: GroupProps) {
   )
 }
 
-// WorktreeDialog collects a worktree name (blank = random adjective-noun) and a
-// base picked from a searchable list — existing worktrees to resume, then local
-// and remote branches (remote bases are fetched and tracked). It stays open on
-// failure so git's error is readable in place.
+// WorktreeDialog collects a worktree name (blank = random adjective-noun), the
+// provider its session spawns in, and a base picked from a searchable list —
+// existing worktrees to resume, then local and remote branches (remote bases are
+// fetched and tracked). It stays open on failure so git's error is readable in
+// place.
 export function WorktreeDialog({
   open,
   onOpenChange,
+  projectId,
   projectPath,
   currentBranch,
   onCreate,
@@ -113,10 +119,13 @@ export function WorktreeDialog({
   const [name, setName] = useState("")
   const [base, setBase] = useState("")
   const [filter, setFilter] = useState("")
+  const [kind, setKind] = useState<ProviderKind | "">("")
   const [loadError, setLoadError] = useState("")
   const [submitError, setSubmitError] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
+  const providers = enabledProviders(useProviders())
+  const projectDefault = useProjectDefaultProvider(projectId)
 
   const vis = filterBranches(branches, filter)
   const flat = flatValues(vis)
@@ -124,6 +133,14 @@ export function WorktreeDialog({
   const trimmed = name.trim()
   const nameInvalid = trimmed !== "" && !isValidBranchName(trimmed)
   const isResume = base.startsWith("worktree:")
+  // Empty means the dialog has made no choice, so the project's default answers
+  // live: provider detection lands after the dialog opens, and a value copied
+  // into state at open time would freeze whatever was known before it.
+  const provider = kind || projectDefault
+  // One provider is no choice, and a resumed worktree brings back its parked
+  // session's own kind — which lich cannot show here, since the picker's rows
+  // carry a name and a path and nothing else. Both cases render no control.
+  const showProvider = providers.length > 1 && !isResume
 
   // Keep the selected base in view as it changes — the preselected current
   // branch after load, or the row arrow keys walk to.
@@ -139,6 +156,7 @@ export function WorktreeDialog({
     setName("")
     setBase("")
     setFilter("")
+    setKind("")
     setLoadError("")
     setSubmitError("")
     setSubmitting(false)
@@ -211,7 +229,7 @@ export function WorktreeDialog({
     setSubmitting(true)
     setSubmitError("")
     try {
-      await onCreate(trimmed, id, group === "remote")
+      await onCreate(trimmed, id, group === "remote", provider)
     } catch (err) {
       setSubmitError(errorText(err))
       setSubmitting(false)
@@ -230,27 +248,46 @@ export function WorktreeDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="worktree-name" className="text-xs uppercase tracking-wide">
-            Worktree name
-          </Label>
-          <Input
-            id="worktree-name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Leave blank to auto-generate (e.g. swift-rabbit)"
-            disabled={isResume}
-            aria-invalid={nameInvalid || undefined}
-            autoFocus
-          />
-          {nameInvalid ? (
-            <span className="text-xs text-destructive">Invalid branch name</span>
-          ) : (
-            <span className="font-mono text-xs text-muted-foreground">
-              {isResume
-                ? "Opens the selected worktree"
-                : `Branch: ${trimmed || "<auto-generated>"}`}
-            </span>
+        <div
+          className={cn(
+            "grid items-start gap-3",
+            showProvider && "grid-cols-[minmax(0,1fr)_11rem]",
+          )}
+        >
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="worktree-name" className="text-xs uppercase tracking-wide">
+              Worktree name
+            </Label>
+            <Input
+              id="worktree-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Leave blank to auto-generate (e.g. swift-rabbit)"
+              disabled={isResume}
+              aria-invalid={nameInvalid || undefined}
+              autoFocus
+            />
+            {nameInvalid ? (
+              <span className="text-xs text-destructive">Invalid branch name</span>
+            ) : (
+              <span className="font-mono text-xs text-muted-foreground">
+                {isResume
+                  ? "Opens the selected worktree"
+                  : `Branch: ${trimmed || "<auto-generated>"}`}
+              </span>
+            )}
+          </div>
+          {showProvider && (
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs uppercase tracking-wide">Provider</Label>
+              <ProviderSelect
+                providers={providers}
+                value={provider}
+                ariaLabel="Provider for the new worktree"
+                className="w-full"
+                onChange={setKind}
+              />
+            </div>
           )}
         </div>
 

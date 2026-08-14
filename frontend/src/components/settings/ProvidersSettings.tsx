@@ -8,7 +8,7 @@ import {
 import { ProviderIcon } from "@/components/ProviderIcon"
 import { SettingBlock } from "./SettingBlock"
 import { Switch } from "@/components/ui/switch"
-import { ProviderSelect } from "./ProviderSelect"
+import { ProviderSelect } from "@/components/common/ProviderSelect"
 
 interface ProvidersSettingsProps {
   installedOnly?: boolean

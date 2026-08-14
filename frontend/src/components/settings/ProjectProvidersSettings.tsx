@@ -7,7 +7,7 @@ import {
   useStoredProjectDefaultProvider,
 } from "@/lib/providers-store"
 import { useProjects } from "@/providers/projects"
-import { ProviderSelect } from "./ProviderSelect"
+import { ProviderSelect } from "@/components/common/ProviderSelect"
 import { SettingBlock } from "./SettingBlock"
 
 interface ProjectProvidersSettingsProps {
