@@ -5,6 +5,7 @@ import { AppearanceSettings } from "./AppearanceSettings"
 import { NotificationsSettings } from "./NotificationsSettings"
 import { HotkeysSettings } from "./HotkeysSettings"
 import { ProvidersSettings } from "./ProvidersSettings"
+import { ProjectProvidersSettings } from "./ProjectProvidersSettings"
 import { ProviderBinSettings } from "./ProviderBinSettings"
 import { VersionControlSettings } from "./VersionControlSettings"
 import { UpdatesSettings } from "./UpdatesSettings"
@@ -13,33 +14,51 @@ import { SearchInput } from "@/components/common/SearchInput"
 import { enabledProviders, useProviders } from "@/lib/providers-store"
 import { cn } from "@/lib/utils"
 
-// A settings category: a nav entry plus the pane it renders. "app" sections are
-// global; "provider" sections are the per-provider config that appears when a
-// provider is enabled, and render under a "Provider settings" nav header;
-// "footer" sections sit at the bottom of the nav, apart from the rest.
+// A settings category: a nav entry plus the pane it renders. Global and project
+// sections name their scope in the nav; enabled providers get their own sections,
+// and footer sections sit at the bottom apart from configuration.
 interface Section {
   id: string
   label: string
-  group: "app" | "provider" | "footer"
+  accessibleLabel?: string
+  group: "global" | "project" | "provider" | "footer"
   render: (projectId?: string) => ReactNode
 }
 
-// Base sections are always present. The "Providers" hub holds the enable
-// toggles; enabling a provider adds its own section below (see providerSections).
+// Base sections are always present. Their groups make scope visible before the
+// user opens a pane: app-wide choices first, then the active project's.
 const BASE_SECTIONS: Section[] = [
-  { id: "appearance", label: "Appearance", group: "app", render: () => <AppearanceSettings /> },
+  {
+    id: "appearance",
+    label: "Appearance",
+    group: "global",
+    render: () => <AppearanceSettings />,
+  },
   {
     id: "notifications",
     label: "Notifications",
-    group: "app",
+    group: "global",
     render: () => <NotificationsSettings />,
   },
-  { id: "hotkeys", label: "Hotkeys", group: "app", render: () => <HotkeysSettings /> },
-  { id: "providers", label: "Providers", group: "app", render: () => <ProvidersSettings /> },
+  { id: "hotkeys", label: "Hotkeys", group: "global", render: () => <HotkeysSettings /> },
+  {
+    id: "providers",
+    label: "Providers",
+    accessibleLabel: "Global Providers",
+    group: "global",
+    render: () => <ProvidersSettings />,
+  },
+  {
+    id: "project-providers",
+    label: "Providers",
+    accessibleLabel: "Project Providers",
+    group: "project",
+    render: (id) => <ProjectProvidersSettings projectId={id} />,
+  },
   {
     id: "version-control",
     label: "Version Control",
-    group: "app",
+    group: "project",
     render: (id) => <VersionControlSettings projectId={id} />,
   },
 ]
@@ -71,10 +90,14 @@ export function Settings() {
   }))
   const sections = [...BASE_SECTIONS, ...providerSections, ...FOOTER_SECTIONS]
 
+  // Matched against the accessible label too: two sections are both labeled
+  // "Providers", and their scope lives only in that longer name.
+  const needle = query.toLowerCase()
   const filtered = sections.filter((section) =>
-    section.label.toLowerCase().includes(query.toLowerCase()),
+    `${section.label} ${section.accessibleLabel ?? ""}`.toLowerCase().includes(needle),
   )
-  const appSections = filtered.filter((section) => section.group === "app")
+  const globalSections = filtered.filter((section) => section.group === "global")
+  const projectSections = filtered.filter((section) => section.group === "project")
   const provSections = filtered.filter((section) => section.group === "provider")
   const footerSections = filtered.filter((section) => section.group === "footer")
   // Fall back to the first section when the active one vanished (a provider was
@@ -85,6 +108,7 @@ export function Settings() {
     <button
       key={section.id}
       type="button"
+      aria-label={section.accessibleLabel}
       onClick={() => setActive(section.id)}
       className={cn(
         "rounded-md px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground",
@@ -109,7 +133,18 @@ export function Settings() {
         {/* Scrolls on its own so a short window with several providers enabled
             shrinks this list instead of pushing the footer out of view. */}
         <nav className="flex min-h-0 flex-col gap-0.5 overflow-y-auto px-2 pb-3">
-          {appSections.map(navButton)}
+          {globalSections.length > 0 && (
+            <div className="mb-1 px-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Global Settings
+            </div>
+          )}
+          {globalSections.map(navButton)}
+          {projectSections.length > 0 && (
+            <div className="mt-4 mb-1 px-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Project Settings
+            </div>
+          )}
+          {projectSections.map(navButton)}
           {provSections.length > 0 && (
             <div className="mt-4 mb-1 px-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Provider settings

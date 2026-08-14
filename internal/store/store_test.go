@@ -58,6 +58,53 @@ func TestLoadStateRestoresOpenProjectsAndSessions(t *testing.T) {
 	}
 }
 
+func TestLoadStateHydratesProjectProviderDefaults(t *testing.T) {
+	svc := newTestStore(t)
+	for _, id := range []string{"override", "empty", "missing"} {
+		if err := svc.AddProject(id, id, "/tmp/"+id); err != nil {
+			t.Fatalf("AddProject(%q): %v", id, err)
+		}
+	}
+	if err := svc.SetSetting(providerDefaultKey, globalScope, providers.Claude); err != nil {
+		t.Fatalf("SetSetting(global): %v", err)
+	}
+	if err := svc.SetSetting(providerDefaultKey, "override", providers.Codex); err != nil {
+		t.Fatalf("SetSetting(override): %v", err)
+	}
+	if err := svc.SetSetting(providerDefaultKey, "empty", ""); err != nil {
+		t.Fatalf("SetSetting(empty): %v", err)
+	}
+
+	projects, err := svc.LoadState()
+	if err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	want := map[string]string{"override": providers.Codex, "empty": "", "missing": ""}
+	for _, project := range projects {
+		if project.DefaultProvider != want[project.ID] {
+			t.Errorf("project %q default = %q, want %q", project.ID, project.DefaultProvider, want[project.ID])
+		}
+	}
+}
+
+func TestLoadStateIgnoresProjectProviderDefaultReadFailure(t *testing.T) {
+	svc := newTestStore(t)
+	if err := svc.AddProject("p1", "alpha", "/tmp/alpha"); err != nil {
+		t.Fatalf("AddProject: %v", err)
+	}
+	if _, err := svc.db.Exec(`DROP TABLE settings`); err != nil {
+		t.Fatalf("drop settings: %v", err)
+	}
+
+	projects, err := svc.LoadState()
+	if err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	if len(projects) != 1 || projects[0].DefaultProvider != "" {
+		t.Fatalf("projects = %+v, want restored project inheriting its provider", projects)
+	}
+}
+
 // TestSessionPathPersistsAndDefaults proves a worktree session's path survives
 // a reload and that rows written before the column existed load as "".
 func TestSessionPathPersistsAndDefaults(t *testing.T) {
@@ -473,6 +520,51 @@ func TestDeleteProjectCascadesSessions(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("orphan sessions after cascade = %d, want 0", count)
+	}
+}
+
+// TestDeleteProjectRemovesItsSettings proves a deleted project cannot hand its
+// overrides to whatever is created at the same path later: ids are derived from
+// the path, so the settings rows have to go with the project row.
+func TestDeleteProjectRemovesItsSettings(t *testing.T) {
+	svc := newTestStore(t)
+	if err := svc.AddProject("p1", "alpha", "/tmp/alpha"); err != nil {
+		t.Fatalf("AddProject: %v", err)
+	}
+	if err := svc.SetSetting(providerDefaultKey, "p1", providers.Codex); err != nil {
+		t.Fatalf("SetSetting(project): %v", err)
+	}
+	if err := svc.SetSetting(providerDefaultKey, globalScope, providers.Claude); err != nil {
+		t.Fatalf("SetSetting(global): %v", err)
+	}
+
+	if err := svc.DeleteProject("p1"); err != nil {
+		t.Fatalf("DeleteProject: %v", err)
+	}
+
+	if got, err := svc.GetSetting(providerDefaultKey, "p1"); err != nil || got != "" {
+		t.Errorf("project setting after delete = %q (err %v), want empty", got, err)
+	}
+	if got, err := svc.GetSetting(providerDefaultKey, globalScope); err != nil || got != providers.Claude {
+		t.Errorf("global setting after delete = %q (err %v), want %q", got, err, providers.Claude)
+	}
+}
+
+// TestDeleteProjectRefusesTheGlobalScope pins the guard: an empty id addresses
+// the settings rows every project shares, so the delete must refuse rather than
+// wipe the workspace's global configuration.
+func TestDeleteProjectRefusesTheGlobalScope(t *testing.T) {
+	svc := newTestStore(t)
+	if err := svc.SetSetting(providerDefaultKey, globalScope, providers.Claude); err != nil {
+		t.Fatalf("SetSetting(global): %v", err)
+	}
+
+	if err := svc.DeleteProject(""); err == nil {
+		t.Fatal("DeleteProject(\"\") = nil, want an error")
+	}
+
+	if got, err := svc.GetSetting(providerDefaultKey, globalScope); err != nil || got != providers.Claude {
+		t.Errorf("global setting = %q (err %v), want %q", got, err, providers.Claude)
 	}
 }
 

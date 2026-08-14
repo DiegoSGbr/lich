@@ -7,6 +7,7 @@ import {
   enabledProviders,
   readEnabled,
   resolveDefaultProvider,
+  resolveProjectDefaultProvider,
   skipLevel,
   skipLevelPair,
   skipPermissionFlags,
@@ -129,6 +130,30 @@ describe("resolveDefaultProvider", () => {
   })
 })
 
+describe("resolveProjectDefaultProvider", () => {
+  const p = (id: string, enabled: boolean): ProviderState => ({
+    id: id as ProviderState["id"],
+    name: id,
+    installed: true,
+    enabled,
+  })
+
+  it("prefers an enabled project override to the global default", () => {
+    const list = [p("claude", true), p("codex", true)]
+    expect(resolveProjectDefaultProvider(list, "claude", "codex")).toBe("codex")
+  })
+
+  it("inherits the global default when the project value is empty", () => {
+    const list = [p("claude", true), p("codex", true)]
+    expect(resolveProjectDefaultProvider(list, "codex", "")).toBe("codex")
+  })
+
+  it("ignores a disabled project override and resolves the global fallback", () => {
+    const list = [p("claude", true), p("codex", false)]
+    expect(resolveProjectDefaultProvider(list, "claude", "codex")).toBe("claude")
+  })
+})
+
 describe("createProvidersStore", () => {
   const detected: DetectedProvider[] = [
     { id: "claude", name: "Claude Code", installed: true, path: "/usr/bin/claude" },
@@ -139,14 +164,16 @@ describe("createProvidersStore", () => {
   function build(enabledValues: Record<string, string> = {}, defaultValue = "") {
     const persistEnabled = vi.fn()
     const persistDefault = vi.fn()
+    const persistProjectDefault = vi.fn()
     const store = createProvidersStore({
       detect: async () => detected,
       getEnabled: async (id) => enabledValues[id] ?? "",
       persistEnabled,
       getDefault: async () => defaultValue,
       persistDefault,
+      persistProjectDefault,
     })
-    return { store, persistEnabled, persistDefault }
+    return { store, persistEnabled, persistDefault, persistProjectDefault }
   }
 
   it("loads only known providers with their install + default enabled state", async () => {
@@ -191,6 +218,7 @@ describe("createProvidersStore", () => {
       persistEnabled: vi.fn(),
       getDefault: async () => "",
       persistDefault: vi.fn(),
+      persistProjectDefault: vi.fn(),
     })
     store.ensureLoaded()
     store.ensureLoaded()
@@ -217,5 +245,95 @@ describe("createProvidersStore", () => {
     store.setDefault("claude")
     expect(seen).toHaveBeenCalledTimes(1) // unsubscribed
     expect(persistDefault).toHaveBeenLastCalledWith("claude")
+  })
+
+  it("hydrates project overrides synchronously and notifies subscribers", () => {
+    const { store } = build()
+    const seen = vi.fn()
+    store.subscribe(seen)
+
+    store.hydrateProjectDefaults([
+      { id: "p1", defaultProvider: "codex" },
+      { id: "p2", defaultProvider: "" },
+    ])
+
+    expect(store.getProjectDefaultSnapshot("p1")).toBe("codex")
+    expect(store.getProjectDefaultSnapshot("p2")).toBe("")
+    expect(seen).toHaveBeenCalledTimes(1)
+  })
+
+  it("retries a failed provider load", async () => {
+    const detect = vi
+      .fn<() => Promise<DetectedProvider[]>>()
+      .mockRejectedValueOnce(new Error("detection failed"))
+      .mockResolvedValue(detected)
+    const store = createProvidersStore({
+      detect,
+      getEnabled: async () => "",
+      persistEnabled: vi.fn(),
+      getDefault: async () => "claude",
+      persistDefault: vi.fn(),
+      persistProjectDefault: vi.fn(),
+    })
+
+    await expect(store.load()).rejects.toThrow("detection failed")
+    expect(store.getSnapshot()).toEqual([])
+    await expect(store.load()).resolves.toBeUndefined()
+    expect(store.getSnapshot().map((provider) => provider.id)).toEqual(["claude", "codex"])
+    expect(detect).toHaveBeenCalledTimes(2)
+  })
+
+  it("shares one in-flight load between concurrent callers", async () => {
+    const detect = vi.fn<() => Promise<DetectedProvider[]>>().mockResolvedValue(detected)
+    const store = createProvidersStore({
+      detect,
+      getEnabled: async () => "",
+      persistEnabled: vi.fn(),
+      getDefault: async () => "claude",
+      persistDefault: vi.fn(),
+      persistProjectDefault: vi.fn(),
+    })
+
+    await Promise.all([store.load(), store.load(), store.load()])
+    expect(detect).toHaveBeenCalledTimes(1)
+
+    // And a later caller finds it ready rather than detecting again.
+    await store.load()
+    expect(detect).toHaveBeenCalledTimes(1)
+  })
+
+  it("sets and clears a project override synchronously", () => {
+    const { store, persistProjectDefault } = build()
+    const seen = vi.fn()
+    store.subscribe(seen)
+
+    store.setProjectDefault("p1", "codex")
+    expect(store.getProjectDefaultSnapshot("p1")).toBe("codex")
+    expect(persistProjectDefault).toHaveBeenLastCalledWith("p1", "codex")
+
+    store.setProjectDefault("p1", "")
+    expect(store.getProjectDefaultSnapshot("p1")).toBe("")
+    expect(persistProjectDefault).toHaveBeenLastCalledWith("p1", "")
+    expect(seen).toHaveBeenCalledTimes(2)
+  })
+
+  it("keeps a cleared project override inherited across later global changes", async () => {
+    const { store } = build({ codex: "1", opencode: "1" }, "claude")
+    await store.load()
+    store.setProjectDefault("p1", "codex")
+    store.setProjectDefault("p1", "")
+
+    expect(store.getProjectProviderKind("p1")).toBe("claude")
+
+    store.setDefault("codex")
+    expect(store.getProjectProviderKind("p1")).toBe("codex")
+  })
+
+  it("falls back to the global default when a hydrated override is disabled", async () => {
+    const { store } = build({ claude: "1", codex: "0" }, "claude")
+    store.hydrateProjectDefaults([{ id: "p1", defaultProvider: "codex" }])
+    await store.load()
+
+    expect(store.getProjectProviderKind("p1")).toBe("claude")
   })
 })

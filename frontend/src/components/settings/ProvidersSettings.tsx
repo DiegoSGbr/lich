@@ -6,19 +6,15 @@ import {
   useProviders,
 } from "@/lib/providers-store"
 import { ProviderIcon } from "@/components/ProviderIcon"
-import type { ProviderKind } from "@/lib/session/sessions"
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { SettingBlock } from "./SettingBlock"
 import { Switch } from "@/components/ui/switch"
+import { ProviderSelect } from "./ProviderSelect"
 
-// ProvidersSettings lists every known harness with its install state and an
+interface ProvidersSettingsProps {
+  installedOnly?: boolean
+}
+
+// ProvidersSettings lists every known provider with its install state and an
 // enable toggle, and picks the one new sessions spawn by default. Enabling a
 // provider surfaces its config section (a ProviderBinSettings entry) and offers
 // it in New Session. A provider that is not installed cannot be turned on — but
@@ -28,7 +24,7 @@ import { Switch } from "@/components/ui/switch"
 // installedOnly narrows the list to what is on PATH, for the first-run dialog:
 // there the question is which of your agents to use, so "Not found on PATH" rows
 // are noise. In Settings they are the useful state and the full roster shows.
-export function ProvidersSettings({ installedOnly = false }: { installedOnly?: boolean }) {
+export function ProvidersSettings({ installedOnly = false }: ProvidersSettingsProps) {
   const providers = useProviders()
   const defaultProvider = useDefaultProvider()
 
@@ -44,29 +40,14 @@ export function ProvidersSettings({ installedOnly = false }: { installedOnly?: b
       {enabled.length > 0 && (
         <SettingBlock
           title="Default provider"
-          description="Which harness a new worktree, the new-session hotkey, and a project's first session spawn."
+          description="The provider implicit session actions use unless the current project has its own choice in Project Settings › Providers."
         >
-          <Select
+          <ProviderSelect
+            providers={enabled}
             value={defaultProvider}
-            items={Object.fromEntries(enabled.map((provider) => [provider.id, provider.name]))}
-            onValueChange={(value) => value && setProviderDefault(value as ProviderKind)}
-          >
-            <SelectTrigger className="w-64">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {enabled.map((provider) => (
-                  <SelectItem key={provider.id} value={provider.id}>
-                    <span className="flex items-center gap-2">
-                      <ProviderIcon kind={provider.id} size={14} />
-                      {provider.name}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
+            ariaLabel="Global default provider"
+            onChange={setProviderDefault}
+          />
         </SettingBlock>
       )}
       <div className="flex flex-col divide-y divide-border">

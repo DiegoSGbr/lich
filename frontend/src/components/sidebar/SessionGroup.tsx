@@ -1,16 +1,18 @@
-import { useSyncExternalStore } from "react"
+import { useState, useSyncExternalStore } from "react"
 import { useNavigate } from "react-router-dom"
 import { DndContext, closestCenter } from "@dnd-kit/core"
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable"
 import { dragStyle, useSortableList, verticalAxis } from "@/lib/use-sortable-list"
 import { cn } from "@/lib/utils"
 import { checkoutLabel } from "@/lib/git/checkout-label"
+import type { ProviderState } from "@/lib/providers-store"
 import type { DelegateGroup } from "@/lib/session/delegate-targets"
 import { type Session, sessionOrigin } from "@/lib/session/sessions"
 import { useProjects } from "@/providers/projects"
 import { SessionCard } from "./SessionCard"
 import { PullRequestCard } from "./PullRequestCard"
 import { isPullsOpen, subscribePullsCard } from "@/lib/pulls-card-store"
+import { SessionGroupHeader } from "./SessionGroupHeader"
 
 interface SessionGroupProps {
   projectId: string
@@ -48,6 +50,9 @@ interface SessionGroupProps {
   // Workspace-wide, so it is resolved once by the sidebar rather than per group:
   // the sessions the active one can hand work to, across every open project.
   delegateGroups: DelegateGroup[]
+  // The globally enabled providers, already resolved by the sidebar for its
+  // own New Session menu. A group offers the same roster in its checkout.
+  providers: ProviderState[]
 }
 
 // SessionGroup renders one worktree's sessions under a static divider titled
@@ -76,6 +81,7 @@ export function SessionGroup({
   onPulls,
   onClosePulls,
   delegateGroups,
+  providers,
 }: SessionGroupProps) {
   const {
     sessions: workspace,
@@ -85,6 +91,7 @@ export function SessionGroup({
     newSession,
   } = useProjects()
   const navigate = useNavigate()
+  const [collapsed, setCollapsed] = useState(false)
   const ids = sessions.map((session) => session.id)
   const { sensors, onDragEnd } = useSortableList(ids, onReorder)
   const name = pinned ? "Pinned" : checkoutLabel(path, projectPath, projectId)
@@ -112,57 +119,74 @@ export function SessionGroup({
       )}
     >
       {showHeader && (
-        <div
-          className={cn("flex items-center gap-2 px-1 pb-0.5 pt-1.5", !pinned && "cursor-grab")}
-          {...group.attributes}
-          {...group.listeners}
-        >
-          <span className="min-w-0 truncate text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground/70">
-            {name}
-          </span>
-          <span className="h-px flex-1 bg-border" />
-        </div>
-      )}
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        modifiers={[verticalAxis]}
-        onDragEnd={onDragEnd}
-      >
-        <SortableContext items={ids} strategy={verticalListSortingStrategy}>
-          <div className="flex flex-col gap-1.5">
-            {sessions.map((session) => (
-              <SessionCard
-                key={session.id}
-                session={session}
-                path={projectPath}
-                // Resolved here rather than in the card: the parent can be a
-                // session in another project, which only the workspace-wide
-                // state knows about.
-                origin={sessionOrigin(workspace, session)}
-                active={session.id === activeId}
-                onSelect={() => select(session.id)}
-                onClose={() => onClose(session)}
-                onRename={(label) => renameSession(projectId, session.id, label)}
-                onPin={(pinned) => pinSession(projectId, session.id, pinned)}
-                onOpenTerminal={(cwd) => newSession(projectId, "shell", cwd)}
-                onPulls={onPulls}
-                delegateGroups={delegateGroups}
-              />
-            ))}
-          </div>
-        </SortableContext>
-      </DndContext>
-      {/* The pinned block spans every checkout, so no single pull request
-          belongs under it — the card stays with the worktree's own block. */}
-      {!pinned && pullsOpen && (
-        <PullRequestCard
-          path={checkout}
-          active={pullsActive}
-          onSelect={onPulls}
-          onClose={onClosePulls}
+        <SessionGroupHeader
+          name={name}
+          pinned={pinned}
+          collapsed={collapsed}
+          isDragging={group.isDragging}
+          providers={providers}
+          activatorRef={group.setActivatorNodeRef}
+          // The pinned block is never dragged, and dnd-kit answers a disabled
+          // sortable with aria-disabled + aria-roledescription="draggable" —
+          // which would announce a working collapse button as a dead handle.
+          activatorProps={pinned ? {} : { ...group.attributes, ...group.listeners }}
+          onToggle={() => setCollapsed((current) => !current)}
+          onNewSession={(kind) => newSession(projectId, kind, path)}
         />
       )}
+      <div
+        aria-hidden={collapsed}
+        {...(collapsed ? { inert: "" } : {})}
+        className={cn(
+          "grid transition-[grid-template-rows,opacity] duration-200 ease-out",
+          collapsed
+            ? "pointer-events-none grid-rows-[0fr] opacity-0"
+            : "grid-rows-[1fr] opacity-100",
+        )}
+      >
+        <div className="flex min-h-0 flex-col gap-1.5 overflow-hidden">
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            modifiers={[verticalAxis]}
+            onDragEnd={onDragEnd}
+          >
+            <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+              <div className="flex flex-col gap-1.5">
+                {sessions.map((session) => (
+                  <SessionCard
+                    key={session.id}
+                    session={session}
+                    path={projectPath}
+                    // Resolved here rather than in the card: the parent can be a
+                    // session in another project, which only the workspace-wide
+                    // state knows about.
+                    origin={sessionOrigin(workspace, session)}
+                    active={session.id === activeId}
+                    onSelect={() => select(session.id)}
+                    onClose={() => onClose(session)}
+                    onRename={(label) => renameSession(projectId, session.id, label)}
+                    onPin={(pinned) => pinSession(projectId, session.id, pinned)}
+                    onOpenTerminal={(cwd) => newSession(projectId, "shell", cwd)}
+                    onPulls={onPulls}
+                    delegateGroups={delegateGroups}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
+          {/* The pinned block spans every checkout, so no single pull request
+              belongs under it — the card stays with the worktree's own block. */}
+          {!pinned && pullsOpen && (
+            <PullRequestCard
+              path={checkout}
+              active={pullsActive}
+              onSelect={onPulls}
+              onClose={onClosePulls}
+            />
+          )}
+        </div>
+      </div>
     </div>
   )
 }

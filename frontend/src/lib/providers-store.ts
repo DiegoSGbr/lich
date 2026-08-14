@@ -1,4 +1,4 @@
-// Shared provider state: which harnesses are installed on the machine and which
+// Shared provider state: which providers are installed on the machine and which
 // the user enabled. Both the New Session menu and the Settings screen read it,
 // so a toggle in one place is reflected in the other without a refetch. Detection
 // runs once (providers.Detect); enabled flags are global settings ("1"/"0").
@@ -6,16 +6,18 @@
 // The store is a dependency-injected factory (its RPC calls are passed in) so it
 // is testable without React or the network, mirroring git-status-store. A module
 // singleton wires it to the real RPC, and useProviders is the React wrapper.
-import { useEffect, useSyncExternalStore } from "react"
+import { useCallback, useEffect, useSyncExternalStore } from "react"
 import type { DetectedProvider } from "./api-types"
 import { Providers, Store } from "./rpc"
 import { PROVIDER_KINDS, type ProviderKind } from "@/lib/session/sessions"
 
 const GLOBAL_SCOPE = ""
 
-// defaultKey holds the global id of the provider new sessions spawn by default
-// (worktrees, the new-session hotkey, a project's first session). Empty resolves
-// to the first enabled provider — Claude, until the user turns others on.
+// defaultKey holds the id of the provider new sessions spawn by default
+// (worktrees, the new-session hotkey, a project's first session), in either
+// scope: global, or one project overriding it. Empty resolves to the first
+// enabled provider — Claude, until the user turns others on. Mirrors
+// store.providerDefaultKey in Go, which is what LoadState hydrates from.
 const defaultKey = "provider.default"
 
 // enabledKey holds a provider's global enabled flag; binKey its custom binary
@@ -107,6 +109,19 @@ export function resolveDefaultProvider(list: ProviderState[], defaultId: string)
   return chosen?.id ?? enabled[0]?.id ?? "claude"
 }
 
+// resolveProjectDefaultProvider gives an enabled project override precedence,
+// then delegates every fallback rule to the global resolver. Keeping that
+// resolver as the one fallback path means disabling a provider has identical
+// semantics in both scopes.
+export function resolveProjectDefaultProvider(
+  list: ProviderState[],
+  globalDefaultId: string,
+  projectDefaultId: string,
+): ProviderKind {
+  const chosen = enabledProviders(list).find((provider) => provider.id === projectDefaultId)
+  return chosen?.id ?? resolveDefaultProvider(list, globalDefaultId)
+}
+
 function isProviderKind(id: string): id is ProviderKind {
   return (PROVIDER_KINDS as readonly string[]).includes(id)
 }
@@ -117,78 +132,134 @@ export interface ProvidersDeps {
   persistEnabled: (id: string, value: string) => void
   getDefault: () => Promise<string>
   persistDefault: (id: string) => void
+  persistProjectDefault: (projectId: string, id: string) => void
 }
 
-export function createProvidersStore(deps: ProvidersDeps) {
-  let providers: ProviderState[] = []
-  let defaultId = ""
-  let state: "idle" | "loading" | "ready" = "idle"
-  const listeners = new Set<() => void>()
-  const emit = () => {
-    for (const listener of listeners) {
-      listener()
-    }
-  }
+export interface HydratedProjectDefault {
+  id: string
+  defaultProvider: string
+}
 
-  const load = async (): Promise<void> => {
-    const [detected, storedDefault] = await Promise.all([
-      deps.detect().then((d) => d ?? []),
-      deps.getDefault(),
-    ])
-    providers = await Promise.all(
-      detected
-        .filter((d) => isProviderKind(d.id))
-        .map(async (d) => ({
-          id: d.id as ProviderKind,
-          name: d.name,
-          installed: d.installed,
-          enabled: readEnabled(d.id, await deps.getEnabled(d.id)),
-        })),
-    )
-    defaultId = storedDefault
-    state = "ready"
-    emit()
+export interface ProvidersStore {
+  load: () => Promise<void>
+  ensureLoaded: () => void
+  setEnabled: (id: ProviderKind, enabled: boolean) => void
+  setDefault: (id: ProviderKind) => void
+  hydrateProjectDefaults: (projects: readonly HydratedProjectDefault[]) => void
+  setProjectDefault: (projectId: string, id: ProviderKind | "") => void
+  subscribe: (listener: () => void) => () => void
+  getSnapshot: () => ProviderState[]
+  getDefaultSnapshot: () => string
+  getProjectDefaultSnapshot: (projectId: string) => string
+  getProjectProviderKind: (projectId: string) => ProviderKind
+}
+
+class ProviderStoreImpl implements ProvidersStore {
+  private providers: ProviderState[] = []
+  private defaultId = ""
+  private projectDefaultIds = new Map<string, string>()
+  private state: "idle" | "loading" | "ready" = "idle"
+  private providerLoad: Promise<void> | null = null
+  private listeners = new Set<() => void>()
+
+  constructor(private deps: ProvidersDeps) {}
+
+  load = (): Promise<void> => {
+    if (this.state === "ready") {
+      return Promise.resolve()
+    }
+    if (this.providerLoad) {
+      return this.providerLoad
+    }
+    this.state = "loading"
+    this.providerLoad = this.performLoad()
+      .catch((error: unknown) => {
+        this.state = "idle"
+        throw error
+      })
+      .finally(() => {
+        this.providerLoad = null
+      })
+    return this.providerLoad
   }
 
   // ensureLoaded runs load once; a failed attempt resets so a later mount retries.
-  const ensureLoaded = (): void => {
-    if (state !== "idle") {
-      return
+  ensureLoaded = (): void => {
+    void this.load().catch(() => undefined)
+  }
+
+  setEnabled = (id: ProviderKind, enabled: boolean): void => {
+    this.providers = this.providers.map((p) => (p.id === id ? { ...p, enabled } : p))
+    this.emit()
+    this.deps.persistEnabled(id, enabled ? "1" : "0")
+  }
+
+  setDefault = (id: ProviderKind): void => {
+    this.defaultId = id
+    this.emit()
+    this.deps.persistDefault(id)
+  }
+
+  hydrateProjectDefaults = (projects: readonly HydratedProjectDefault[]): void => {
+    for (const project of projects) {
+      this.projectDefaultIds.set(project.id, project.defaultProvider)
     }
-    state = "loading"
-    void load().catch(() => {
-      state = "idle"
-    })
+    this.emit()
   }
 
-  const setEnabled = (id: ProviderKind, enabled: boolean): void => {
-    providers = providers.map((p) => (p.id === id ? { ...p, enabled } : p))
-    emit()
-    deps.persistEnabled(id, enabled ? "1" : "0")
+  setProjectDefault = (projectId: string, id: ProviderKind | ""): void => {
+    this.projectDefaultIds.set(projectId, id)
+    this.emit()
+    this.deps.persistProjectDefault(projectId, id)
   }
 
-  const setDefault = (id: ProviderKind): void => {
-    defaultId = id
-    emit()
-    deps.persistDefault(id)
-  }
-
-  const subscribe = (listener: () => void): (() => void) => {
-    listeners.add(listener)
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener)
     return () => {
-      listeners.delete(listener)
+      this.listeners.delete(listener)
     }
   }
 
-  return {
-    load,
-    ensureLoaded,
-    setEnabled,
-    setDefault,
-    subscribe,
-    getSnapshot: () => providers,
-    getDefaultSnapshot: () => defaultId,
+  getSnapshot = (): ProviderState[] => this.providers
+  getDefaultSnapshot = (): string => this.defaultId
+  getProjectDefaultSnapshot = (projectId: string): string =>
+    this.projectDefaultIds.get(projectId) ?? ""
+  getProjectProviderKind = (projectId: string): ProviderKind =>
+    resolveProjectDefaultProvider(
+      this.providers,
+      this.defaultId,
+      this.getProjectDefaultSnapshot(projectId),
+    )
+
+  private async performLoad(): Promise<void> {
+    const [detected, storedDefault] = await Promise.all([
+      this.deps.detect().then((result) => result ?? []),
+      this.deps.getDefault(),
+    ])
+    this.providers = await Promise.all(
+      detected
+        .filter((provider) => isProviderKind(provider.id))
+        .map(async (provider) => ({
+          id: provider.id as ProviderKind,
+          name: provider.name,
+          installed: provider.installed,
+          enabled: readEnabled(provider.id, await this.deps.getEnabled(provider.id)),
+        })),
+    )
+    this.defaultId = storedDefault
+    this.state = "ready"
+    this.emit()
   }
+
+  private emit(): void {
+    for (const listener of this.listeners) {
+      listener()
+    }
+  }
+}
+
+export function createProvidersStore(deps: ProvidersDeps): ProvidersStore {
+  return new ProviderStoreImpl(deps)
 }
 
 const store = createProvidersStore({
@@ -201,6 +272,9 @@ const store = createProvidersStore({
   persistDefault: (id) => {
     void Store.SetSetting(defaultKey, GLOBAL_SCOPE, id)
   },
+  persistProjectDefault: (projectId, id) => {
+    void Store.SetSetting(defaultKey, projectId, id)
+  },
 })
 
 export function setProviderEnabled(id: ProviderKind, enabled: boolean): void {
@@ -211,11 +285,26 @@ export function setProviderDefault(id: ProviderKind): void {
   store.setDefault(id)
 }
 
-// defaultProviderKind resolves the current default synchronously, for the
-// imperative session-spawn call sites that cannot use a hook. Before the store
-// loads it resolves to Claude (empty list, empty default).
-export function defaultProviderKind(): ProviderKind {
-  return resolveDefaultProvider(store.getSnapshot(), store.getDefaultSnapshot())
+export function loadProviders(): Promise<void> {
+  return store.load()
+}
+
+// hydrateProjectProviderDefaults accepts the overrides delivered with workspace
+// state. It is synchronous so restoring projects never waits on provider
+// detection or performs one settings request per project.
+export function hydrateProjectProviderDefaults(projects: readonly HydratedProjectDefault[]): void {
+  store.hydrateProjectDefaults(projects)
+}
+
+export function setProjectProviderDefault(projectId: string, id: ProviderKind | ""): void {
+  store.setProjectDefault(projectId, id)
+}
+
+// projectDefaultProviderKind is the imperative counterpart used by workspace
+// mutations. Empty project state follows the global default dynamically; a
+// disabled override delegates to the same global fallback rules.
+export function projectDefaultProviderKind(projectId: string): ProviderKind {
+  return store.getProjectProviderKind(projectId)
 }
 
 // useProviders returns the known providers with their install + enabled state,
@@ -243,4 +332,12 @@ export function useDefaultProvider(): ProviderKind {
   const defaultId = useSyncExternalStore(store.subscribe, store.getDefaultSnapshot)
   useEffect(store.ensureLoaded, [])
   return resolveDefaultProvider(providers, defaultId)
+}
+
+// useStoredProjectDefaultProvider returns the unresolved project value. Empty
+// means the project follows the global default; the Providers settings pane
+// needs that distinction to clear and disable its Use default action.
+export function useStoredProjectDefaultProvider(projectId: string): string {
+  const getSnapshot = useCallback(() => store.getProjectDefaultSnapshot(projectId), [projectId])
+  return useSyncExternalStore(store.subscribe, getSnapshot)
 }

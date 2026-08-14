@@ -119,6 +119,7 @@ type Project struct {
 	Path            string    `json:"path"`
 	NextSeq         int       `json:"nextSeq"`
 	ActiveSessionID string    `json:"activeSessionId"`
+	DefaultProvider string    `json:"defaultProvider"`
 	Sessions        []Session `json:"sessions"`
 }
 
@@ -242,6 +243,8 @@ func (s *Service) LoadState() ([]Project, error) {
 		return nil, fmt.Errorf("iterate projects: %w", err)
 	}
 
+	s.loadProjectDefaults(projects)
+
 	for i := range projects {
 		sessions, err := s.sessionsOf(projects[i].ID)
 		if err != nil {
@@ -250,6 +253,35 @@ func (s *Service) LoadState() ([]Project, error) {
 		projects[i].Sessions = sessions
 	}
 	return projects, nil
+}
+
+// loadProjectDefaults hydrates every explicit project override in one query.
+// Settings are supplementary workspace state: a missing table or failed read
+// leaves the zero value, which means inherit, rather than blocking restoration.
+func (s *Service) loadProjectDefaults(projects []Project) {
+	rows, err := s.db.Query(
+		`SELECT project_id, value FROM settings WHERE key = ? AND project_id <> ?`,
+		providerDefaultKey, globalScope,
+	)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	defaults := make(map[string]string, len(projects))
+	for rows.Next() {
+		var projectID, providerID string
+		if err := rows.Scan(&projectID, &providerID); err != nil {
+			return
+		}
+		defaults[projectID] = providerID
+	}
+	if rows.Err() != nil {
+		return
+	}
+	for i := range projects {
+		projects[i].DefaultProvider = defaults[projects[i].ID]
+	}
 }
 
 // Recent is a closed project offered for reopening — identity only, since the

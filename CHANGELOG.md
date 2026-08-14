@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A project's usual provider can differ from the global default.** Settings now
+  gives each project an optional default provider of its own, used by implicit
+  new-session actions and fresh worktrees. **Use default** removes that override:
+  the select still shows the resolved global provider, and follows later changes
+  to the global choice.
+
+- **Every visible checkout group can open another session in place.** Its `+`
+  menu offers every enabled coding provider and a plain terminal, rooted in that
+  exact project directory or worktree instead of requiring a trip through the
+  project-level menu. Clicking the checkout header collapses or expands all of
+  its cards when the sidebar needs less noise.
+
+### Fixed
+
+- **A deleted project no longer leaves its settings behind for the next one.**
+  A project whose directory is gone is dropped from the workspace, but its
+  per-project settings — provider, gh account, binary paths — stayed in the
+  database, and a project identifies itself by its path: recreating a checkout
+  where a deleted one stood silently handed the new project the dead one's
+  overrides. They are now deleted with it.
+
 ## [0.34.0] - 2026-08-14
 
 ### Added
