@@ -88,8 +88,11 @@ Deliberate limits and shortcuts. A bullet earns its place by naming a trap — s
 nobody knows it and that the call site never shows. The mechanism and the history stay in the code and
 `CHANGELOG.md`.
 
-- **Session cwd is polled** from the PTY child (`internal/terminal/cwd.go`, per-OS readers behind build tags); a
-  failed read degrades to the session's start directory. Tracks the direct child only, not nested shells.
+- **Session cwd is polled** from the terminal's foreground process group (`internal/terminal/cwd.go`, per-OS
+  readers behind build tags); a failed read degrades to the session's start directory, and Windows tracks the
+  PTY child instead, where the same nested-shell `cd` moves nothing. A shell hosted elsewhere — tmux, ssh, a
+  container — is beyond all of them: the readout goes on naming a real local directory that is not where the
+  user is, with nothing on screen saying so.
 - **A project's gh account governs gh, not git**: `vcs.account` (`internal/project/ghaccount.go`) puts one
   account's token in `GH_TOKEN` for every gh call lich makes for that project. A push still rides the remote's
   ssh key and signs with the global `user.email`, so a PR can be *read* by one account and its commits *land*
