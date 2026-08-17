@@ -12,6 +12,7 @@ import {
   Pencil,
   Pin,
   PinOff,
+  Play,
   Terminal,
   TriangleAlert,
   X,
@@ -49,6 +50,7 @@ import { delegatePrompt, delegateWorktreePrompt } from "@/lib/session/delegate-p
 import { bracketedPaste } from "@/lib/terminal/bracketed-paste"
 import { requestTerminalFocus } from "@/lib/terminal/focus-request"
 import { SessionTargetPicker } from "./SessionTargetPicker"
+import { EntrypointDialog } from "./EntrypointDialog"
 
 interface SessionCardProps {
   session: Session
@@ -67,6 +69,10 @@ interface SessionCardProps {
   // agent sessions, so the user can drop into a terminal in the worktree the
   // agent is working in without cd-ing there by hand.
   onOpenTerminal: (cwd: string) => void
+  // Record the command this terminal opens into, "" to clear it back to a plain
+  // shell. Offered on shell sessions alone: on a provider card the entrypoint is
+  // the provider, and the store refuses one there anyway.
+  onSetEntrypoint: (entrypoint: string) => void
   // Open the Pulls screen for this session's worktree, parking its PR card.
   onPulls: () => void
   // Sessions this one can hand work to, grouped by project. Only the card
@@ -87,6 +93,7 @@ export function SessionCard({
   onRename,
   onPin,
   onOpenTerminal,
+  onSetEntrypoint,
   onPulls,
   delegateGroups,
 }: SessionCardProps) {
@@ -95,6 +102,7 @@ export function SessionCard({
   const [pathOverflow, setPathOverflow] = useState(false)
   const [editing, setEditing] = useState(false)
   const [delegatePickerOpen, setDelegatePickerOpen] = useState(false)
+  const [entrypointOpen, setEntrypointOpen] = useState(false)
   // Processing state reported by the lich Claude Code hook, drawn as a ring
   // around the provider icon: a spinning ring while Claude produces output,
   // solid emerald once its turn ends, amber when it is blocked on the user.
@@ -155,7 +163,14 @@ export function SessionCard({
   // Every provider can delegate, and no live target is required: the picker's
   // pinned row delegates into a fresh worktree session, which is most useful
   // exactly when there is nobody else to hand work to yet.
-  const canDelegate = active
+  //
+  // A terminal cannot. Delegating writes the request at this card's own prompt
+  // and hands the cursor back, and the thing reading a terminal's prompt is a
+  // shell: it would run the line as a command, or fail on it. The declared kind
+  // decides, never the live agent readout — a menu that appears and disappears
+  // as an agent is started and quit by hand offers no action the user can rely
+  // on being there.
+  const canDelegate = active && session.kind !== "shell"
 
   // The picker is only rendered while the card can delegate, so losing that
   // unmounts it — and an open flag left behind would spring the dialog back up
@@ -435,6 +450,12 @@ export function SessionCard({
             <Pencil />
             Rename
           </ContextMenuItem>
+          {session.kind === "shell" && (
+            <ContextMenuItem onClick={() => setEntrypointOpen(true)}>
+              <Play />
+              Entrypoint…
+            </ContextMenuItem>
+          )}
           <ContextMenuItem onClick={() => onPin(!pinned)}>
             {pinned ? <PinOff /> : <Pin />}
             {pinned ? "Unpin" : "Pin"}
@@ -467,6 +488,15 @@ export function SessionCard({
           groups={delegateGroups}
           onPick={(target) => delegate(target.label)}
           onPickWorktree={delegateWorktree}
+        />
+      )}
+      {session.kind === "shell" && (
+        <EntrypointDialog
+          open={entrypointOpen}
+          onOpenChange={setEntrypointOpen}
+          entrypoint={session.entrypoint ?? ""}
+          cwd={displayPath(shownPath)}
+          onSave={onSetEntrypoint}
         />
       )}
     </div>
