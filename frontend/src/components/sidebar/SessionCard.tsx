@@ -8,6 +8,7 @@ import {
   CornerDownLeft,
   GitBranch,
   GitPullRequestArrow,
+  Globe,
   Inbox,
   Pencil,
   Pin,
@@ -17,7 +18,7 @@ import {
   X,
 } from "lucide-react"
 import { useSortable } from "@dnd-kit/sortable"
-import { cn } from "@/lib/utils"
+import { cn, errorText } from "@/lib/utils"
 import { dragStyle } from "@/lib/use-sortable-list"
 import { displayPath } from "@/lib/paths"
 import type { Session } from "@/lib/session/sessions"
@@ -43,12 +44,13 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
-import { Terminal as TerminalService } from "@/lib/rpc"
+import { Terminal as TerminalService, Browser } from "@/lib/rpc"
 import type { DelegateGroup } from "@/lib/session/delegate-targets"
 import { delegatePrompt, delegateWorktreePrompt } from "@/lib/session/delegate-prompt"
 import { bracketedPaste } from "@/lib/terminal/bracketed-paste"
 import { requestTerminalFocus } from "@/lib/terminal/focus-request"
 import { SessionTargetPicker } from "./SessionTargetPicker"
+import { toast } from "sonner"
 
 interface SessionCardProps {
   session: Session
@@ -430,6 +432,16 @@ export function SessionCard({
           <ContextMenuItem onClick={() => onPin(!pinned)}>
             {pinned ? <PinOff /> : <Pin />}
             {pinned ? "Unpin" : "Pin"}
+          </ContextMenuItem>
+          <ContextMenuItem
+            onClick={() => {
+              void Browser.OpenVisible(session.id).catch((err) => {
+                toast.error(`Browser: ${errorText(err)}`)
+              })
+            }}
+          >
+            <Globe />
+            Browser tab
           </ContextMenuItem>
           {session.kind !== "shell" && (
             <ContextMenuItem onClick={() => onOpenTerminal(shownPath)}>

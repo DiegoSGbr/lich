@@ -10,7 +10,8 @@ vars:
   VITE_PORT: '{{.LICH_VITE_PORT | default 9245}}'
   # Package version follows the git tag (env VERSION overrides) — no manual bump.
   VERSION:
-    sh: echo "${VERSION:-$(git describe --tags --always 2>/dev/null | sed 's/^v//')}"
+    # ${v#v} strips a leading v without sed (missing on a stock Windows PATH).
+    sh: v="${VERSION:-$(git describe --tags --always 2>/dev/null)}"; echo "${v#v}"
   # -X main.version stamps the git tag into the binary so the in-app update
   # check knows what it is running (dev builds via `go run` stay "dev").
   LDFLAGS: '-s -w -X main.version={{.VERSION}}'
@@ -86,7 +87,8 @@ tasks:
           # Task's embedded shell (mvdan/sh) only knows the EXIT trap; Ctrl+C
           # reaches the whole process group (Vite included) on its own.
           trap 'kill $VITE_PID 2>/dev/null || true' EXIT
-          sleep 1.5
+          # sleep(1) is not on a stock Windows PATH; Node is a prerequisite.
+          node -e "setTimeout(function(){process.exit(0)},1500)"
           LICH_DEV=1 LICH_DEV_URL="http://127.0.0.1:{{.VITE_PORT}}" LICH_LISTEN_PORT=47822 go run .
 
   test:

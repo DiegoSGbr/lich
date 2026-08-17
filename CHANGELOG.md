@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A session can open a real browser the agent drives.** Right-click a session
+  card and pick **Browser tab** to open a Chromium window of that session's
+  own — the same page `lich browser` and the `browser_*` MCP tools inspect,
+  click, type and screenshot. It is the browser already on the machine, not
+  an in-app tab, and closing it does not quit lich. `file:` and `javascript:`
+  URLs are refused, and form values never enter the transcript.
+
 ## [0.35.0] - 2026-08-16
 
 ### Added

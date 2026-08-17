@@ -13,6 +13,7 @@ import (
 	"github.com/ncruces/zenity"
 	"github.com/omartelo/lich/internal/agentplugin"
 	"github.com/omartelo/lich/internal/appupdate"
+	"github.com/omartelo/lich/internal/browser"
 	"github.com/omartelo/lich/internal/chromium"
 	"github.com/omartelo/lich/internal/cli"
 	"github.com/omartelo/lich/internal/drop"
@@ -148,6 +149,12 @@ func main() {
 	// the PTY here rather than waiting for someone to click the card.
 	dispatcher.Register("spawn", spawn.New(db, proj, term, hub))
 	dispatcher.Register("themes", themes.New())
+	// One Chromium sidecar per lich session — never the --app window. Closed
+	// with the card, and with the process on window-close.
+	brows := browser.New()
+	defer brows.Cleanup()
+	term.SetOnClose(func(id string) { _ = brows.CloseOwnedBy(id) })
+	dispatcher.Register("browser", brows)
 	denyInternal(dispatcher)
 	term.Mount("/rpc/", dispatcher)
 	term.Mount("/drop", http.HandlerFunc(drops.Upload))
@@ -184,6 +191,10 @@ func main() {
 //     (encoding/json leaves a func or pointer alone on null), and the write
 //     races the readers already serving — nilling SetProjects also disarms the
 //     guard that keeps two projects off the same directory.
+//   - browser.Cleanup and browser.CloseOwnedBy are process/card teardown. The
+//     window opens a visible browser through OpenVisible; the agent closes one
+//     through Close. Cleanup on a page POST would kill every session's Chromium
+//     without closing a card.
 func denyInternal(d *rpc.Handler) {
 	for _, method := range []string{
 		"store.Close",
@@ -193,6 +204,8 @@ func denyInternal(d *rpc.Handler) {
 		"relay.SetPlugins",
 		"project.SetAccounts",
 		"project.SetProjects",
+		"browser.Cleanup",
+		"browser.CloseOwnedBy",
 	} {
 		d.Deny(method)
 	}

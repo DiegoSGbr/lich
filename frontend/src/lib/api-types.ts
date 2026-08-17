@@ -431,3 +431,12 @@ export interface DetectedProvider {
   installed: boolean
   path: string
 }
+
+/** internal/browser.Handle — this session's Chromium sidecar. */
+export interface BrowserHandle {
+  id: string
+  url: string
+  title: string
+  owner: string
+  headed: boolean
+}

@@ -11,6 +11,7 @@ import type {
   BaseStatus,
   BranchRules,
   Branches,
+  BrowserHandle,
   CommitIdentity,
   DetectedProvider,
   Diagnostics as DiagnosticsData,
@@ -398,6 +399,11 @@ export const System = {
 export const Providers = {
   /** Every known provider with its install state (binary found on PATH). */
   Detect: () => call<DetectedProvider[]>("providers.Detect", []),
+}
+
+export const Browser = {
+  /** Open or focus this session's visible Chromium window — not the lich UI. */
+  OpenVisible: (owner: string) => call<BrowserHandle>("browser.OpenVisible", [owner]),
 }
 
 export const Themes = {

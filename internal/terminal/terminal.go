@@ -183,6 +183,10 @@ type Service struct {
 	// without answering (internal/relay). Guarded by mu: wired after the
 	// transport is already serving.
 	onState func(id, state string)
+	// onClose, when set, receives every session id Close removes. The agent
+	// browser hangs off it so a card that goes away takes its Chromium with it.
+	// Guarded by mu: wired after the transport is already serving.
+	onClose func(id string)
 	// turns is which sessions have a turn open right now, which is what tells a
 	// `waiting` report that a human is blocking from one that only says the
 	// session is sitting at its prompt (see turnLog). It carries its own lock:
@@ -337,6 +341,15 @@ func (s *Service) SetSessionState(fn func(id, state string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onState = fn
+}
+
+// SetOnClose wires fn to every session Close. Only one watcher: the agent
+// browser is torn down with the card that owned it, and the terminal package
+// must not import that one.
+func (s *Service) SetOnClose(fn func(id string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onClose = fn
 }
 
 // stateWatcher reads the watcher under the lock, so a report arriving while it
@@ -754,10 +767,14 @@ func (s *Service) Close(id string) error {
 		delete(s.sessions, id)
 		close(sess.done)
 	}
+	onClose := s.onClose
 	s.mu.Unlock()
 
 	if !ok {
 		return nil
+	}
+	if onClose != nil {
+		onClose(id)
 	}
 	return sess.pty.Close()
 }

@@ -71,6 +71,13 @@ var commands = []command{
 			"sessions are open in it.",
 	},
 	{
+		name: "browser",
+		args: "<verb> [args]",
+		about: "Drive this session's browser — the same window Browser tab opens.\n" +
+			"Verbs: open [url], info, click, type, screenshot [path], navigate <url>,\n" +
+			"reload, back, forward, scroll, list, close.",
+	},
+	{
 		name: "mcp",
 		args: "",
 		about: "Serve the commands above as MCP tools over stdio. lich registers this\n" +

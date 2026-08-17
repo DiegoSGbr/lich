@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/omartelo/lich/internal/browser"
 	"github.com/omartelo/lich/internal/drop"
 	"github.com/omartelo/lich/internal/project"
 	"github.com/omartelo/lich/internal/relay"
@@ -20,32 +21,36 @@ import (
 // fails TestDeniedMethodsAreUnreachable and an entry that names nothing —
 // Deny takes any string — fails TestDeniedMethodsExist.
 var denied = map[string]reflect.Type{
-	"store.Close":         reflect.TypeFor[*store.Service](),
-	"drop.Upload":         reflect.TypeFor[*drop.Service](),
-	"drop.Save":           reflect.TypeFor[*drop.Service](),
-	"relay.Observe":       reflect.TypeFor[*relay.Service](),
-	"relay.SetPlugins":    reflect.TypeFor[*relay.Service](),
-	"project.SetAccounts": reflect.TypeFor[*project.Service](),
-	"project.SetProjects": reflect.TypeFor[*project.Service](),
+	"store.Close":          reflect.TypeFor[*store.Service](),
+	"drop.Upload":          reflect.TypeFor[*drop.Service](),
+	"drop.Save":            reflect.TypeFor[*drop.Service](),
+	"relay.Observe":        reflect.TypeFor[*relay.Service](),
+	"relay.SetPlugins":     reflect.TypeFor[*relay.Service](),
+	"project.SetAccounts":  reflect.TypeFor[*project.Service](),
+	"project.SetProjects":  reflect.TypeFor[*project.Service](),
+	"browser.Cleanup":      reflect.TypeFor[*browser.Service](),
+	"browser.CloseOwnedBy": reflect.TypeFor[*browser.Service](),
 }
 
-// stubService stands in for the four registered services: dispatch resolves a
+// stubService stands in for the registered services: dispatch resolves a
 // method by name alone, and the real ones want a database, a config directory
 // and a running terminal.
 type stubService struct{}
 
-func (stubService) Close() error       { return nil }
-func (stubService) Upload() error      { return nil }
-func (stubService) Save() error        { return nil }
-func (stubService) Observe() error     { return nil }
-func (stubService) SetPlugins() error  { return nil }
-func (stubService) SetAccounts() error { return nil }
-func (stubService) SetProjects() error { return nil }
-func (stubService) Allowed() error     { return nil }
+func (stubService) Close() error        { return nil }
+func (stubService) Upload() error       { return nil }
+func (stubService) Save() error         { return nil }
+func (stubService) Observe() error      { return nil }
+func (stubService) SetPlugins() error   { return nil }
+func (stubService) SetAccounts() error  { return nil }
+func (stubService) SetProjects() error  { return nil }
+func (stubService) Cleanup() error      { return nil }
+func (stubService) CloseOwnedBy() error { return nil }
+func (stubService) Allowed() error      { return nil }
 
 func denyingDispatcher() *rpc.Handler {
 	d := rpc.New()
-	for _, service := range []string{"store", "drop", "relay", "project"} {
+	for _, service := range []string{"store", "drop", "relay", "project", "browser"} {
 		d.Register(service, stubService{})
 	}
 	denyInternal(d)

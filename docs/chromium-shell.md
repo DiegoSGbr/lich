@@ -148,6 +148,9 @@ Costs, and why it waits:
 
 **Trigger to revisit**: the project grows an audience — packaging for users
 who won't install a browser dependency, or a hard requirement to pin the
-Chromium version. The migration path from option 1 is small: the whole app is
+Chromium version, or a need to paint a page *inside* the lich window (an
+embedded tab). The migration path from option 1 is small: the whole app is
 already "Go server + browser window"; option 2 only swaps who provides the
-window.
+window. The session's agent browser is a separate Chromium process on
+`FindBrowser` + CDP (`internal/browser`) and does not wait on option 2; it
+must never attach to this `--app` window.

@@ -56,10 +56,19 @@ work when nobody knows it and that the call site never shows. The mechanism and 
 - **Installing the plugin writes into three harnesses' own directories** (`internal/agentplugin`): Claude Code and
   Codex are driven through their plugin CLI, but opencode, oh-my-pi and Crush have none, so lich writes the
   released files itself. None of them records what is installed, so the version lives in a marker line lich wrote —
-  edit the file by hand and lich reads it as not installed. Crush below 0.88.0 ignores those lines in silence,
+  edit the file by hand and lich reads it as not installed.   Crush below 0.88.0 ignores those lines in silence,
   which is why the install asks its version first. Crush's block and omp's `mcp.json` register lich's MCP server by
   the absolute path of the binary that installed it, and omp's is a JSON document lich rewrites rather than appends
   to: every key survives, the user's formatting does not.
+- **opencode does not see the session browser tools.** Claude Code and Codex get
+  them at spawn, Crush and oh-my-pi through the plugin's MCP registration;
+  opencode's plugin cannot register an MCP server and still defines only the
+  original seven tools. `lich browser` still works in an opencode PTY. The
+  plugin's `toolsMinVersion` is not bumped for this.
+- **The agent browser is a second Chromium, never CDP on the lich window.**
+  Attaching to the `--app` process would expose the UI and the session token.
+  The sidecar uses `chromium.FindBrowser` with its own user-data-dir. Promoting
+  a headless context to a visible window replaces it, so the page reloads.
 - **omp's state directory answers to two variables, and the profile wins** (`internal/agentplugin/omp.go`,
   `internal/terminal/transcript.go`, resolving it independently as the Claude Code pair do): `OMP_PROFILE` moves
   the whole directory and beats an explicit `PI_CODING_AGENT_DIR`. Get it backwards and the install lands where omp
