@@ -30,6 +30,31 @@ func writeTranscript(t *testing.T, providerSessionID, body string) {
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)
 }
 
+// writeCodexTranscript plants a rollout under CODEX_HOME and keeps the Claude
+// lookup empty, proving sessionUsage falls through to the Codex reader.
+func writeCodexTranscript(t *testing.T, providerSessionID, body string) {
+	t.Helper()
+	dir := t.TempDir()
+	sessions := filepath.Join(dir, "sessions", "2026", "08", "18")
+	if err := os.MkdirAll(sessions, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(sessions, "rollout-now-"+providerSessionID+".jsonl")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_HOME", dir)
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+}
+
+func writeCodexModelsCache(t *testing.T, body string) {
+	t.Helper()
+	path := filepath.Join(os.Getenv("CODEX_HOME"), "models_cache.json")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // writeSubagentTranscript plants the transcript of one sub-agent beside the
 // conversation that spawned it. It writes into the directory writeTranscript
 // pointed CLAUDE_CONFIG_DIR at, so the parent is planted first.
@@ -60,6 +85,40 @@ func TestSessionUsageReportsTheTranscriptTail(t *testing.T) {
 	want := usageEvent{ID: "s1", Percent: 6, Tokens: 64800, Window: 1_000_000, Model: modelOpus}
 	if got != want {
 		t.Errorf("sessionUsage = %+v, want %+v", got, want)
+	}
+}
+
+func TestSessionUsageReportsCodexRollout(t *testing.T) {
+	body := `{"type":"turn_context","payload":{"model":"gpt-5.6-sol","effort":"xhigh"}}` + "\n" +
+		`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":65111},"model_context_window":258400}}}` + "\n"
+	writeCodexTranscript(t, "uuid-codex", body)
+	writeCodexModelsCache(t, `{"models":[{"slug":"gpt-5.6-sol","context_window":272000,"max_context_window":872000,"effective_context_window_percent":95}]}`)
+	svc := New(stubBins{providerSession: "uuid-codex"}, nil, events.New())
+
+	got, ok := svc.sessionUsage("s1")
+	if !ok {
+		t.Fatal("sessionUsage: want ok, got false")
+	}
+	want := usageEvent{
+		ID: "s1", Percent: 7, Tokens: 65111, Window: 828400, Model: "gpt-5.6-sol", Effort: "xhigh",
+	}
+	if got != want {
+		t.Errorf("sessionUsage = %+v, want %+v", got, want)
+	}
+}
+
+func TestSessionUsageFallsBackToCodexRolloutWindow(t *testing.T) {
+	body := `{"type":"turn_context","payload":{"model":"gpt-5.6-sol","effort":"high"}}` + "\n" +
+		`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":65111},"model_context_window":258400}}}` + "\n"
+	writeCodexTranscript(t, "uuid-codex", body)
+	svc := New(stubBins{providerSession: "uuid-codex"}, nil, events.New())
+
+	got, ok := svc.sessionUsage("s1")
+	if !ok {
+		t.Fatal("sessionUsage: want rollout fallback, got false")
+	}
+	if got.Window != 258400 || got.Percent != 25 {
+		t.Errorf("sessionUsage = %+v, want rollout window 258400 at 25%%", got)
 	}
 }
 

@@ -144,8 +144,8 @@ function useSkipPermissions(providerId: string, worktree: boolean) {
 
 // ProviderBinSettings is the config section a provider gets when enabled: what
 // its plan has left, which binary its sessions spawn, and how far it runs
-// without asking. Claude Code adds the footer readout, which is the only
-// provider reporting one.
+// without asking. Claude Code and Codex add the footer readout because their
+// transcripts report the model and context-window usage.
 export function ProviderBinSettings({
   providerId,
   providerName,
@@ -172,8 +172,15 @@ export function ProviderBinSettings({
   const level = skipLevel(skipHere, skipInWorktrees)
   const consequence = SKIP_LEVELS.find((rung) => rung.level === level)?.consequence ?? ""
   const readout = footerReadout(showContextUsage, showCost)
+  const availableReadouts =
+    providerId === "codex"
+      ? FOOTER_READOUTS.filter((rung) => rung.level !== "cost")
+      : FOOTER_READOUTS
+  // Cost is a global preference but Codex has no transcript cost reader. If
+  // Claude enabled it, the Codex pane still truthfully shows its highest rung.
+  const visibleReadout = providerId === "codex" && readout === "cost" ? "context" : readout
   const readoutConsequence =
-    FOOTER_READOUTS.find((rung) => rung.level === readout)?.consequence ?? ""
+    availableReadouts.find((rung) => rung.level === visibleReadout)?.consequence ?? ""
 
   // One rung writes both settings, for the same reason the permission ladder
   // does: the pair is the storage, the rung is the choice.
@@ -206,22 +213,22 @@ export function ProviderBinSettings({
 
       <ProviderBinary providerId={providerId} providerName={providerName} projectId={projectId} />
 
-      {/* Only Claude Code reports context-window usage (via the lich plugin), so
-          the footer readout control lives in its section, not the generic hub. */}
-      {providerId === "claude" && (
+      {/* Only providers with a context-window transcript reader carry this
+          control; the underlying preference stays global. */}
+      {(providerId === "claude" || providerId === "codex") && (
         <>
           <SettingBlock
             title="Session readout in the footer"
             description="How much of what a session is spending the footer carries, read from its transcript."
           >
             <ToggleGroup
-              value={[readout]}
+              value={[visibleReadout]}
               onValueChange={(next) => next[0] && setReadout(next[0] as FooterReadout)}
               spacing={1}
               aria-label="What the footer says about the session"
               className="border border-border p-[3px]"
             >
-              {FOOTER_READOUTS.map((rung) => (
+              {availableReadouts.map((rung) => (
                 <ToggleGroupItem key={rung.level} value={rung.level} size="sm">
                   {rung.label}
                 </ToggleGroupItem>
@@ -232,7 +239,7 @@ export function ProviderBinSettings({
 
           {/* A ceiling is only ever seen through the readout, so it is offered
               beside it and hidden with it. */}
-          {readout === "cost" && (
+          {providerId === "claude" && readout === "cost" && (
             <SettingBlock
               title="Spend ceiling"
               description="Colour the cost in the footer as a session approaches this many dollars — amber at 80%, red at 95%. It is a warning, not a limit: nothing is stopped, and the figure it watches is API pricing from a table. Leave empty for none."

@@ -12,9 +12,10 @@ import (
 const usageEventName = "session-usage"
 
 // usageEvent is the payload of usageEventName. Percent is the share of the
-// context window the turn left occupied (0–100); Tokens is the raw input-side
-// count behind it, Window the model's context window, Model the model id, and
-// Effort the reasoning effort level ("" when the line records none).
+// context window the turn left occupied (0–100); Tokens is the provider's active
+// context count behind it, Window the model's effective context window, Model
+// the model id, and Effort the reasoning effort level ("" when the line records
+// none).
 //
 // CostUSD is what the session has cost so far, and is omitted — not zeroed —
 // whenever there is no number worth showing: the setting is off, or a model in
@@ -36,11 +37,6 @@ type usageEvent struct {
 // turn, not only at the end. Silent on any miss — no provider id yet, no
 // transcript, an unreadable or half-written file — so the readout keeps its last
 // value instead of flickering.
-//
-// Only Claude reports a provider session id today (resume and the session-start
-// hook are Claude-only), so the reader is Claude's. A second provider that grows
-// one selects its own reader here by the session's kind — not an interface until
-// there are two to hide behind it.
 func (s *Service) emitUsage(id string) {
 	if event, ok := s.sessionUsage(id); ok {
 		s.hub.Emit(usageEventName, event)
@@ -59,7 +55,7 @@ func (s *Service) sessionUsage(id string) (usageEvent, bool) {
 	if providerSessionID == "" {
 		return usageEvent{}, false
 	}
-	u, ok := claudeContextUsage(providerSessionID)
+	u, ok := contextUsageFor(providerSessionID)
 	if !ok {
 		return usageEvent{}, false
 	}
@@ -75,6 +71,13 @@ func (s *Service) sessionUsage(id string) (usageEvent, bool) {
 		event.CostUSD = &cost
 	}
 	return event, true
+}
+
+func contextUsageFor(providerSessionID string) (contextUsage, bool) {
+	if usage, ok := claudeContextUsage(providerSessionID); ok {
+		return usage, true
+	}
+	return codexContextUsage(providerSessionID)
 }
 
 // sessionCost is what session id has cost across every conversation it has run,
