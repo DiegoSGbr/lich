@@ -17,6 +17,7 @@ import type {
   Diagnostics as DiagnosticsData,
   DiffStats,
   DraftReviewComment,
+  Attachment,
   DropItem,
   MergeMethod,
   PatchNotes as PatchNotesData,
@@ -145,9 +146,17 @@ export const Terminal = {
 export const DropService = {
   /** Absolute paths for the dropped items found under root, in order; "" where
    * the tree holds no single match and the caller must upload a copy instead.
-   * The upload is not here — its body is the file, so it has its own endpoint
-   * (see lib/terminal/drop-files.ts). */
-  Resolve: (root: string, items: DropItem[]) => call<string[]>("drop.Resolve", [root, items]),
+   * `confined` is whether the session runs in the sandbox: its home is an empty
+   * private one, so the home is not searched for it and anything outside the
+   * checkout falls through to the copy. The upload is not here — its body is
+   * the file, so it has its own endpoint (see lib/terminal/drop-files.ts). */
+  Resolve: (root: string, items: DropItem[], confined: boolean) =>
+    call<string[]>("drop.Resolve", [root, items, confined]),
+  /** Open the native file picker and answer with a path the session can open —
+   * the file's own, or a copy's when a confined session cannot reach it. The
+   * picker runs on the backend rather than here: see internal/drop.Attach. */
+  Attach: (sessionId: string, root: string, confined: boolean) =>
+    call<Attachment>("drop.Attach", [sessionId, root, confined]),
 }
 
 export const ProjectService = {
