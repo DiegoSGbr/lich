@@ -72,5 +72,9 @@ The version comes from the git tag (`git describe` in the Taskfile, env `VERSION
 `build/linux/nfpm/nfpm.yaml` — never hand-edit it there. Before tagging:
 
 - [ ] Local gate green, backend with `-race`.
-- [ ] Move `CHANGELOG.md`'s `[Unreleased]` entries under a new `vX.Y.Z` heading and refresh the compare links.
+- [ ] Cut the `CHANGELOG.md` section the Keep a Changelog way: `[Unreleased]` stays at the top, emptied, and its
+      entries move under a new `## [X.Y.Z] - YYYY-MM-DD` heading — bracketed, ISO date, no `v`: the release job
+      greps `^## \[X.Y.Z\]` and ships empty notes if it misses. Keep the sections in their canonical order
+      (Added, Changed, Deprecated, Removed, Fixed, Security), and refresh the compare links, `[Unreleased]`
+      included.
 - [ ] Push the `vX.Y.Z` tag — `.github/workflows/release.yml` does the rest, and reads the notes from that section.
