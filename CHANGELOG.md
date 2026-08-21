@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Building lich from source now needs Go 1.27.0.** The pin stays exact so that
+  every release binary carries the current toolchain's own security fixes, and
+  the module is what CI reads its Go version from. `GOTOOLCHAIN=auto` — the
+  default — fetches 1.27.0 on its own; a build pinned to `local` on anything
+  older will refuse the module.
+- **The cost readout scans a transcript about three times faster.** Nothing in
+  lich changed: Go 1.27 rebuilt `encoding/json` on top of its v2 implementation,
+  and the per-line decode that prices a session went from ~90µs to ~27µs on a
+  full assistant turn, allocating 2 objects where it used to allocate 13. A
+  project whose sessions carry long transcripts feels it on every refresh.
+- **A `lich rage` bundle now names the goroutines that leaked.** `goroutines.txt`
+  carried every stack in the process, leaving whoever read it to work out which
+  of a few hundred was the one still waiting on something nobody will ever send.
+  The dump now ends with a second section holding only the goroutines blocked on
+  a channel, mutex or WaitGroup that no runnable goroutine can still reach —
+  which is the shape of a window that stopped updating while the process stayed
+  alive. An empty section is the answer too: the hang is somewhere else.
+
+### Removed
+
+- **macOS builds no longer run on Big Sur or Monterey.** Go 1.27 dropped every
+  macOS before 13 Ventura, so the cask now declares that floor and Homebrew
+  refuses the install on an older machine rather than handing it a binary that
+  cannot start. Nothing in lich itself needs 13 — the floor is the compiler's,
+  and it moves with the next Go bump.
+
 ## [0.39.0] - 2026-08-21
 
 ### Added
