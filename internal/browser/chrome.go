@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/chromedp"
@@ -51,13 +52,22 @@ func (p *chromePage) Close() error {
 	return nil
 }
 
+// run drives CDP on the allocator context chromedp attached, applying wait's
+// deadline. Service callers pass a timeout derived from Background; chromedp.Run
+// on that context is "invalid context" and the headed window is then closed.
+func (p *chromePage) run(wait context.Context, actions ...chromedp.Action) error {
+	ctx, cancel := withPageDeadline(p.ctx, wait)
+	defer cancel()
+	return chromedp.Run(ctx, actions...)
+}
+
 func (p *chromePage) Navigate(ctx context.Context, url string) error {
-	return chromedp.Run(ctx, chromedp.Navigate(url))
+	return p.run(ctx, chromedp.Navigate(url))
 }
 
 func (p *chromePage) Info(ctx context.Context) (PageInfo, error) {
 	var info PageInfo
-	if err := chromedp.Run(ctx, chromedp.Evaluate(pageInfoScript, &info)); err != nil {
+	if err := p.run(ctx, chromedp.Evaluate(pageInfoScript, &info)); err != nil {
 		return PageInfo{}, err
 	}
 	return info, nil
@@ -68,7 +78,7 @@ func (p *chromePage) Click(ctx context.Context, t Target) error {
 	if err != nil {
 		return err
 	}
-	return chromedp.Run(ctx, chromedp.MouseClickXY(pt.X, pt.Y))
+	return p.run(ctx, chromedp.MouseClickXY(pt.X, pt.Y))
 }
 
 func (p *chromePage) Type(ctx context.Context, text string, clear bool, t Target) error {
@@ -78,7 +88,7 @@ func (p *chromePage) Type(ctx context.Context, text string, clear bool, t Target
 		}
 	}
 	if clear {
-		err := chromedp.Run(ctx, chromedp.Evaluate(`(() => {
+		err := p.run(ctx, chromedp.Evaluate(`(() => {
 			const el = document.activeElement;
 			if (el && 'value' in el) el.value = '';
 		})()`, nil))
@@ -86,37 +96,54 @@ func (p *chromePage) Type(ctx context.Context, text string, clear bool, t Target
 			return err
 		}
 	}
-	return chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+	return p.run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 		return input.InsertText(text).Do(ctx)
 	}))
 }
 
 func (p *chromePage) Screenshot(ctx context.Context, dest string) error {
 	var buf []byte
-	if err := chromedp.Run(ctx, chromedp.FullScreenshot(&buf, 90)); err != nil {
+	if err := p.run(ctx, chromedp.FullScreenshot(&buf, 90)); err != nil {
 		return err
 	}
 	return os.WriteFile(dest, buf, 0o600)
 }
 
 func (p *chromePage) Reload(ctx context.Context) error {
-	return chromedp.Run(ctx, chromedp.Reload())
+	return p.run(ctx, chromedp.Reload())
 }
 
 func (p *chromePage) Back(ctx context.Context) error {
-	return chromedp.Run(ctx, chromedp.NavigateBack())
+	return p.run(ctx, chromedp.NavigateBack())
 }
 
 func (p *chromePage) Forward(ctx context.Context) error {
-	return chromedp.Run(ctx, chromedp.NavigateForward())
+	return p.run(ctx, chromedp.NavigateForward())
 }
 
 func (p *chromePage) Scroll(ctx context.Context, dy int) error {
-	return chromedp.Run(ctx, chromedp.Evaluate(fmt.Sprintf("window.scrollBy(0, %d)", dy), nil))
+	return p.run(ctx, chromedp.Evaluate(fmt.Sprintf("window.scrollBy(0, %d)", dy), nil))
 }
 
 func (p *chromePage) Focus(ctx context.Context) error {
-	return chromedp.Run(ctx, chromedp.Evaluate("window.focus()", nil))
+	return p.run(ctx, chromedp.Evaluate("window.focus()", nil))
+}
+
+// withPageDeadline hangs wait's timeout off the chromedp page context. A
+// timeout from context.Background has no CDP target; wrapping it the other
+// way around is how OpenVisible returned "invalid context" and closed the
+// window it had just opened.
+func withPageDeadline(pageCtx, waitCtx context.Context) (context.Context, context.CancelFunc) {
+	timeout := pageWait
+	if waitCtx != nil {
+		if d, ok := waitCtx.Deadline(); ok {
+			timeout = time.Until(d)
+			if timeout < 0 {
+				timeout = 0
+			}
+		}
+	}
+	return context.WithTimeout(pageCtx, timeout)
 }
 
 type point struct {
@@ -145,7 +172,7 @@ func (p *chromePage) resolve(ctx context.Context, t Target) (point, error) {
 	}
 	expr := resolveJS + "(" + string(args[1:len(args)-1]) + ")"
 	var pt *point
-	if err := chromedp.Run(ctx, chromedp.Evaluate(expr, &pt)); err != nil {
+	if err := p.run(ctx, chromedp.Evaluate(expr, &pt)); err != nil {
 		return point{}, err
 	}
 	if pt == nil {

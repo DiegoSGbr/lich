@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an in-app tab, and closing it does not quit lich. `file:` and `javascript:`
   URLs are refused, and form values never enter the transcript.
 
+### Fixed
+
+- **Browser tab no longer flashes shut with "invalid context".** CDP actions
+  now run on the Chromium they just launched, so the window stays open.
+
 ## [0.35.0] - 2026-08-16
 
 ### Added
