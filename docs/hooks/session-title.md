@@ -55,13 +55,21 @@ trailing `U+FFFD`, and only when a multibyte character straddles byte 80. Which
 character that is depends on every multibyte one before it, so the 80th
 character being ASCII does not make a title safe: `é` + 77 ASCII + `é` splits on
 its second `é` while the 80th character is a plain `b`. `cut -c` is the way to
-get there: it counts characters only where the locale says UTF-8, and bytes
-under `LC_ALL=C`. lich passes the environment it was launched with straight into
-the PTY (`internal/terminal/childenv.go` drops AppImage internals and nothing
-else, and the sandbox sets only `HOME`), so a session started from a desktop
-carries that desktop's locale and never sees this. One started where the locale
-is not set does, and the report is the same shape either way — which is what
-makes it a thing to write down rather than to catch.
+get there, and how badly depends on whose `cut` it is: GNU coreutils counts
+characters where the locale says UTF-8 and bytes under `LC_ALL=C`, while
+BusyBox counts bytes either way — measured on coreutils 9.11 and BusyBox 1.38.0
+against the string above. So the locale is an escape hatch on a glibc box and
+none at all on Alpine, and a client that reaches for `cut -c` cannot know which
+it will run under. Cut in something that counts codepoints — `jq`'s `$s[0:80]`
+is already in reach of any hook that builds its body with `jq` — rather than
+reasoning about the environment.
+
+That environment is otherwise passed straight through: lich hands the PTY what
+it was launched with (`internal/terminal/childenv.go` drops AppImage internals
+and nothing else, and the sandbox sets only `HOME`), so a session started from
+a desktop carries that desktop's locale and one started without one carries
+none. The report is the same shape either way — which is what makes it a thing
+to write down rather than to catch.
 
 Send it on `Stop`. Re-sending on every `Stop` is fine — lich only applies it
 while the label is still automatic (see below), so a stable title is idempotent.
