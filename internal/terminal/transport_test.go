@@ -319,6 +319,16 @@ func TestGoroutineDumpAnswersWithTheStacks(t *testing.T) {
 		!strings.Contains(string(body), "TestGoroutineDumpAnswersWithTheStacks") {
 		t.Errorf("dump carries no stacks: %q", string(body))
 	}
+	// The leak profile follows under its heading. A healthy process leaks
+	// nothing, so this pins that the section is written at all — the count it
+	// reports is the finding, and an empty one is the answer here.
+	_, leaks, found := strings.CutLast(string(body), leakHeading)
+	if !found {
+		t.Fatalf("dump carries no leak section: %q", string(body))
+	}
+	if !strings.HasPrefix(leaks, "goroutineleak profile: total ") {
+		t.Errorf("leak section = %q, want a goroutineleak profile", leaks)
+	}
 }
 
 func TestGoroutineDumpRejectsBadToken(t *testing.T) {
@@ -411,6 +421,30 @@ func TestParseSessionStart(t *testing.T) {
 			`{"session_id":"s1","provider_session_id":"uuid-1","provider":"gemini"}`,
 			"", "", "", true},
 		{"bad json", `{`, "", "", "", true},
+		// A provider session id is pasted into a filesystem glob to find that
+		// conversation's transcript, so an id that is not an opaque token is
+		// refused here rather than reaching it: a separator climbs out of the
+		// harness directory, and a metacharacter widens the pattern onto
+		// somebody else's conversation.
+		{"traversing provider id",
+			`{"session_id":"s1","provider_session_id":"../../../../etc/passwd"}`,
+			"", "", "", true},
+		{"windows traversing provider id",
+			`{"session_id":"s1","provider_session_id":"..\\..\\secrets"}`,
+			"", "", "", true},
+		{"wildcard provider id", `{"session_id":"s1","provider_session_id":"*"}`, "", "", "", true},
+		{"character class provider id",
+			`{"session_id":"s1","provider_session_id":"uuid-[ab]"}`,
+			"", "", "", true},
+		{"question mark provider id",
+			`{"session_id":"s1","provider_session_id":"uuid-?"}`,
+			"", "", "", true},
+		{"legacy field is checked too",
+			`{"session_id":"s1","claude_session_id":"../../etc/passwd"}`,
+			"", "", "", true},
+		{"a dot inside an id is not a traversal",
+			`{"session_id":"s1","provider_session_id":"ses.2026-08-17.a1b2"}`,
+			"s1", "ses.2026-08-17.a1b2", "claude", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

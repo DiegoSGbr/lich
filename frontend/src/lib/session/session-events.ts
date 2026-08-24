@@ -7,6 +7,12 @@
 
 import { isSessionKind, projectOfSession, type SessionKind, type SessionState } from "./sessions"
 
+// A subscription to one of the global session events, injected so every store
+// below is testable without standing up the /events socket. Returns its
+// unsubscribe. One type for all of them: the channel is the same, and a store
+// naming its own alias said nothing the event name it subscribes to did not.
+export type SessionEventSource = (handler: (data: unknown) => void) => () => void
+
 // Global event carrying a session's Claude Code processing state (see
 // terminal.statusEventName). Payload: { id, state }. Global rather than
 // per-session so one subscription taken at load covers every session: a card is
@@ -14,8 +20,11 @@ import { isSessionKind, projectOfSession, type SessionKind, type SessionState } 
 // id can only reach a subscriber that exists when it is emitted.
 export const STATUS_EVENT = "session-status"
 
-// Global event the backend emits when it auto-applies a session's ai-title as
-// its label (see terminal.titleEventName). Payload: { id, label }.
+// Global event the backend emits when a session's label changed outside the
+// window: an auto-applied ai-title (see terminal.titleEventName), or a rename
+// from the command line or an agent's tools (spawn.RenamedEventName, which is
+// this same name — the window's answer to both is to relabel that card).
+// Payload: { id, label }.
 export const TITLE_EVENT = "session-title"
 
 // Global event the backend emits when a session likely changed files on disk
@@ -32,20 +41,28 @@ export const CWD_EVENT = "session-cwd"
 // Payload: { id, agent }; an empty agent (every PTY spawn) clears the mark.
 export const AGENT_EVENT = "session-agent"
 
+// Global event the backend emits on every spawn with whether that PTY runs
+// inside the sandbox (see terminal.sandboxEventName). Payload: { id, confined }.
+// The verdict is the spawn's — it resolves the provider's rung, the checkout and
+// any per-session override — and it is persisted with the row too, which is what
+// a page reload hydrates from.
+export const SANDBOX_EVENT = "session-sandbox"
+
 // Global event the backend emits after a turn ends with the session's
 // context-window usage (see terminal.usageEventName). Payload: { id, percent,
 // tokens, window, model, effort } — percent is 0–100 of the window, tokens the
-// raw input-side count, window the model's context size, model its id, effort
-// the reasoning level ("" when the turn records none) — plus an optional
-// costUsd, which is present only when the cost readout is on and every model in
-// the session has a known price. Its absence is the answer, not a zero.
+// provider's active context count, window the model's effective context size,
+// model its id, effort the reasoning level ("" when the turn records none) —
+// plus an optional costUsd, which is present only when the cost readout is on
+// and every model in the session has a known price. Its absence is the answer,
+// not a zero.
 export const USAGE_EVENT = "session-usage"
 
 // Global event the backend emits while one session has a request open with
-// another (see relay.RelayEventName). Payload: { id, peer, direction } — the
-// session whose card changes, the label at the other end, and which way the
-// request runs. An empty direction clears it: the request is over, answered or
-// expired.
+// another (see relay.RelayEventName). Payload: { id, peer, direction, ticket } —
+// the session whose card changes, the label at the other end, which way the
+// request runs, and the ticket the two ends share. An empty direction clears it:
+// the request is over, answered or expired.
 export const RELAY_EVENT = "session-relay"
 
 // Global event the backend emits when a session was opened outside the window —
@@ -93,6 +110,12 @@ export type RelayDirection = (typeof RELAY_DIRECTIONS)[number]
 export interface SessionRelay {
   peer: string
   direction: RelayDirection
+  // The ticket the request runs on. Written down nowhere else a person can
+  // read: the number lives in the message typed at the target's prompt, and an
+  // agent whose context no longer reaches that message has no way back to it.
+  // Empty from a backend older than the field, which the tooltip draws nothing
+  // for rather than an empty line.
+  ticket: string
 }
 
 // toSessionRelay narrows a relay payload to an open request, or null when there
@@ -100,14 +123,22 @@ export interface SessionRelay {
 // backend that this build cannot draw. Both mean "show nothing", which is
 // safer than stranding a mark no event will ever take down.
 export function toSessionRelay(data: unknown): SessionRelay | null {
-  const { peer, direction } = (data ?? {}) as { peer?: unknown; direction?: unknown }
+  const { peer, direction, ticket } = (data ?? {}) as {
+    peer?: unknown
+    direction?: unknown
+    ticket?: unknown
+  }
   if (typeof direction !== "string") {
     return null
   }
   if (!(RELAY_DIRECTIONS as readonly string[]).includes(direction)) {
     return null
   }
-  return { peer: typeof peer === "string" ? peer : "", direction: direction as RelayDirection }
+  return {
+    peer: typeof peer === "string" ? peer : "",
+    direction: direction as RelayDirection,
+    ticket: typeof ticket === "string" ? ticket : "",
+  }
 }
 
 // A session's context-window occupancy as the footer shows it, and what the
@@ -163,8 +194,20 @@ export function isIdEvent(data: unknown): data is { id: string } {
   )
 }
 
+export function isSandboxEvent(data: unknown): data is { id: string; confined: boolean } {
+  return isIdEvent(data) && typeof (data as { confined?: unknown }).confined === "boolean"
+}
+
 export function isStatusEvent(data: unknown): data is { id: string; state: string } {
   return isIdEvent(data) && typeof (data as { state?: unknown }).state === "string"
+}
+
+// isIdleEvent reports the status the contract calls SessionEnd — the provider
+// CLI leaving the PTY. Three stores clear a live mark on it (the agent, the
+// relay request, the inbox count), and each of them was spelling the narrowing
+// out for itself, two through a cast that stepped around isStatusEvent above.
+export function isIdleEvent(data: unknown): data is { id: string; state: "idle" } {
+  return isStatusEvent(data) && data.state === "idle"
 }
 
 // The tool a session's turn is running: the harness's own name for it, and its
@@ -186,6 +229,14 @@ export function statusTool(data: unknown): SessionTool | null {
     return null
   }
   return { name: tool, detail: typeof detail === "string" ? detail : "" }
+}
+
+// statusReason reads what a report says the session is blocked on, or "" when it
+// says nothing. Only a "waiting" carries one — the backend drops it on every
+// other state — so a caller does not have to check the state before asking.
+export function statusReason(data: unknown): string {
+  const { reason } = (data ?? {}) as { reason?: unknown }
+  return typeof reason === "string" ? reason : ""
 }
 
 // A session opened outside the window, as the workspace needs it: the card to

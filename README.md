@@ -15,7 +15,7 @@
   <p><a href="https://omartelo.github.io/lich/"><strong>omartelo.github.io/lich</strong></a></p>
   <p>
     <a href="https://github.com/omartelo/lich/releases"><img alt="Release" src="https://img.shields.io/github/v/release/omartelo/lich?color=4285F4&label=release" /></a>
-    <img alt="Go" src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white" />
+    <img alt="Go" src="https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white" />
     <img alt="Shell" src="https://img.shields.io/badge/shell-Chromium%20--app-4285F4?logo=googlechrome&logoColor=white" />
     <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-333" />
     <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue" /></a>
@@ -30,14 +30,17 @@
 lich lets you:
 
 - **Run the agent you already have.** [Claude Code](https://www.anthropic.com/claude-code),
-  [Codex](https://github.com/openai/codex), [opencode](https://github.com/sst/opencode),
-  oh-my-pi and [Crush](https://github.com/charmbracelet/crush) are all
-  first-class. Point lich at each binary once, then pick the default or choose
+  [Codex](https://github.com/openai/codex), Antigravity,
+  [opencode](https://github.com/sst/opencode), oh-my-pi and
+  [Crush](https://github.com/charmbracelet/crush) are all first-class. Point lich at each binary once, then pick the default or choose
   per session.
 - **Keep a real terminal.** PTY-backed shells, several per project, rendered on
-  the GPU — searchable scrollback that survives a full page reload. The footer
-  follows `cd` and names the branch — and, for a Claude session, the model, the
-  context window in use and, if you ask, what the session has spent.
+  the GPU — searchable scrollback that survives a full page reload. Give one an
+  entrypoint — `lazygit`, `k9s`, `pnpm dev` — and it opens straight into that
+  tool every time. The footer follows `cd` and names the branch — and, for a
+  Claude Code or Codex session, the model, the context window in use and how
+  much of your plan's rolling window is left; for Claude Code, if you ask, what
+  the session has spent.
 - **Put one session to work for another.** Hand a task to another card and its
   own agent writes the answer back, whatever runs in either end: the agent
   reaches the other sessions through tools handed at spawn — MCP for Claude
@@ -48,6 +51,13 @@ lich lets you:
   branch and lich seeds it with your gitignored `.env*` files, hands it a
   dev-server port no other checkout and no process on the machine is using, and
   runs your per-project setup script before the agent starts.
+- **Run a session confined.** An agent can open inside an OS sandbox: a fresh
+  empty home holding only that provider's own state, the rest of the machine
+  read-only, and write access to the checkout it was opened for. Your ssh keys,
+  your cloud credentials and every other repository on the disk are simply not
+  there — the counterweight to letting an agent skip permission prompts. Linux
+  runs bubblewrap and macOS `sandbox-exec`; it is not a boundary against hostile
+  code, and [`docs/ceilings.md`](docs/ceilings.md) says what it does not stop.
 - **Review the diff where you read it.** A CodeMirror dock shows the working
   changes beside a live file tree. Right-click a selection to comment against
   those lines; the batch is pasted into the session as a single prompt, unsent.
@@ -109,9 +119,17 @@ window. Upgrading from the old formula needs `brew uninstall lich` first —
 - **Providers** — set each provider's binary path and the global default in
   Global Settings › Providers. Project Settings › Providers can override that
   choice for one project; **Use default** removes the override, so later changes
-  to the global default flow through automatically. Claude Code's section also
-  holds the footer's context ring and its cost readout — the cost one off by
-  default, since the figure only means something when you are billed per token.
+  to the global default flow through automatically. The Claude Code and Codex
+  sections open with how much of your plan is left and carry the ladder for what
+  the footer says about a session — the context ring, plus the cost readout for
+  Claude Code, that last rung off by default since the figure only means
+  something when you are billed per token.
+- **Sandbox** — a **Sandbox** ladder sits beside the permission one in each
+  provider's section: Off, Ask each time, Worktrees only, Everywhere. It is per
+  provider, a project can set its own, and the New worktree dialog's **Run
+  confined** box overrides the rung for that session alone — every later spawn
+  of it included. Linux needs bubblewrap and macOS `sandbox-exec`; the control
+  is absent on a machine with neither, and on Windows.
 - **Worktrees** — `.lich/setup-worktree.sh` in the project checkout runs in a
   new worktree's terminal ahead of the agent; the New worktree dialog shows it
   and offers a detected suggestion when the repo ships none. A
@@ -119,9 +137,14 @@ window. Upgrading from the old formula needs `brew uninstall lich` first —
 - **Version control** — a project can name the GitHub account `gh` runs as
   (Settings › Version Control), for a repository only one of your accounts can
   see. It governs what lich reads from GitHub, not what git pushes.
-- **Appearance & hotkeys** — themes, fonts and key combos in Settings; the theme
-  you pick persists in the workspace database, the rest of the UI preferences in
-  `localStorage` under `lich.*` keys (inside lich's Chromium profile at
+- **Hotkeys** — `Ctrl`/`Cmd`+`/` lists every shortcut lich binds, and Settings ›
+  Hotkeys is where you rebind one: press the combo you want and it is stored, or
+  reset the row to lich's default. Two actions may hold the same combo, and the
+  rows that do say so. Rebinds live in the page's `localStorage`, so wiping
+  lich's Chromium profile takes them with it.
+- **Appearance** — themes and fonts in Settings; the theme you pick persists in
+  the workspace database, the rest of the UI preferences in `localStorage` under
+  `lich.*` keys (inside lich's Chromium profile at
   `~/.config/lich/chromium-profile`), and imported themes as JSON under
   `<config-dir>/lich/themes`.
 - **Workspace** — projects and sessions persist in SQLite at
@@ -142,12 +165,12 @@ your gh login, never a session token — before you attach it to a bug report, a
 
 ## Build from source
 
-Pure-Go backend (Go 1.26, `CGO_ENABLED=0`) serving an embedded React 18 /
+Pure-Go backend (Go 1.27, `CGO_ENABLED=0`) serving an embedded React 18 /
 TypeScript / Vite frontend over a token-authenticated loopback listener (HTTP RPC
 + WebSockets). Terminals are xterm.js with the WebGL addon; the code and diff
 surfaces are CodeMirror 6. The Chromium shell is a decision record:
 [`docs/chromium-shell.md`](docs/chromium-shell.md). Prerequisites are **Go
-1.26.6+**, **Node + pnpm** and **[Task](https://taskfile.dev)** — no C toolchain,
+1.27.0+**, **Node + pnpm** and **[Task](https://taskfile.dev)** — no C toolchain,
 no system dev libraries.
 
 ```bash
@@ -163,6 +186,10 @@ Package a Linux release locally (needs
 ```bash
 task package   # .deb + .rpm + Arch .pkg.tar.zst in bin/
 ```
+
+Adding another agent CLI to the six lich runs is the one change that lands in a
+dozen files across two repositories:
+[`docs/adding-a-provider.md`](docs/adding-a-provider.md) is the map.
 
 ## Sponsors
 

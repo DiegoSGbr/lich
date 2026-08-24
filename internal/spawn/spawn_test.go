@@ -35,6 +35,10 @@ type fakeSessions struct {
 	deleted []closedRow
 	parked  []closedRow
 	purged  []string
+	// renamed records the label each rename wrote, keyed by session id, and
+	// renameErr is the write refusing.
+	renamed   map[string]string
+	renameErr error
 }
 
 // closedRow is one session the store was asked to take out of the workspace.
@@ -51,6 +55,17 @@ func (f *fakeSessions) DeleteSession(projectID, sessionID, activeID string) erro
 
 func (f *fakeSessions) CloseSession(projectID, sessionID, activeID string) error {
 	f.parked = append(f.parked, closedRow{projectID, sessionID, activeID})
+	return nil
+}
+
+func (f *fakeSessions) RenameSession(sessionID, label string) error {
+	if f.renameErr != nil {
+		return f.renameErr
+	}
+	if f.renamed == nil {
+		f.renamed = map[string]string{}
+	}
+	f.renamed[sessionID] = label
 	return nil
 }
 
@@ -360,9 +375,11 @@ func TestOpenRecordsTheModelOnTheRow(t *testing.T) {
 // The model is written after the card is announced, and this is why: a row with
 // no card is a session the user cannot reach to see what went wrong, so the one
 // write that can fail after the row exists must not be what hides it. The model
-// is an override — losing it costs the provider's default and nothing more.
+// is an override — losing it costs the provider's default and nothing more,
+// which means the terminal still starts: a card with no PTY behind it is
+// invisible to `lich sessions` and unreachable by `lich send`.
 func TestOpenAnnouncesTheCardEvenWhenTheModelCannotBeRecorded(t *testing.T) {
-	svc, sessions, _, _, events := newService(t)
+	svc, sessions, _, term, events := newService(t)
 	sessions.modelErr = errors.New("database is locked")
 
 	if _, err := svc.Open("s1", "", "claude", "", "", "opus"); err == nil {
@@ -373,6 +390,14 @@ func TestOpenAnnouncesTheCardEvenWhenTheModelCannotBeRecorded(t *testing.T) {
 	}
 	if len(events.events) != 1 || events.events[0].name != OpenedEventName {
 		t.Errorf("events = %+v, want the card announced for the row that exists", events.events)
+	}
+	if len(term.spawns) != 1 {
+		t.Fatalf("spawned %d terminals, want the session started on the provider's default",
+			len(term.spawns))
+	}
+	if term.spawns[0].id != sessions.rows[0].sessionID {
+		t.Errorf("spawned %q, want the session that was written (%q)",
+			term.spawns[0].id, sessions.rows[0].sessionID)
 	}
 }
 
@@ -644,13 +669,11 @@ func TestConcurrentOpensDoNotShareALabel(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 2 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if _, err := svc.Open("s1", "", "", "", "", ""); err != nil {
 				t.Errorf("Open: %v", err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

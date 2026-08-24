@@ -1,8 +1,9 @@
-import { useMemo, useState, useSyncExternalStore } from "react"
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react"
+import type { KeyboardEvent } from "react"
 import { useMatch, useNavigate } from "react-router-dom"
 import { DndContext, closestCenter } from "@dnd-kit/core"
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable"
-import { GitPullRequestArrow, PanelLeftClose, Plus } from "lucide-react"
+import { GitPullRequestArrow, PanelLeftClose, Plus, Search } from "lucide-react"
 import { ProjectService } from "@/lib/rpc"
 import { closeSettings, isSettingsOpen, subscribeSettingsCard } from "@/lib/settings-card-store"
 import { closePulls, openPulls } from "@/lib/pulls-card-store"
@@ -12,8 +13,10 @@ import {
   isPullsListOpen,
   subscribePullsListCard,
 } from "@/lib/pulls-list-card-store"
-import { enabledProviders, useProviders } from "@/lib/providers-store"
+import { enabledProviders, projectDefaultProviderKind, useProviders } from "@/lib/providers-store"
+import { Notice } from "@/components/common/Notice"
 import { ResizeHandle } from "@/components/common/ResizeHandle"
+import { SearchInput } from "@/components/common/SearchInput"
 import { SettingsCard } from "./SettingsCard"
 import { SidebarCard } from "@/components/common/SidebarCard"
 import { Button } from "@/components/ui/button"
@@ -24,6 +27,8 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useProjects } from "@/providers/projects"
 import { queueSetup } from "@/lib/terminal/setup-queue"
+import { filterSessions } from "@/lib/session/session-filter"
+import { requestTerminalFocus } from "@/lib/terminal/focus-request"
 import {
   activeSessionId,
   orderGroups,
@@ -33,13 +38,14 @@ import {
   type Session,
   type SidebarGroup,
 } from "@/lib/session/sessions"
-import { useSortableList, verticalAxis } from "@/lib/use-sortable-list"
+import { useSortableList, verticalAxis, withinList } from "@/lib/use-sortable-list"
 import { WorktreeCloseDialogs } from "./WorktreeCloseDialogs"
 import { SessionGroup } from "./SessionGroup"
 import { WorktreeDialog } from "./WorktreeDialog"
 import { useWorktreeClose } from "./useWorktreeClose"
 import { useGitStatus } from "@/lib/git/use-git-status"
 import { usePanelWidth } from "@/lib/use-panel-width"
+import { useWorktreeDialogIntent } from "@/lib/use-sidebar-intent"
 import { SessionLaunchMenuItems } from "./SessionLaunchMenuItems"
 
 // Named here like every other `lich.*` pref rather than spelled at the call
@@ -99,10 +105,33 @@ export function SessionSidebar({ onCollapse }: SessionSidebarProps) {
     edge: "right",
   })
   const [worktreeOpen, setWorktreeOpen] = useState(false)
+  // The filter over this project's cards. Deliberately neither persisted nor a
+  // store: the sidebar's width and collapsed state survive a restart because
+  // they are layout, but a filter is a lens held while working — a lich that
+  // boots showing two of nine sessions is a bug report, not a restored setting.
+  // It drops on a project switch for the reason the dock's file filter does:
+  // the list underneath is a different set of sessions entirely.
+  const [filterOpen, setFilterOpen] = useState(false)
+  const [query, setQuery] = useState("")
+  useEffect(() => {
+    setFilterOpen(false)
+    setQuery("")
+  }, [projectId])
+  // The shortcut's half of the New session menu's Worktree item. Ungated where
+  // the menu item is disabled without a branch: git status may still be loading
+  // on the render this mounts in, and the dialog reports git's own error in
+  // place anyway.
+  useWorktreeDialogIntent(projectId ?? "", () => setWorktreeOpen(true))
   // Resolved ahead of the no-project bail below: hooks cannot sit behind it.
   const list = sessionsOf(sessions, projectId ?? "")
   const worktreeClose = useWorktreeClose(projectId ?? "", path, list)
-  const groups = sidebarGroups(list)
+  const realActiveId = activeSessionId(sessions, projectId ?? "")
+  // The query narrows the flat list before the groups are built from it, so
+  // grouping, the pinned block and the stored order all keep working on the
+  // survivors without knowing a filter exists.
+  const filtering = query.trim() !== ""
+  const { sessions: visible, matched } = filterSessions(list, query, path, realActiveId)
+  const groups = sidebarGroups(visible)
   // The pinned block is out of the drag list entirely: it is always first, and
   // the worktree blocks reorder among themselves. Dragging one moves its whole
   // block of ids inside the flat list the groups are read back from — there is
@@ -115,7 +144,6 @@ export function SessionSidebar({ onCollapse }: SessionSidebarProps) {
       reorderSubset(list, orderGroups(groups, keys), (session) => !session.pinned),
     ),
   )
-  const realActiveId = activeSessionId(sessions, projectId ?? "")
   // Resolved once here, not per group: the list spans every open project, so
   // it is the same for every card in the sidebar. Memoised because the picker
   // downstream keys its own flatten and filter off this array's identity, and
@@ -124,6 +152,31 @@ export function SessionSidebar({ onCollapse }: SessionSidebarProps) {
     () => delegateTargets(projects, sessions, realActiveId),
     [projects, sessions, realActiveId],
   )
+
+  // Closing clears the query: a filter outliving its own field would be hiding
+  // cards with nothing on screen to say why. Same reason the collapsed rail
+  // never filters — unmounting this sidebar drops the query with it.
+  const toggleFilter = () => {
+    setQuery("")
+    setFilterOpen((open) => !open)
+  }
+
+  // Esc with text clears the query and keeps the field; Esc on an empty field
+  // closes it and hands the keyboard back to the terminal. Two presses to leave,
+  // so a long query is never one keystroke from taking focus off the sidebar.
+  const onFilterKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Escape") {
+      return
+    }
+    if (query !== "") {
+      setQuery("")
+      return
+    }
+    setFilterOpen(false)
+    if (realActiveId) {
+      requestTerminalFocus(realActiveId)
+    }
+  }
 
   if (!projectId) {
     return null
@@ -143,12 +196,17 @@ export function SessionSidebar({ onCollapse }: SessionSidebarProps) {
     reorderSessions(projectId, reorderSubset(list, ids, member))
   }
 
-  const createWorktree = async (name: string, base: string, baseIsRemote: boolean) => {
+  const createWorktree = async (
+    name: string,
+    base: string,
+    baseIsRemote: boolean,
+    sandbox: string,
+  ) => {
     const wt = await ProjectService.CreateWorktree(path, projectId, name, base, baseIsRemote)
     if (wt) {
       // A fresh checkout is the one moment the project's setup script runs;
       // reopening an existing worktree never queues it.
-      queueSetup(newWorktreeSession(projectId, wt))
+      queueSetup(newWorktreeSession(projectId, wt, sandbox))
     }
     setWorktreeOpen(false)
   }
@@ -192,6 +250,16 @@ export function SessionSidebar({ onCollapse }: SessionSidebarProps) {
         </DropdownMenu>
         <Button
           variant="ghost"
+          title="Filter sessions"
+          aria-label="Filter sessions"
+          aria-pressed={filterOpen}
+          onClick={toggleFilter}
+          className="size-8 shrink-0 justify-center px-0 text-muted-foreground hover:bg-accent hover:text-foreground aria-pressed:bg-accent aria-pressed:text-foreground"
+        >
+          <Search className="size-4" />
+        </Button>
+        <Button
+          variant="ghost"
           title="Collapse sidebar"
           aria-label="Collapse sidebar"
           onClick={onCollapse}
@@ -200,6 +268,26 @@ export function SessionSidebar({ onCollapse }: SessionSidebarProps) {
           <PanelLeftClose className="size-4" />
         </Button>
       </div>
+      {/* Revealed rather than resident: 36px is half a session card off a list
+          that already scrolls, and unlike the dock's file tree — a panel opened
+          to find something — the sidebar is watched all day and opened for
+          nothing. */}
+      {filterOpen && (
+        <div className="mb-2">
+          <SearchInput
+            // The field exists only once the magnifier is pressed, and that press
+            // is the request for it.
+            autoFocus
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={onFilterKeyDown}
+            placeholder="Filter sessions"
+            aria-label="Filter sessions"
+            spellCheck={false}
+            className="h-7 text-xs"
+          />
+        </div>
+      )}
       {/* The scrollbar takes width, so it rides the aside's own padding (-mr-2)
           and the padding is re-applied inside — a gap between thumb and card
           when it shows, no shift in card width when it doesn't. */}
@@ -235,10 +323,18 @@ export function SessionSidebar({ onCollapse }: SessionSidebarProps) {
             }}
           />
         )}
+        {/* Not `groups.length === 0`: the active card is kept whatever the
+            query says, so the list is rarely empty and the sentence has to
+            explain the one card that is still there. */}
+        {filtering && !matched && (
+          <Notice className="px-2 py-3">
+            No sessions match “{query.trim()}”. The active session stays.
+          </Notice>
+        )}
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
-          modifiers={[verticalAxis]}
+          modifiers={[verticalAxis, withinList]}
           onDragEnd={onDragEnd}
         >
           <SortableContext items={dragKeys} strategy={verticalListSortingStrategy}>
@@ -256,8 +352,16 @@ export function SessionSidebar({ onCollapse }: SessionSidebarProps) {
                   activeId={activeId}
                   // The divider only earns its place once a worktree — or a pin
                   // — splits the list; a lone group keeps the old flat,
-                  // header-less look.
-                  showHeader={groups.length > 1}
+                  // header-less look. A filter is the exception: which checkout
+                  // a surviving card sits in is the thing the query was typed to
+                  // find out, so the title stays even for a lone group.
+                  showHeader={groups.length > 1 || filtering}
+                  // A drop computed from a filtered view hands reorderSubset an
+                  // id set that does not name the group's members, and
+                  // reorderSessions rejects the whole order — so the gesture
+                  // would be a silent no-op. Take it away instead of leaving a
+                  // dead one on screen.
+                  sortable={!filtering}
                   onReorder={(ids) => commitGroupOrder(group, ids)}
                   onClose={worktreeClose.requestClose}
                   pullsActive={onPullsRoute && groupActive}
@@ -288,6 +392,8 @@ export function SessionSidebar({ onCollapse }: SessionSidebarProps) {
         open={worktreeOpen}
         onOpenChange={setWorktreeOpen}
         projectPath={path}
+        projectId={projectId}
+        providerId={projectDefaultProviderKind(projectId)}
         currentBranch={git?.branch ?? ""}
         onCreate={createWorktree}
         onResume={resumeWorktree}

@@ -58,12 +58,12 @@ func ResolveShellEnv(base []string) []string {
 // is line-based, so a value spanning a newline loses its tail; switch the dump
 // to `env -0` and split on NUL if that ever bites.
 func parseShellEnvDump(sentinel, out string) []string {
-	idx := strings.LastIndex(out, sentinel)
-	if idx < 0 {
+	_, dump, ok := strings.CutLast(out, sentinel)
+	if !ok {
 		return nil
 	}
 	var kv []string
-	for line := range strings.SplitSeq(out[idx+len(sentinel):], "\n") {
+	for line := range strings.SplitSeq(dump, "\n") {
 		line = strings.TrimSuffix(line, "\r")
 		if key, _, ok := strings.Cut(line, "="); ok && validEnvKey(key) {
 			kv = append(kv, line)
@@ -112,4 +112,26 @@ func mergeEnv(base, extra []string) []string {
 		merged = append(merged, kv)
 	}
 	return merged
+}
+
+// PinPath copies env's PATH into lich's own process. ResolveShellEnv's merge
+// only reaches what lich hands a child as cmd.Env, and that is not what
+// resolves a bare binary name: exec.LookPath — and exec.Command, which calls it
+// — reads the process PATH, never cmd.Env. So a GUI launch that never sourced
+// the rc files fails to find anything the rc files put on PATH: provider
+// detection reports codex missing, the spawn cannot start it, and the Chromium
+// search misses a browser outside the system prefix. macOS is where this bites
+// hardest — a Finder-launched .app gets launchd's bare PATH, without Homebrew's
+// prefix — but a .desktop launch is the same shape.
+func PinPath(env []string) {
+	for _, kv := range env {
+		v, ok := strings.CutPrefix(kv, "PATH=")
+		if !ok {
+			continue
+		}
+		if err := os.Setenv("PATH", v); err != nil {
+			slog.Warn("terminal: pin resolved PATH", "err", err)
+		}
+		return
+	}
 }

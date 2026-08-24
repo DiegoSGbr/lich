@@ -1,12 +1,15 @@
 // Package store is lich's persistence layer: a single SQLite database holding
-// open projects, their terminal sessions and backend-read settings (currently
-// the provider binary paths, global or per-project). It never stores chat or
-// terminal content — only the metadata needed to restore the workspace after a
-// restart.
+// open projects, their terminal sessions and the settings scoped globally or to
+// one project — provider binaries and defaults, the permission and sandbox
+// rungs, the gh account. It never stores chat or terminal content — only the
+// metadata needed to restore the workspace after a restart.
 //
-// UI-only preferences (font, theme, zoom) intentionally stay in the frontend's
-// localStorage: they need synchronous access on first paint and the backend
-// never reads them.
+// A UI preference stays in the frontend's localStorage by default: it needs
+// synchronous access on first paint and the backend never reads it. It moves
+// here when losing it costs more than reading it a frame late — the theme
+// selections and the "what's new" mark did, because Chromium recreates a
+// damaged profile from scratch and takes every `lich.*` key with it (the why is
+// at the setting keys in frontend/src/providers/settings.tsx).
 package store
 
 import (
@@ -49,12 +52,30 @@ CREATE TABLE IF NOT EXISTS sessions (
     position            INTEGER NOT NULL DEFAULT 0,
     pinned              INTEGER NOT NULL DEFAULT 0,
     model               TEXT NOT NULL DEFAULT '',
+    -- The command a terminal session opens into, empty for a plain shell. Only
+    -- a kind = 'shell' row ever holds one (SetSessionEntrypoint's WHERE clause):
+    -- on a provider row the entrypoint is the provider, and a value parked there
+    -- would be a setting nothing reads.
+    entrypoint          TEXT NOT NULL DEFAULT '',
     -- The session that asked for this one, when it was opened by delegation.
     -- Two columns rather than a foreign key: the id resolves to whatever the
     -- parent is called now, and the label is what it was called when the
     -- delegation happened — which is all that survives the parent being closed.
     origin_session_id   TEXT NOT NULL DEFAULT '',
-    origin_label        TEXT NOT NULL DEFAULT ''
+    origin_label        TEXT NOT NULL DEFAULT '',
+    -- Whether this session runs confined, when the answer belongs to the session
+    -- rather than to the provider's rung: 'on', 'off', or empty to follow the
+    -- setting. Three states rather than a boolean because the row has to be able
+    -- to say "nobody decided this one" — a session opened before the user picked
+    -- a rung, or by a caller with nowhere to ask.
+    sandbox             TEXT NOT NULL DEFAULT '',
+    -- When this session was parked, in unix seconds; 0 while it is open, and on
+    -- a row parked before the column existed. rowid cannot stand in for it: it
+    -- dates the insert, not the close, and a resume reinserts the row under a
+    -- fresh id — so the history the palette lists would reorder itself every
+    -- time a session came back. Seconds, not a counter like projects.closed_seq:
+    -- that list only had to order, and this one has to say when.
+    closed_at           INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
 
@@ -86,6 +107,33 @@ const busyTimeoutMS = 5000
 // Service owns the SQLite connection and exposes persistence to the frontend.
 type Service struct {
 	db *sql.DB
+	// sessionGone, when set, is told the id of every session whose row is
+	// deleted for good. See SetSessionGone.
+	sessionGone func(sessionID string)
+}
+
+// SetSessionGone registers what to run when a session's row is deleted for
+// good — DeleteSession, PurgeWorktreeSessions and ForgetSession, never
+// CloseSession, which parks the row for a later resume and leaves everything
+// hanging off it alone.
+//
+// It is startup wiring, called before anything serves: lich hangs the cleanup
+// of that session's dropped-file copies on it (internal/drop), which is what
+// makes a copy outlive its drop and not its session.
+func (s *Service) SetSessionGone(fn func(sessionID string)) {
+	s.sessionGone = fn
+}
+
+// sessionIsGone reports one deleted session to whatever SetSessionGone wired,
+// and nothing at all when the store runs without it — every test, and a lich
+// whose wiring has not run yet.
+func (s *Service) sessionIsGone(sessionIDs ...string) {
+	if s.sessionGone == nil {
+		return
+	}
+	for _, id := range sessionIDs {
+		s.sessionGone(id)
+	}
 }
 
 // Session is a persisted terminal session (metadata only). Kind selects what
@@ -95,7 +143,7 @@ type Service struct {
 // provider CLI assigns the conversation running in the PTY, reported by that
 // provider's session-start hook; empty until a hook fires (or for shell
 // sessions), it is the key for features that need to reach a session's
-// transcript or resume it. Only Claude Code reports one today. Pinned keeps a
+// transcript or resume it. Pinned keeps a
 // session at the head of its project's list and withholds its close affordances
 // until it is unpinned. OriginSessionID and OriginLabel record the session that
 // asked for this one, empty for a session nobody delegated: the id names the
@@ -107,9 +155,18 @@ type Session struct {
 	Kind              string `json:"kind"`
 	Path              string `json:"path"`
 	ProviderSessionID string `json:"providerSessionId"`
-	Pinned            bool   `json:"pinned"`
-	OriginSessionID   string `json:"originSessionId"`
-	OriginLabel       string `json:"originLabel"`
+	// Entrypoint is the command a terminal session opens into; always empty for
+	// a provider session. The window reads it to prefill its dialog and to say
+	// on the card what a renamed terminal actually runs.
+	Entrypoint string `json:"entrypoint"`
+	// Sandbox is whether this session runs confined: "on", "off", or empty for a
+	// row nothing has spawned yet. The spawn writes its own verdict here, so the
+	// window can mark a confined card without re-deriving a decision that took
+	// the provider's rung, the checkout and a per-session override to reach.
+	Sandbox         string `json:"sandbox"`
+	Pinned          bool   `json:"pinned"`
+	OriginSessionID string `json:"originSessionId"`
+	OriginLabel     string `json:"originLabel"`
 }
 
 // Project is a persisted project together with its restorable session state.
@@ -174,8 +231,11 @@ func open(path string) (*Service, error) {
 		`ALTER TABLE sessions ADD COLUMN position INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sessions ADD COLUMN entrypoint TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE sessions ADD COLUMN origin_session_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE sessions ADD COLUMN origin_label TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sessions ADD COLUMN sandbox TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sessions ADD COLUMN closed_at INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE projects ADD COLUMN position INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE projects ADD COLUMN closed_seq INTEGER NOT NULL DEFAULT 0`,
 	}
@@ -331,6 +391,80 @@ func (s *Service) RecentProjects() ([]Recent, error) {
 	return recents, nil
 }
 
+// ClosedSession is one parked session offered for resuming — what identifies it
+// in a list somebody is browsing rather than one they are already looking at.
+// The project rides along because history spans every project at once, closed
+// ones included, and the project name is what tells two sessions of the same
+// name apart.
+//
+// No branch: it lives in git, and a worktree's directory stops agreeing with it
+// the moment an agent branches inside the checkout, which is the ordinary way
+// to work in one (frontend/src/lib/git/checkout-label.ts). The window reads it
+// off the checkout instead, and a row whose checkout is gone has none to show —
+// which is the same row that cannot be resumed anyway.
+type ClosedSession struct {
+	ID          string `json:"id"`
+	ProjectID   string `json:"projectId"`
+	ProjectName string `json:"projectName"`
+	// The project's own directory, so resuming a session of a closed project can
+	// reopen that project first without a second lookup — and can ask where it
+	// went when the directory has moved.
+	ProjectPath string `json:"projectPath"`
+	Label       string `json:"label"`
+	Kind        string `json:"kind"`
+	Path        string `json:"path"`
+	// Unix seconds, 0 for a row parked before closed_at existed — which sorts
+	// last and is drawn as no date rather than as 1970.
+	ClosedAt int64 `json:"closedAt"`
+}
+
+// closedSessionLimit caps the history handed to the window. The palette filters
+// what it was given rather than asking again per keystroke (the same bargain
+// RecentProjects makes), so this number is how far back a search can reach:
+// deep enough to cover the sessions a workspace churns through in months, and
+// still a bound — the alternative is reading every session ever closed to draw
+// a list nobody scrolls to the end of.
+const closedSessionLimit = 100
+
+// ClosedSessions returns the parked sessions (is_open = 0), the last one closed
+// first, up to closedSessionLimit of them. Sessions of closed projects answer
+// too: a project hidden from the tab strip still owns the work done in it, and
+// resuming one of its sessions is what reopens it.
+//
+// rowid is the tiebreak, not the order, for RecentProjects' reason twice over:
+// it dates the insert, and a resumed session is reinserted — so rows parked
+// before closed_at existed all carry 0 and fall back to it together.
+func (s *Service) ClosedSessions() ([]ClosedSession, error) {
+	rows, err := s.db.Query(
+		`SELECT s.id, s.project_id, p.name, p.path, s.label, s.kind, s.path, s.closed_at
+		   FROM sessions s JOIN projects p ON p.id = s.project_id
+		  WHERE s.is_open = 0
+		  ORDER BY s.closed_at DESC, s.rowid DESC
+		  LIMIT ?`,
+		closedSessionLimit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query closed sessions: %w", err)
+	}
+	defer rows.Close()
+
+	closed := []ClosedSession{}
+	for rows.Next() {
+		var c ClosedSession
+		if err := rows.Scan(
+			&c.ID, &c.ProjectID, &c.ProjectName, &c.ProjectPath,
+			&c.Label, &c.Kind, &c.Path, &c.ClosedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan closed session: %w", err)
+		}
+		closed = append(closed, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate closed sessions: %w", err)
+	}
+	return closed, nil
+}
+
 // ProjectPath returns the directory of the project with this id, or "" when
 // there is no such project. It is the main checkout — a session running in a
 // worktree has its own directory and still belongs to this one, which is what
@@ -366,7 +500,8 @@ func (s *Service) ProjectAt(path string) (string, string) {
 // the frontend would have no order left to put an unpinned card back into.
 func (s *Service) sessionsOf(projectID string) ([]Session, error) {
 	rows, err := s.db.Query(
-		`SELECT id, label, kind, path, provider_session_id, pinned, origin_session_id, origin_label
+		`SELECT id, label, kind, path, provider_session_id, entrypoint, sandbox, pinned,
+		        origin_session_id, origin_label
 		   FROM sessions WHERE project_id = ? AND is_open = 1 ORDER BY position, rowid`,
 		projectID,
 	)
@@ -379,8 +514,8 @@ func (s *Service) sessionsOf(projectID string) ([]Session, error) {
 	for rows.Next() {
 		var sess Session
 		if err := rows.Scan(
-			&sess.ID, &sess.Label, &sess.Kind, &sess.Path, &sess.ProviderSessionID, &sess.Pinned,
-			&sess.OriginSessionID, &sess.OriginLabel,
+			&sess.ID, &sess.Label, &sess.Kind, &sess.Path, &sess.ProviderSessionID,
+			&sess.Entrypoint, &sess.Sandbox, &sess.Pinned, &sess.OriginSessionID, &sess.OriginLabel,
 		); err != nil {
 			return nil, fmt.Errorf("scan session: %w", err)
 		}

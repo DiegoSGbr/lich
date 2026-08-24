@@ -18,12 +18,14 @@ lives in the code, `docs/` and `CHANGELOG.md` — never restate any of it here.
   live in the companion repo `omartelo/lich-plugin`, so an endpoint or payload change breaks a repo this one
   cannot see — move the contract first, then both sides.
 - **Every task**: `task --list`. `task dev` gets its own DB, port and Chromium profile; it never touches an
-  installed lich's workspace.
+  installed lich's workspace. That isolation is one `pkill` wide: a pattern like `chromium-profile` matches the
+  running lich's own window, and killing it exits that backend and every session under it. Kill a rig's browser
+  by the PID it was launched with.
 - **User-facing feature history**: `CHANGELOG.md`.
 
 ## Rules of the codebase
 
-- Go 1.26, pure Go: `CGO_ENABLED=0` and a fully static binary are a constraint, not a default.
+- Go 1.27, pure Go: `CGO_ENABLED=0` and a fully static binary are a constraint, not a default.
 - OS-specific code is selected by build tags behind small seams, never by runtime checks — the PTY is the model
   (`internal/terminal`).
 - Service shapes are hand-owned in `frontend/src/lib/api-types.ts`: touch a Go struct's JSON tags and that mirror
@@ -61,10 +63,11 @@ Non-negotiable rules. A violation means the work is not done.
    nesting deeper than 4 levels; comments only for the *why*; errors handled explicitly, never swallowed; no magic
    values; no secrets in source.
 5. **A session feature is traced across every provider.** `internal/providers.Registry` is the checklist —
-   Claude Code, Codex, opencode, oh-my-pi, Crush. Anything a session touches (spawn flags, hooks, resume,
-   transcripts, plugin install, MCP) is designed against all five, not just the provider at hand. Equal behaviour
-   is not always possible — but the gap must be deliberate and written down in the same PR: a `docs/ceilings.md`
-   bullet naming which providers are out and why. A feature that silently works on a single provider is not done.
+   Claude Code, Codex, Antigravity, opencode, oh-my-pi, Crush. Anything a session touches (spawn flags, hooks,
+   resume, transcripts, plugin install, MCP) is designed against all six, and `docs/adding-a-provider.md` is the
+   map of every file one lands in. Equal behaviour is not always possible — but the gap must be deliberate and
+   written down in the same PR: a `docs/ceilings.md` bullet naming which providers are out and why. A feature
+   that silently works on a single provider is not done.
 
 ## Releases
 
@@ -72,5 +75,9 @@ The version comes from the git tag (`git describe` in the Taskfile, env `VERSION
 `build/linux/nfpm/nfpm.yaml` — never hand-edit it there. Before tagging:
 
 - [ ] Local gate green, backend with `-race`.
-- [ ] Move `CHANGELOG.md`'s `[Unreleased]` entries under a new `vX.Y.Z` heading and refresh the compare links.
+- [ ] Cut the `CHANGELOG.md` section the Keep a Changelog way: `[Unreleased]` stays at the top, emptied, and its
+      entries move under a new `## [X.Y.Z] - YYYY-MM-DD` heading — bracketed, ISO date, no `v`: the release job
+      greps `^## \[X.Y.Z\]` and ships empty notes if it misses. Keep the sections in their canonical order
+      (Added, Changed, Deprecated, Removed, Fixed, Security), and refresh the compare links, `[Unreleased]`
+      included.
 - [ ] Push the `vX.Y.Z` tag — `.github/workflows/release.yml` does the rest, and reads the notes from that section.

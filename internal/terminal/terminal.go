@@ -38,9 +38,11 @@ const (
 	// carrying the status it exited with (see exitEvent).
 	exitEventPrefix = "terminal:exit:"
 	// statusEventName carries a session's processing state ({id, state, tool,
-	// detail} — "busy"/"done"/"waiting"/"idle", plus the tool a pre-tool report
-	// names), reported by the lich hooks running inside the PTY (see
-	// transport.hook and docs/hooks/session-state.md). The frontend keeps it in
+	// detail, reason} — "busy"/"done"/"waiting"/"idle", plus the tool a pre-tool
+	// report names and what a waiting one is blocked on), reported by the lich
+	// hooks running inside the PTY (see transport.hook and
+	// docs/hooks/session-state.md). "interrupted" is the one value lich raises
+	// itself, for a turn the user stopped at the PTY. The frontend keeps it in
 	// stores keyed by id (session-status-store.ts, session-tool-store.ts) rather
 	// than in the card, which is only mounted while its project is active.
 	statusEventName = "session-status"
@@ -55,17 +57,26 @@ const (
 	// CLI runs in it. An empty agent clears the mark; every PTY spawn emits that
 	// clear so a respawned session never wears a dead agent's icon.
 	agentEventName = "session-agent"
+	// sandboxEventName carries whether a session's PTY runs confined ({id,
+	// confined}), emitted by every spawn. The card marks a confined session, and
+	// the answer is the spawn's own — it takes the provider's rung, the checkout
+	// and a per-session override to reach, so the window is told rather than
+	// asked to work it out again. Persisted with the row too (store.Session's
+	// Sandbox), which is what a page reload hydrates from.
+	sandboxEventName = "session-sandbox"
 )
 
 // statusEvent is the payload of statusEventName: the session whose processing
 // state changed, the new state, and — on a pre-tool report alone — the tool it
-// is about to run and what that tool acts on. Both are the provider's own
-// words, never translated here (docs/hooks/session-state.md tables them).
+// is about to run and what that tool acts on, or — on a waiting one alone — what
+// it is blocked on. All three are the provider's own words, never translated
+// here (docs/hooks/session-state.md tables them).
 type statusEvent struct {
 	ID     string `json:"id"`
 	State  string `json:"state"`
 	Tool   string `json:"tool,omitempty"`
 	Detail string `json:"detail,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // titleEvent is the payload of titleEventName: the session whose label changed
@@ -106,6 +117,13 @@ type agentEvent struct {
 	Agent string `json:"agent"`
 }
 
+// sandboxEvent is the payload of sandboxEventName: the session and whether its
+// PTY is confined.
+type sandboxEvent struct {
+	ID       string `json:"id"`
+	Confined bool   `json:"confined"`
+}
+
 // session is a single running PTY-backed shell. done closes when the session
 // is reaped (by stream or Close — whichever removes it from the map), stopping
 // its cwd watcher. replay holds a capped tail of the PTY's output so a
@@ -130,18 +148,33 @@ type session struct {
 	// is waiting on input. Both guarded by the service's mu.
 	lastOut time.Time
 	ready   bool
+	// draftAt is when the user last typed something at this prompt without
+	// sending it, and zero when there is nothing of theirs on the line.
+	// escPending is the beginning of an escape sequence a PTY write split, held
+	// until the rest of it arrives. pasting is whether the bytes arriving now
+	// are inside a bracketed paste, which is what keeps a pasted Ctrl+C or
+	// Escape from reading as the user interrupting the turn. All three guarded
+	// by the service's mu. See draft.go.
+	draftAt    time.Time
+	escPending []byte
+	pasting    bool
+	// confined records whether this PTY was spawned inside the sandbox, so Start
+	// can report it once the spawn is out of the lock.
+	confined bool
 }
 
 // Store is the persistence the terminal service depends on: the binary to spawn
-// for a provider in a project (empty return spawns the provider's default) and
-// whether that spawn drops the provider's permission prompts,
-// that project's own directory, the dev-server port reserved for each checkout,
-// where to record the provider session id a PTY reports through its
-// session-start hook, and the running cost
-// accounting behind the footer readout (CostReadout gates it — off, none of the
-// rest is called). The store implements them all.
+// for a provider in a project (empty return spawns the provider's default),
+// whether a given session runs one of those rather than the provider's own,
+// whether that spawn drops the provider's permission prompts and whether it runs
+// confined, that project's own directory, the dev-server port reserved for each
+// checkout, where to record the provider session id a PTY reports through its
+// session-start hook, and the running cost accounting behind the footer readout
+// (CostReadout gates it — off, none of the rest is called). The store implements
+// them all.
 type Store interface {
 	ProviderBin(providerID, projectID string) string
+	SessionCustomBin(sessionID string) bool
 	SkipPermissions(providerID, projectID, cwd string) bool
 	ProjectPath(projectID string) string
 	WorktreePorts() map[string]int
@@ -149,6 +182,13 @@ type Store interface {
 	SetProviderSession(sessionID, providerSessionID string) error
 	ProviderSession(sessionID string) (string, error)
 	SessionModel(sessionID string) string
+	SessionEntrypoint(sessionID string) string
+	SessionSandbox(sessionID string) string
+	SetSessionSandbox(sessionID, sandbox string) error
+	SandboxDefault(providerID, projectID, cwd string) bool
+	SandboxSSHAgent(projectID string) bool
+	SandboxGHToken(projectID string) bool
+	GHAccountForPath(path string) string
 	SetSessionTitle(sessionID, title string) (bool, error)
 	CostReadout() bool
 	CostLedger(sessionID, transcriptID string) (int64, string, float64, error)
@@ -197,6 +237,20 @@ type Service struct {
 	// size a session spawned with none of its own is started at. See
 	// sizeFor. Guarded by mu.
 	lastCols, lastRows int
+	// dropDir is where copies of dropped files live (internal/drop). Wired at
+	// startup; empty leaves a confined session without the copies dropped into
+	// it, never without a spawn. See SetDropDir.
+	dropDir string
+}
+
+// SetDropDir names the directory holding the copies of dropped files
+// (internal/drop). A confined session binds its own subdirectory of it at spawn
+// — the copy is written by lich, outside the sandbox, so without the bind the
+// path pasted at the prompt names a file the session cannot open.
+//
+// Startup wiring, called before anything spawns.
+func (s *Service) SetDropDir(dir string) {
+	s.dropDir = dir
 }
 
 // readySettle is how long a session's PTY must stay quiet before lich hands it
@@ -257,6 +311,9 @@ func New(store Store, env []string, hub *events.Hub) *Service {
 	}
 	ws, err := newTransport(
 		func(id string, data []byte) {
+			if s.noteInput(id, data) {
+				s.noteInterrupt(id)
+			}
 			if err := s.writeBytes(id, data); err != nil {
 				slog.Warn("terminal: input write failed", "session", id, "err", err)
 			}
@@ -271,6 +328,7 @@ func New(store Store, env []string, hub *events.Hub) *Service {
 					State:  req.State,
 					Tool:   req.Tool,
 					Detail: req.Detail,
+					Reason: req.Reason,
 				})
 			}
 			// The relay reads the stream raw: it keeps its own turn accounting,
@@ -312,7 +370,19 @@ func New(store Store, env []string, hub *events.Hub) *Service {
 		},
 	)
 	s.ws, s.wsErr = ws, err
+	if ws != nil {
+		// The transport is built before the service that owns the bridge, so the
+		// path output takes when the socket cannot carry it is wired here.
+		ws.setFallback(s.emitData)
+	}
 	return s
+}
+
+// emitData puts one session's output on the /events bridge — where terminal
+// output goes whenever the /ws transport cannot carry it, whether because no
+// client is connected or because the socket refused the frame.
+func (s *Service) emitData(id string, data []byte) {
+	s.hub.Emit(dataEventPrefix+id, base64.StdEncoding.EncodeToString(data))
 }
 
 // Mount exposes an extra handler (the RPC dispatcher, the events push socket)
@@ -332,6 +402,33 @@ func (s *Service) MountPublic(pattern string, handler http.Handler) {
 		return
 	}
 	s.ws.mountPublic(pattern, handler)
+}
+
+// noteInterrupt publishes the end of a turn the user stopped at the PTY: a lone
+// Ctrl+C or Escape while lich has a turn open for that session (see noteInput
+// and turnLog.interrupt). It is the fallback for the three providers that raise
+// no event of their own when a turn is interrupted — Claude Code, Codex and
+// oh-my-pi all skip the hook that would end it, so without this the card spins
+// until some later turn finishes. It publishes "interrupted" rather than "done"
+// because stopping a turn is not finishing one, and it never opens a turn, so
+// nothing is invented for a session lich never heard start. Whatever the
+// provider reports next overwrites it: an event from inside the session always
+// outranks a guess made from its keystrokes.
+func (s *Service) noteInterrupt(id string) {
+	if !s.turns.interrupt(id) {
+		return
+	}
+	s.hub.Emit(statusEventName, statusEvent{ID: id, State: statusInterrupted})
+	// The relay keeps its own turn accounting off the same stream, and a turn
+	// that ended has to read as ended there too — a queued delivery waits on the
+	// target's prompt being free.
+	if watch := s.stateWatcher(); watch != nil {
+		watch(id, statusInterrupted)
+	}
+	// An interrupted turn spent tokens like any other, and it may be the last
+	// one for a while: refresh the context readout off the transcript, off the
+	// caller's thread the way the hook path does.
+	go s.emitUsage(id)
 }
 
 // SetSessionState wires fn to every session-state report the hooks deliver.
@@ -372,7 +469,7 @@ func (s *Service) SetRestart(fn func() error) {
 
 // sessionEnv is the environment for one PTY: the shared base, the project this
 // session belongs to, the dev-server port its checkout owns, and the loopback
-// coordinates a Claude Code hook needs to report this session's status back to
+// coordinates a provider's hook needs to report this session's status back to
 // lich. All of it is per-session, so this returns a fresh slice rather than
 // aliasing (and appending to) the shared s.env.
 //
@@ -427,8 +524,8 @@ const readBufSize = 32 * 1024
 // shell when kind is "shell", otherwise the provider binary for that kind
 // resolved from the project's settings (falling back to the provider's default
 // on $PATH) — attached to a new PTY sized to cols x rows and rooted at cwd, then
-// streams its output to the frontend. An empty cwd defaults to the user's home directory. Starting a
-// session that is already running is a no-op.
+// streams its output to the frontend. An empty cwd defaults to the user's home
+// directory. Starting a session that is already running is a no-op.
 //
 // A non-empty resume is a provider conversation id to reopen, spelled for the
 // session's kind by resumeArgs, which the frontend passes after the user
@@ -443,10 +540,11 @@ const readBufSize = 32 * 1024
 // the user sees. Only Claude Code has a roster; every other kind ignores it.
 //
 // setup is passed once, by the flow that just created this session's worktree:
-// it runs the project's worktree setup script (Settings › Project) in the PTY
-// before the provider, so a fresh checkout installs its dependencies in view.
-// A respawn or resume never sets it. The script runs in the session's own
-// environment, so it reads the same LICH_WORKTREE_PORT the provider will.
+// it runs the project's worktree setup script (.lich/setup-worktree.sh, see
+// project.SetupScript) in the PTY before the provider, so a fresh checkout
+// installs its dependencies in view. A respawn or resume never sets it. The
+// script runs in the session's own environment, so it reads the same
+// LICH_WORKTREE_PORT the provider will.
 func (s *Service) Start(id, projectID, cwd, kind, resume, name string, setup bool, cols, rows int) error {
 	sess, cwd, err := s.spawnSession(id, projectID, cwd, kind, resume, name, setup, cols, rows)
 	if err != nil || sess == nil {
@@ -457,6 +555,7 @@ func (s *Service) Start(id, projectID, cwd, kind, resume, name string, setup boo
 	// overwrites whatever the previous PTY left in the frontend's stores.
 	s.hub.Emit(cwdEventName, cwdEvent{ID: id, Cwd: cwd})
 	s.hub.Emit(agentEventName, agentEvent{ID: id, Agent: ""})
+	s.hub.Emit(sandboxEventName, sandboxEvent{ID: id, Confined: sess.confined})
 	go watchCwd(id, sess.pty.Pid(), cwd, sess.done, s.hub)
 	return nil
 }
@@ -504,10 +603,18 @@ func (s *Service) spawnSession(id, projectID, cwd, kind, resume, name string, se
 		cols: cols,
 		rows: rows,
 	}
+	// Before wrapSetup, so a fresh worktree terminal carrying both runs the
+	// project's setup script first, then the entrypoint, then the shell.
+	spec = wrapEntrypoint(spec, kind, s.store.SessionEntrypoint(id), runtime.GOOS)
 	settingUp := false
 	if setup {
 		spec, settingUp = wrapSetup(spec, project.SetupScript(s.store.ProjectPath(projectID)), runtime.GOOS)
 	}
+	// Outermost, so the setup script and the entrypoint are confined with the
+	// session they run in front of.
+	inSandbox := confined(s.store, id, kind, projectID, cwd)
+	creds := s.sandboxCredentials(projectID, cwd, inSandbox)
+	spec = wrapSandbox(spec, kind, userHome(), sessionDropDir(s.dropDir, id, inSandbox), inSandbox, creds)
 	p, err := startPTY(spec)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to start pty for %q: %w", id, err)
@@ -517,8 +624,7 @@ func (s *Service) spawnSession(id, projectID, cwd, kind, resume, name string, se
 		if s.ws != nil && s.ws.send(id, data) {
 			return
 		}
-		encoded := base64.StdEncoding.EncodeToString(data)
-		s.hub.Emit(dataEventPrefix+id, encoded)
+		s.emitData(id, data)
 	}, outboxDepth)
 	out := newCoalescer(box.push, visibleFlushInterval, hiddenFlushInterval)
 	sess := &session{
@@ -531,7 +637,8 @@ func (s *Service) spawnSession(id, projectID, cwd, kind, resume, name string, se
 		// Timed from the spawn, so a program that never writes anything still
 		// becomes ready once: quiet is the signal, and silence from the start
 		// is quiet too.
-		lastOut: time.Now(),
+		lastOut:  time.Now(),
+		confined: inSandbox,
 	}
 	s.sessions[id] = sess
 	go s.stream(id, sess)
@@ -565,9 +672,14 @@ func (s *Service) stream(id string, sess *session) {
 	_ = p.Close()
 	// Flush any batched output and wait for it to be delivered before the exit
 	// event, so the frontend always sees the final bytes ahead of the exit
-	// banner.
+	// banner. Delivery now ends at the transport's writer rather than at the
+	// socket, so the wait runs one step further: the outbox for this session's
+	// own frames, then the connection's queue for the wire.
 	sess.out.Close()
 	sess.outbox.close()
+	if s.ws != nil {
+		s.ws.flush()
+	}
 
 	s.mu.Lock()
 	reaped := false
@@ -723,8 +835,9 @@ func (sess *session) setupEnded(chunk []byte) bool {
 }
 
 // Ready reports whether a session can be given work — whether what reads this
-// PTY is the provider rather than the project's setup script. False for a
-// session that is not running at all.
+// PTY is the provider rather than the project's setup script, and whether the
+// prompt is free rather than half-filled by the person sitting at it. False for
+// a session that is not running at all.
 //
 // Live is not this question. A session whose checkout is still installing its
 // dependencies has a PTY, appears in the roster, and accepts writes that go
@@ -736,6 +849,12 @@ func (s *Service) Ready(id string) bool {
 	defer s.mu.Unlock()
 	sess, ok := s.sessions[id]
 	if !ok || sess.settingUp {
+		return false
+	}
+	// Unlike the rest of this, being ready is not a state a session reaches and
+	// keeps: the user starts typing and the prompt is theirs again until they
+	// send it (see draft.go).
+	if sess.drafting(time.Now()) {
 		return false
 	}
 	if sess.ready {

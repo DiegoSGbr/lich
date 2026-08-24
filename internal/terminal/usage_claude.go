@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"slices"
 	"strings"
 )
 
@@ -30,8 +31,10 @@ func windowForModel(model string, tokens int) int {
 // assistant message. One JSONL line (a single message, tool results and all) can
 // run to tens of KB, so this holds several — the read stays O(tail), not
 // O(file), yet still reaches the last assistant line past a couple of large user
-// turns. ponytail: a turn larger than this whole window makes the read miss and
-// the readout keep its prior number — widen it then, nothing breaks.
+// turns.
+//
+// Ceiling: a turn larger than this whole window makes the read miss and the
+// readout keep its prior number — widen it then, nothing breaks.
 const usageTailBytes = 512 * 1024
 
 // contextUsage is one provider conversation's context-window occupancy.
@@ -87,24 +90,37 @@ func readTail(path string, max int64) ([]byte, bool) {
 // parseContextUsage pulls context-window occupancy from a transcript tail: the
 // newest main-thread assistant line's token usage. The context side is input +
 // cache-read + cache-creation (output is the reply, not context loaded); percent
-// is that against the line's model window (see windowForModel), capped at 100. false when the tail holds
-// no such line — a fresh conversation, or a tail of only user turns. Sidechain
+// is that against the line's model window (see windowForModel), capped at 100.
+// false when the tail holds no such line — a fresh conversation, or a tail of
+// only user turns. Sidechain
 // lines (a Task sub-agent's own conversation, written into the same transcript)
 // are skipped: their context is the sub-agent's, not the window the user sees. A
 // leading partial line (the tail was cut mid-line) fails to parse and is skipped
 // like any malformed line.
+//
+// A compaction writes no assistant line, only a compact_boundary carrying the
+// post-compaction count. Meeting one first means it is newer than the last
+// assistant line, whose count is now stale, so the tokens come from the boundary
+// — while the scan keeps going for the model, which the boundary does not
+// record and only an assistant line can name. Both triggers, "manual" and
+// "auto", write the same shape.
 func parseContextUsage(tail []byte) (contextUsage, bool) {
 	lines := bytes.Split(tail, []byte("\n"))
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := bytes.TrimSpace(lines[i])
+	compacted := -1
+	for _, line := range slices.Backward(lines) {
+		line := bytes.TrimSpace(line)
 		if len(line) == 0 {
 			continue
 		}
 		var entry struct {
-			Type        string `json:"type"`
-			IsSidechain bool   `json:"isSidechain"`
-			Effort      string `json:"effort"`
-			Message     struct {
+			Type            string `json:"type"`
+			Subtype         string `json:"subtype"`
+			IsSidechain     bool   `json:"isSidechain"`
+			Effort          string `json:"effort"`
+			CompactMetadata *struct {
+				PostTokens int `json:"postTokens"`
+			} `json:"compactMetadata"`
+			Message struct {
 				Model string `json:"model"`
 				Usage *struct {
 					Input       int `json:"input_tokens"`
@@ -116,20 +132,38 @@ func parseContextUsage(tail []byte) (contextUsage, bool) {
 		if err := json.Unmarshal(line, &entry); err != nil {
 			continue
 		}
+		if compacted < 0 && entry.Type == "system" && entry.Subtype == "compact_boundary" &&
+			!entry.IsSidechain && entry.CompactMetadata != nil {
+			compacted = entry.CompactMetadata.PostTokens
+			continue
+		}
 		if entry.Type != "assistant" || entry.IsSidechain || entry.Message.Usage == nil {
 			continue
 		}
 		u := entry.Message.Usage
 		tokens := u.Input + u.CacheRead + u.CacheCreate
-		window := windowForModel(entry.Message.Model, tokens)
-		percent := min(tokens*100/window, 100)
-		return contextUsage{
-			tokens:  tokens,
-			percent: percent,
-			window:  window,
-			model:   entry.Message.Model,
-			effort:  entry.Effort,
-		}, true
+		if compacted >= 0 {
+			tokens = compacted
+		}
+		return usageFor(tokens, entry.Message.Model, entry.Effort), true
+	}
+	if compacted >= 0 {
+		// A compaction with no assistant line left in the tail to name the
+		// model: the default window is the same guess windowForModel makes for
+		// a model it has never heard of.
+		return usageFor(compacted, "", ""), true
 	}
 	return contextUsage{}, false
+}
+
+// usageFor resolves the window and percent a token count reads as on a model.
+func usageFor(tokens int, model, effort string) contextUsage {
+	window := windowForModel(model, tokens)
+	return contextUsage{
+		tokens:  tokens,
+		percent: min(tokens*100/window, 100),
+		window:  window,
+		model:   model,
+		effort:  effort,
+	}
 }

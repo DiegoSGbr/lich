@@ -78,6 +78,26 @@ func TestGHMessage(t *testing.T) {
 			errTest, nil,
 			"A ruleset on the base branch refused this merge — GitHub named the rules it broke; lich's log has them.",
 		},
+		// `gh pr checkout` shells out to git, so the failure a person meets is
+		// git's with a gh line wrapped round it. It has to read as the cause,
+		// not as "look in the log".
+		{
+			"an ssh key git refused under gh",
+			"ssh_askpass: exec(/usr/lib/ssh/ssh-askpass): No such file or directory\r\n" +
+				"git@github.com: Permission denied (publickey).\n" +
+				"fatal: Could not read from remote repository.\nfailed to run git: exit status 128",
+			errTest, nil,
+			"That remote's ssh key needs a passphrase, and lich has no terminal to ask for it. " +
+				"Load the key with `ssh-add` in a terminal, then try again.",
+		},
+		// gh's own wordings must never reach git's table: git reads "already
+		// exists" as a branch name collision, which this is not.
+		{
+			"a pull request that already exists stays gh's failure",
+			"a pull request for branch \"fix/poll\" into branch \"main\" already exists",
+			errTest, nil,
+			"gh could not complete the request. lich's log has what it reported.",
+		},
 		{
 			"gh missing, reported by exec",
 			"", &exec.Error{Name: "gh", Err: exec.ErrNotFound}, nil,
@@ -135,5 +155,35 @@ func TestErrUnreadableAnswer(t *testing.T) {
 	err := errUnreadableAnswer(errors.New("invalid character 'n' looking for beginning of value"))
 	if want := "GitHub's answer could not be read."; err.Error() != want {
 		t.Errorf("errUnreadableAnswer() = %q, want %q", err, want)
+	}
+}
+
+// TestGHFailureCarriesTheMessageAndNotTheStderr walks the wrapper the pull
+// request flows actually call: the error that reaches the screen is ghMessage's
+// sentence, and gh's own words stay behind in the log.
+func TestGHFailureCarriesTheMessageAndNotTheStderr(t *testing.T) {
+	stderr := "GraphQL: Could not resolve to a Repository with the name 'acme/private'. (repository)"
+	err := ghFailure([]string{"pr", "view"}, stderr, errTest, nil)
+	if err == nil {
+		t.Fatal("ghFailure() = nil, want the screen's message")
+	}
+	if want := ghMessage(stderr, errTest, nil); err.Error() != want {
+		t.Errorf("ghFailure() = %q, want %q", err, want)
+	}
+	if strings.Contains(err.Error(), "GraphQL") {
+		t.Errorf("ghFailure() = %q, which carries gh's own words onto the screen", err)
+	}
+}
+
+// A cancelled call is the one failure with nothing on stderr to recognise, and
+// it still has to come back as a sentence rather than as "context deadline
+// exceeded".
+func TestGHFailureAnswersATimeout(t *testing.T) {
+	err := ghFailure([]string{"pr", "merge"}, "", errTest, context.DeadlineExceeded)
+	if err == nil {
+		t.Fatal("ghFailure() = nil, want the screen's message")
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "context") {
+		t.Errorf("ghFailure() = %q, which names Go's own error instead of what happened", err)
 	}
 }

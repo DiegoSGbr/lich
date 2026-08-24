@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react"
-import type { Project, RecentProject } from "@/lib/api-types"
+import type { ClosedSession, Project, RecentProject } from "@/lib/api-types"
 import type { SessionKind, SessionState } from "@/lib/session/sessions"
 
 export interface ProjectsValue {
@@ -11,8 +11,9 @@ export interface ProjectsValue {
   /** Show the OS directory picker, add the chosen project and navigate to it. */
   openProject: () => Promise<void>
   /** Reopen a closed project without the picker. A project whose directory is
-   * gone asks for the new one instead, keeping its id and its sessions. */
-  openRecent: (recent: RecentProject) => Promise<void>
+   * gone asks for the new one instead, keeping its id and its sessions. Answers
+   * whether the project is open afterwards — a cancelled relocate is a no. */
+  openRecent: (recent: RecentProject) => Promise<boolean>
   /** Ensure a project rooted at $HOME exists (no picker) and return its id — the
    * update flow's install terminal when no project is in view. */
   ensureHomeProject: () => Promise<string>
@@ -22,14 +23,24 @@ export interface ProjectsValue {
    * defaults to the project's provider choice; path to its own directory. */
   newSession: (projectId: string, kind?: SessionKind, path?: string) => string
   /** Open a project-default session rooted at a git worktree, labeled after it,
-   * returning its id. */
-  newWorktreeSession: (projectId: string, wt: { name: string; path: string }) => string
+   * returning its id. sandbox is the dialog's confinement answer ("on"/"off"),
+   * "" to follow the provider's rung. */
+  newWorktreeSession: (
+    projectId: string,
+    wt: { name: string; path: string },
+    sandbox?: string,
+  ) => string
   /** Resume a worktree: reopen its parked session when one exists, else open a
    * fresh session on it. */
   reopenWorktreeSession: (projectId: string, wt: { name: string; path: string }) => Promise<void>
-  /** Permanently delete a session, offering an Undo toast for a stray click. */
+  /** Resume a session picked out of the history, reopening its project first
+   * when that project's tab is gone. */
+  resumeClosedSession: (closed: ClosedSession) => Promise<void>
+  /** Close a session, parking its row so the history can resume it. Offers an
+   * Undo toast for a stray click. */
   closeSession: (projectId: string, sessionId: string) => void
-  /** Delete a session with no undo offered. */
+  /** Delete a session for good, with no undo offered — the close that takes the
+   * checkout with it, where a parked row would outlive its directory. */
   discardSession: (projectId: string, sessionId: string) => void
   /** Close a worktree session but park its row so it can be resumed later. */
   keepSession: (projectId: string, sessionId: string) => void
@@ -37,6 +48,9 @@ export interface ProjectsValue {
   activateSession: (projectId: string, sessionId: string) => void
   /** Rename a session's display label. */
   renameSession: (projectId: string, sessionId: string, label: string) => void
+  // Record the command a terminal session opens into, "" to clear it. Refused
+  // by the store on anything but a shell session.
+  setEntrypoint: (projectId: string, sessionId: string, entrypoint: string) => void
   /** Pin a session to the head of its project's list, or unpin it. */
   pinSession: (projectId: string, sessionId: string, pinned: boolean) => void
   /** Rearrange the project tabs to the given id order. */

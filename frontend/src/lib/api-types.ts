@@ -15,13 +15,17 @@ export interface Project {
  * only, hence the same shape as an opened one. */
 export type RecentProject = Project
 
-/** internal/project.DiffStats — uncommitted-changes summary of a work tree. */
+/** internal/project.DiffStats — uncommitted-changes summary of a work tree,
+ * plus the branch and commit they sit on: git answers all three in the one
+ * status call the counts come out of. */
 export interface DiffStats {
   files: number
   added: number
   deleted: number
   /** The HEAD commit the counts sit on; "" in a repository without commits. */
   head: string
+  /** The checked-out branch; "" for a detached HEAD, as ProjectService.Branch. */
+  branch: string
 }
 
 /** internal/project.BaseStatus — where a checkout stands against the branch it
@@ -296,11 +300,35 @@ export interface StoredSession {
   kind: string
   path: string
   providerSessionId: string
+  /** The command a terminal session opens into; always "" for a provider one. */
+  entrypoint: string
+  /** Whether this session runs confined: "on", "off", or "" for a row nothing
+   * has spawned yet. Written by the spawn, which is what resolves the rung. */
+  sandbox: string
   pinned: boolean
   /** The session that asked for this one, "" for a session nobody delegated. */
   originSessionId: string
   /** What that session was called at the time; all that survives its close. */
   originLabel: string
+}
+
+/** internal/store.ClosedSession — one parked session offered for resuming. What
+ * identifies it in a list somebody is browsing: the project rides along because
+ * history spans every project at once, closed ones included. No branch — it
+ * lives in git and the window reads it off the checkout (ProjectService.Branches). */
+export interface ClosedSession {
+  id: string
+  projectId: string
+  projectName: string
+  /** The project's own directory, so resuming a session of a closed project can
+   * reopen that project first — and ask where it went if it has moved. */
+  projectPath: string
+  label: string
+  kind: string
+  path: string
+  /** Unix seconds; 0 for a row parked before lich recorded the close, which
+   * sorts last and is drawn as no date rather than as 1970. */
+  closedAt: number
 }
 
 /** internal/terminal.TranscriptMatch — a session whose conversation mentions a
@@ -360,6 +388,14 @@ export interface DropItem {
   size: number
   mtime: number
   dir: boolean
+}
+
+/** internal/drop.Attachment — the path the picker produced, and whether it is a
+ * copy's (a confined session cannot open a file outside its checkout). Both
+ * empty for a cancelled dialog. */
+export interface Attachment {
+  path: string
+  copied: boolean
 }
 
 /** internal/themes.Theme — a color theme for the UI tokens and xterm. */
@@ -428,6 +464,8 @@ export interface Diagnostics {
 export interface DetectedProvider {
   id: string
   name: string
+  /** The executable a session spawns. Not the id: Antigravity's is `agy`. */
+  binary: string
   installed: boolean
   path: string
 }
@@ -439,4 +477,31 @@ export interface BrowserHandle {
   title: string
   owner: string
   headed: boolean
+/** internal/providers.Check — what a configured binary resolves to. `path` is
+ * the executable a session would spawn, empty for every status but "ok". */
+export interface BinaryCheck {
+  path: string
+  status: "ok" | "empty" | "not-found" | "not-executable" | "home-shortcut" | "relative"
+}
+
+/** internal/quota.Window — one metered window of a subscription: how much of it
+ * is spent, how long it runs (0 when the provider does not say), and when it
+ * starts over (RFC 3339, empty when unreported). */
+export interface QuotaWindow {
+  label: string
+  seconds: number
+  percent: number
+  resetsAt?: string
+}
+
+/** internal/quota.Plan — one provider's quota reading. Windows are empty for
+ * every status other than "ok"; "unknown" is a session lich cannot identify the
+ * account of — it runs a binary the user configured whose environment is out of
+ * reach — where the default account's numbers would be the wrong ones. */
+export interface QuotaPlan {
+  provider: string
+  name: string
+  plan?: string
+  windows?: QuotaWindow[]
+  status: "ok" | "signed-out" | "error" | "unknown"
 }

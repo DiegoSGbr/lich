@@ -16,7 +16,11 @@ func gitFailure(args []string, stderr string, runErr error) error {
 var gitFailures = []toolFailure{
 	{"not a git repository", "This folder is not a git repository."},
 	{"already exists", "A branch or worktree with that name already exists."},
+	// Two wordings for one refusal: git said "is already checked out at" until
+	// 2.36 and "is already used by worktree at" since. Both are live — the
+	// distribution git decides which one a user sees.
 	{"is already checked out", "That branch is already checked out in another worktree."},
+	{"is already used by worktree", "That branch is already checked out in another worktree."},
 	{
 		"contains modified or untracked files",
 		"That worktree has uncommitted changes. Remove it from the sidebar to discard them.",
@@ -24,6 +28,16 @@ var gitFailures = []toolFailure{
 	{"is locked", "git has that worktree locked."},
 	{"is not a working tree", "git no longer knows that worktree — it may already be gone."},
 	{"couldn't find remote ref", "That branch is no longer on the remote."},
+	// ssh reaches for an askpass helper when the key it picked wants a
+	// passphrase and there is no tty to type it into — which is every call lich
+	// makes, GUI-launched and never attached to a terminal. Matched ahead of the
+	// publickey line below because ssh prints both, and only this one names the
+	// thing the person can fix.
+	{
+		"ssh_askpass",
+		"That remote's ssh key needs a passphrase, and lich has no terminal to ask for it. " +
+			"Load the key with `ssh-add` in a terminal, then try again.",
+	},
 	{"could not read from remote repository", "The remote refused the connection — check its ssh key or credentials."},
 	{"authentication failed", "The remote refused the connection — check its ssh key or credentials."},
 	{"permission denied (publickey)", "The remote refused the connection — check its ssh key or credentials."},

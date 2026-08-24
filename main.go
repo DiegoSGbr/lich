@@ -23,6 +23,7 @@ import (
 	"github.com/omartelo/lich/internal/patchnotes"
 	"github.com/omartelo/lich/internal/project"
 	"github.com/omartelo/lich/internal/providers"
+	"github.com/omartelo/lich/internal/quota"
 	"github.com/omartelo/lich/internal/relay"
 	"github.com/omartelo/lich/internal/restart"
 	"github.com/omartelo/lich/internal/rpc"
@@ -65,6 +66,9 @@ func main() {
 	// what the user launched lich with (see terminal.childEnv). ResolveShellEnv
 	// recovers the rc-exported vars a GUI launch misses (see its doc).
 	env := terminal.ResolveShellEnv(os.Environ())
+	// The slice above is what children inherit; exec.LookPath reads the process
+	// PATH instead, so the resolved one has to land there too (see PinPath).
+	terminal.PinPath(env)
 
 	configDir, err := os.UserConfigDir()
 	if err != nil {
@@ -117,8 +121,19 @@ func main() {
 	dispatcher := rpc.New()
 	drops := drop.New(configDir)
 	// The other prune runs after each new copy; this one is what clears the
-	// last of them for a lich that is never dropped on again.
-	drops.Prune()
+	// last of them for a lich that is never dropped on again — and the only one
+	// that may remove a session's directory outright, no session having spawned
+	// around it yet.
+	drops.PruneStale()
+	// A copy belongs to the session it was dropped into: that session reads it
+	// through a bind mount when it is confined, and deleting the session's row
+	// takes the copies with it.
+	term.SetDropDir(drop.Dir(configDir))
+	db.SetSessionGone(drops.Purge)
+	// The footer's attach button opens the picker through the drop service, so
+	// the file it copies for a confined session is one a human chose in a dialog
+	// (drop.Attach says why that matters).
+	drops.SetPicker(proj.PickFile)
 	dispatcher.Register("terminal", term)
 	dispatcher.Register("drop", drops)
 	dispatcher.Register("fonts", fonts.New())
@@ -134,6 +149,15 @@ func main() {
 	uncleanExit := singleton.UncleanExit(configDir, os.Getenv(restart.WaitEnv))
 	dispatcher.Register("system", system.New(env, logPath, version, uncleanExit))
 	dispatcher.Register("providers", providers.New())
+	// The quota reading is per session, not per machine: a session spawned from
+	// a binary the user configured can spend another account entirely, and the
+	// terminal is what knows the environment that binary set up.
+	plans := quota.New()
+	plans.SetSessions(func(sessionID string) quota.Account {
+		env, custom, read := term.SessionAccount(sessionID)
+		return quota.Account{Env: env, Custom: custom, Read: read}
+	})
+	dispatcher.Register("quota", plans)
 	// The relay is the only service whose caller is not the window: the `lich`
 	// CLI running inside a session reaches it over the same listener. It watches
 	// the hooks' state reports too, to notice a target that ends a turn without
@@ -186,8 +210,16 @@ func main() {
 //     argument array with a 1MB bound.
 //   - relay.Observe is the hooks' session-state stream, which arrives over
 //     /hook: forging a SessionEnd here closes another session's errands.
-//   - relay.SetPlugins, project.SetAccounts and project.SetProjects are startup
-//     wiring. Called with [null] they silently nil what they wired
+//   - drop.Purge deletes every copy dropped into a session, by id: the page
+//     closes sessions through the store, which is what reports one gone.
+//   - drop.SetPicker is startup wiring like the ones below, and nilling it
+//     would leave the footer's attach button with no dialog to open.
+//   - terminal.SessionAccount hands back the environment of the process a
+//     session runs, credentials and all, so the quota reader can tell which
+//     account that session spends.
+//   - relay.SetPlugins, project.SetAccounts, project.SetProjects,
+//     quota.SetSessions, store.SetSessionGone and terminal.SetDropDir are
+//     startup wiring. Called with [null] they silently nil what they wired
 //     (encoding/json leaves a func or pointer alone on null), and the write
 //     races the readers already serving — nilling SetProjects also disarms the
 //     guard that keeps two projects off the same directory.
@@ -195,17 +227,25 @@ func main() {
 //     window opens a visible browser through OpenVisible; the agent closes one
 //     through Close. Cleanup on a page POST would kill every session's Chromium
 //     without closing a card.
+//     guard that keeps two projects off the same directory, and SetDropDir
+//     points the sandbox's read-only bind wherever the caller likes.
 func denyInternal(d *rpc.Handler) {
 	for _, method := range []string{
 		"store.Close",
+		"store.SetSessionGone",
 		"drop.Upload",
 		"drop.Save",
+		"drop.Purge",
+		"drop.SetPicker",
 		"relay.Observe",
 		"relay.SetPlugins",
 		"project.SetAccounts",
 		"project.SetProjects",
 		"browser.Cleanup",
 		"browser.CloseOwnedBy",
+		"quota.SetSessions",
+		"terminal.SessionAccount",
+		"terminal.SetDropDir",
 	} {
 		d.Deny(method)
 	}

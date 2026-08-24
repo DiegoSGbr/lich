@@ -19,9 +19,8 @@ const minSearchQuery = 3
 // the search is re-run as the user types; the bound is what keeps a keystroke
 // from turning into a full disk read per session.
 //
-// ponytail: the ceiling means a mention old enough to have fallen out of the
-// tail is not found. Indexing is the fix if that ever bites — not a bigger
-// number.
+// Ceiling: a mention old enough to have fallen out of the tail is not found.
+// Indexing is the fix if that ever bites — not a bigger number.
 const searchTailBytes = 4 << 20
 
 // snippetWidth is how many runes of the matched message the palette row shows.
@@ -93,7 +92,7 @@ func (s *Service) SearchTranscripts(ids []string, query string) []TranscriptMatc
 func searchTranscript(tail []byte, q string) (TranscriptMatch, bool) {
 	needle := []byte(q)
 	var match TranscriptMatch
-	for _, line := range bytes.Split(tail, []byte("\n")) {
+	for line := range bytes.SplitSeq(tail, []byte("\n")) {
 		if !bytes.Contains(bytes.ToLower(line), needle) {
 			continue
 		}
@@ -173,10 +172,7 @@ func snippetAround(text, q string) (string, bool) {
 	if len(runes) <= snippetWidth {
 		return flat, true
 	}
-	start := at - snippetWidth/3
-	if start < 0 {
-		start = 0
-	}
+	start := max(at-snippetWidth/3, 0)
 	end := start + snippetWidth
 	if end > len(runes) {
 		end = len(runes)

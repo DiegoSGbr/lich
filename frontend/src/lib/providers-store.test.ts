@@ -2,17 +2,24 @@ import { describe, expect, it, vi } from "vitest"
 import type { DetectedProvider } from "./api-types"
 import {
   binKey,
+  binOffKey,
   createProvidersStore,
   enabledKey,
   enabledProviders,
+  footerReadout,
+  footerReadoutPair,
   readEnabled,
   resolveDefaultProvider,
   resolveProjectDefaultProvider,
+  sandboxDefaultFor,
+  sandboxKey,
+  sandboxLevel,
   skipLevel,
   skipLevelPair,
   skipPermissionFlags,
   skipPermissionsKey,
   type ProviderState,
+  type SandboxLevel,
 } from "./providers-store"
 
 describe("provider setting keys", () => {
@@ -24,6 +31,13 @@ describe("provider setting keys", () => {
     expect(binKey("claude")).toBe("claude.bin")
     expect(binKey("codex")).toBe("provider.codex.bin")
     expect(binKey("opencode")).toBe("provider.opencode.bin")
+  })
+
+  // The switch that parks a layer hangs off the path's own key, legacy one
+  // included — the Go spawn reads these exact strings.
+  it("suffixes the parked flag onto the path key", () => {
+    expect(binOffKey("claude")).toBe("claude.bin.off")
+    expect(binOffKey("codex")).toBe("provider.codex.bin.off")
   })
 
   // The two scopes are separate rows in the settings table, and the Go spawn
@@ -41,6 +55,7 @@ describe("provider setting keys", () => {
   it("spells the skip-permissions flag per provider, and only where one is wired", () => {
     expect(skipPermissionFlags.claude).toBe("--dangerously-skip-permissions")
     expect(skipPermissionFlags.codex).toBe("--dangerously-bypass-approvals-and-sandbox")
+    expect(skipPermissionFlags.antigravity).toBe("--dangerously-skip-permissions")
     expect(skipPermissionFlags.opencode).toBe("--auto")
     expect(skipPermissionFlags.omp).toBe("--auto-approve")
     expect(skipPermissionFlags.crush).toBe("--yolo")
@@ -78,6 +93,34 @@ describe("the skip-permissions ladder", () => {
   })
 })
 
+describe("the footer readout ladder", () => {
+  it("folds the stored pair into a rung", () => {
+    expect(footerReadout(false, false)).toBe("off")
+    expect(footerReadout(true, false)).toBe("context")
+    expect(footerReadout(true, true)).toBe("cost")
+  })
+
+  // The pair nothing offers any more: the cost on its own, with no model and no
+  // ring beside it. The cost was always the addition, so it reads as the rung
+  // that carries it.
+  it("reads the pair no rung writes as the cost rung", () => {
+    expect(footerReadout(false, true)).toBe("cost")
+  })
+
+  it("writes both settings for the chosen rung", () => {
+    expect(footerReadoutPair("off")).toEqual({ context: false, cost: false })
+    expect(footerReadoutPair("context")).toEqual({ context: true, cost: false })
+    expect(footerReadoutPair("cost")).toEqual({ context: true, cost: true })
+  })
+
+  it("round-trips every rung", () => {
+    for (const level of ["off", "context", "cost"] as const) {
+      const pair = footerReadoutPair(level)
+      expect(footerReadout(pair.context, pair.cost)).toBe(level)
+    }
+  })
+})
+
 describe("readEnabled", () => {
   it("honors an explicit flag over the default", () => {
     expect(readEnabled("claude", "0")).toBe(false)
@@ -95,6 +138,7 @@ describe("enabledProviders", () => {
   const p = (id: string, enabled: boolean, installed: boolean): ProviderState => ({
     id: id as ProviderState["id"],
     name: id,
+    binary: id,
     installed,
     enabled,
   })
@@ -110,6 +154,7 @@ describe("resolveDefaultProvider", () => {
   const p = (id: string, enabled: boolean): ProviderState => ({
     id: id as ProviderState["id"],
     name: id,
+    binary: id,
     installed: true,
     enabled,
   })
@@ -134,6 +179,7 @@ describe("resolveProjectDefaultProvider", () => {
   const p = (id: string, enabled: boolean): ProviderState => ({
     id: id as ProviderState["id"],
     name: id,
+    binary: id,
     installed: true,
     enabled,
   })
@@ -156,9 +202,16 @@ describe("resolveProjectDefaultProvider", () => {
 
 describe("createProvidersStore", () => {
   const detected: DetectedProvider[] = [
-    { id: "claude", name: "Claude Code", installed: true, path: "/usr/bin/claude" },
-    { id: "codex", name: "Codex", installed: false, path: "" },
-    { id: "mystery", name: "Mystery", installed: true, path: "/x" }, // unknown id
+    {
+      id: "claude",
+      name: "Claude Code",
+      binary: "claude",
+      installed: true,
+      path: "/usr/bin/claude",
+    },
+    // A binary that is not the id, which is what antigravity ships as.
+    { id: "codex", name: "Codex", binary: "cdx", installed: false, path: "" },
+    { id: "mystery", name: "Mystery", binary: "mystery", installed: true, path: "/x" }, // unknown id
   ]
 
   function build(enabledValues: Record<string, string> = {}, defaultValue = "") {
@@ -185,6 +238,9 @@ describe("createProvidersStore", () => {
     expect(got.find((p) => p.id === "claude")?.enabled).toBe(true)
     expect(got.find((p) => p.id === "codex")?.enabled).toBe(false)
     expect(got.find((p) => p.id === "codex")?.installed).toBe(false)
+    // Carried through, because the settings screen asks $PATH for this and not
+    // for the id.
+    expect(got.find((p) => p.id === "codex")?.binary).toBe("cdx")
   })
 
   it("honors a stored enabled flag over the default", async () => {
@@ -335,5 +391,44 @@ describe("createProvidersStore", () => {
     await store.load()
 
     expect(store.getProjectProviderKind("p1")).toBe("claude")
+  })
+})
+
+describe("sandbox rung", () => {
+  it("keys the setting per provider, mirroring the Go spelling", () => {
+    expect(sandboxKey("claude")).toBe("provider.claude.sandbox")
+    expect(sandboxKey("crush")).toBe("provider.crush.sandbox")
+  })
+
+  it("reads every rung the ladder names", () => {
+    for (const level of ["off", "ask", "worktrees", "everywhere"] as const) {
+      expect(sandboxLevel(level)).toBe(level)
+    }
+  })
+
+  // An unknown value must never confine a session nobody asked to confine, and
+  // "off" is the only answer that surprises no one — it is what lich did before.
+  it("reads anything else as off", () => {
+    for (const value of ["", "true", "on", "Everywhere", " worktrees", "always"]) {
+      expect(sandboxLevel(value)).toBe("off")
+    }
+  })
+
+  // The dialog has to arrive showing the answer the spawn would reach on its
+  // own, or the box the user leaves untouched means something else.
+  it("matches store.SandboxDefault on both sides of the checkout", () => {
+    const cases: [SandboxLevel, boolean, boolean][] = [
+      ["off", false, false],
+      ["off", true, false],
+      ["ask", false, false],
+      ["ask", true, false],
+      ["worktrees", false, false],
+      ["worktrees", true, true],
+      ["everywhere", false, true],
+      ["everywhere", true, true],
+    ]
+    for (const [level, worktree, want] of cases) {
+      expect(sandboxDefaultFor(level, worktree)).toBe(want)
+    }
   })
 })

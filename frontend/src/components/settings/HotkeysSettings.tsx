@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { RotateCcw, TriangleAlert } from "lucide-react"
+import { Ban, RotateCcw, TriangleAlert } from "lucide-react"
 import { useSettings } from "@/providers/settings"
 import {
   comboFromEvent,
@@ -10,17 +10,18 @@ import {
   HOTKEY_ACTIONS,
   HOTKEY_GROUPS,
   sameCombo,
+  UNASSIGNED,
   type HotkeyAction,
   type HotkeyId,
 } from "@/lib/hotkeys"
-import { PASSTHROUGH_TITLE, passthroughRows } from "@/lib/shortcuts"
+import { PASSTHROUGH_TITLE, passthroughRows, TERMINAL_TITLE, terminalRows } from "@/lib/shortcuts"
 import { Button } from "@/components/ui/button"
 import { ShortcutLine } from "@/components/common/ShortcutLine"
 import { isMac, isWindows } from "@/lib/platform"
 import { cn } from "@/lib/utils"
 
-// A dense list rather than one setting block per action: eleven bindings read as
-// a table of rows, and a block each would be a column of near-empty cards.
+// A dense list rather than one setting block per action: the bindings read as a
+// table of rows, and a block each would be a column of near-empty cards.
 function Group({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <section className="pt-8 first:pt-0">
@@ -35,11 +36,16 @@ function Group({ label, children }: { label: string; children: React.ReactNode }
 // HotkeyRow shows the current combo as a capture button: click to record, press
 // the new combo to save, Escape to cancel. Key events are swallowed while
 // recording so they do not also trigger the very shortcut being rebound.
+//
+// The two trailing buttons are opposite moves and must not read as one: clearing
+// leaves the action with no chord at all, which is how the chord is handed back
+// to the agent's TUI; resetting puts lich's default back.
 function HotkeyRow({ action, conflicts }: { action: HotkeyAction; conflicts?: HotkeyId[] }) {
   const { hotkeys, setHotkey, resetHotkey } = useSettings()
   const [recording, setRecording] = useState(false)
   const combo = hotkeys[action.id]
   const isDefault = sameCombo(combo, DEFAULT_HOTKEYS[action.id])
+  const isUnassigned = !combo.key
 
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (!recording) return
@@ -77,9 +83,8 @@ function HotkeyRow({ action, conflicts }: { action: HotkeyAction; conflicts?: Ho
         onBlur={() => setRecording(false)}
         className={cn(
           "min-w-36 shrink-0 rounded-md border px-3 py-1 text-left text-sm tabular-nums outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
-          recording
-            ? "border-ring text-muted-foreground"
-            : "border-border text-foreground hover:bg-accent",
+          recording ? "border-ring text-muted-foreground" : "border-border hover:bg-accent",
+          !recording && (isUnassigned ? "text-muted-foreground" : "text-foreground"),
           conflicts && !recording && "border-amber-500/60",
         )}
       >
@@ -88,7 +93,18 @@ function HotkeyRow({ action, conflicts }: { action: HotkeyAction; conflicts?: Ho
       <Button
         variant="ghost"
         size="icon"
+        aria-label={`Unassign ${action.label} shortcut`}
+        title="Leave this action unbound"
+        disabled={isUnassigned}
+        onClick={() => setHotkey(action.id, UNASSIGNED)}
+      >
+        <Ban />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
         aria-label={`Reset ${action.label} shortcut`}
+        title="Restore the default shortcut"
         disabled={isDefault}
         onClick={() => resetHotkey(action.id)}
       >
@@ -111,6 +127,15 @@ export function HotkeysSettings() {
           ))}
         </Group>
       ))}
+      <Group label={TERMINAL_TITLE}>
+        <p className="mb-2 max-w-prose text-xs text-muted-foreground">
+          lich's own, and fixed: this one shadows a browser accelerator, which answers to a chord
+          rather than to whatever it was rebound to.
+        </p>
+        {terminalRows.map((row) => (
+          <ShortcutLine key={row.label} label={row.label} keys={row.keys} />
+        ))}
+      </Group>
       <Group label={PASSTHROUGH_TITLE}>
         <p className="mb-2 max-w-prose text-xs text-muted-foreground">
           lich rewrites these on their way to the agent's terminal, so they are fixed rather than

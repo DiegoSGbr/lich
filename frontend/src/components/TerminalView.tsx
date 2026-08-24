@@ -5,10 +5,7 @@ import { WebglAddon } from "@xterm/addon-webgl"
 import { SerializeAddon } from "@xterm/addon-serialize"
 import { SearchAddon } from "@xterm/addon-search"
 import { WebLinksAddon } from "@xterm/addon-web-links"
-import { ArrowDown, ArrowUp, X } from "lucide-react"
 import { toast } from "sonner"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { System, Terminal as Service } from "@/lib/rpc"
 import { errorText } from "@/lib/utils"
 import { onAppEvent } from "@/lib/app-events"
@@ -22,18 +19,25 @@ import type { PaletteSession } from "@/lib/session/command-palette"
 import { onTerminalFocusRequest } from "@/lib/terminal/focus-request"
 import { recordChunk } from "@/lib/terminal/term-perf"
 import { copyToastMessage, COPY_TOAST_DURATION_MS } from "@/lib/terminal/copy-toast"
-import { computeGrid } from "@/lib/terminal/term-fit"
+import { decodeBase64 } from "@/lib/terminal/term-frame"
+import {
+  cursorHidden,
+  ensureFontLoaded,
+  fitTerminal,
+  mouseEncoding,
+  TERMINAL_PADDING_LEFT,
+} from "@/lib/terminal/term-view"
 import { exitMarker, readSessionExit, type SessionExit } from "@/lib/terminal/session-exit"
 import { TerminalExitBanner } from "./TerminalExitBanner"
-import { linkClickIsOurs, mouseEncodingSequence } from "@/lib/terminal/term-modes"
+import { TerminalSearchBar, type SearchResults } from "./TerminalSearchBar"
+import { useTerminalDrop } from "./useTerminalDrop"
+import {
+  cursorVisibilitySequence,
+  linkClickIsOurs,
+  mouseEncodingSequence,
+} from "@/lib/terminal/term-modes"
 import { createSessionLinkProvider } from "@/lib/terminal/session-link-provider"
 import { sessionLinkTargets } from "@/lib/terminal/session-links"
-import {
-  composeDroppedPaths,
-  KEEP_DROPPED_DAYS,
-  readDroppedFiles,
-  resolveDroppedFiles,
-} from "@/lib/terminal/drop-files"
 import { useSettings } from "@/providers/settings"
 import { useProjects } from "@/providers/projects"
 import { isWindows } from "@/lib/platform"
@@ -54,16 +58,9 @@ import "@xterm/xterm/css/xterm.css"
 const DATA_EVENT_PREFIX = "terminal:data:"
 const EXIT_EVENT_PREFIX = "terminal:exit:"
 
-// Size used only to ask the font loader for the face; the face is the same at
-// any size, and the terminal's real size is the terminalFontSize setting.
-const FONT_PROBE_SIZE = 14
 const REFIT_DEBOUNCE_MS = 100
 const COPY_DEBOUNCE_MS = 150
 const SCROLLBACK_LINES = 5000
-
-// Left gutter so the first column doesn't sit flush against the sidebar/panel
-// seam. Subtracted before the grid fit (below) so it doesn't cost a column.
-const TERMINAL_PADDING_LEFT = 4
 
 // Search match styling. Passing decorations is also what makes xterm's
 // SearchAddon compute the match count (onDidChangeResults reports -1 without
@@ -74,84 +71,6 @@ const SEARCH_DECORATIONS = {
   activeMatchBackground: "#f59e0b",
   matchOverviewRuler: "#e3b341",
   activeMatchColorOverviewRuler: "#f59e0b",
-}
-
-// cellDimensions reads the renderer's measured cell size — the same private
-// API FitAddon relies on ("TODO: Remove reliance" upstream). Null before the
-// first render measure or if xterm ever moves the private; refit then skips,
-// keeping the current grid (degrades, never breaks).
-function cellDimensions(term: Terminal): { width: number; height: number } | null {
-  const core = (
-    term as unknown as {
-      _core?: {
-        _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } }
-      }
-    }
-  )._core
-  const cell = core?._renderService?.dimensions?.css?.cell
-  if (!cell || !cell.width || !cell.height) {
-    return null
-  }
-  return cell
-}
-
-// mouseEncoding reads which encoding the app selected for mouse reports —
-// another private the public API does not expose (term.modes carries the
-// protocol only). Undefined if xterm ever moves it, which costs the restore in
-// term-modes.ts and nothing else.
-function mouseEncoding(term: Terminal): string | undefined {
-  return (term as unknown as { _core?: { coreMouseService?: { activeEncoding?: string } } })._core
-    ?.coreMouseService?.activeEncoding
-}
-
-// fitTerminal resizes the grid to fill the container edge to edge on the
-// right/bottom (replacing xterm's FitAddon, which reserves a scrollbar
-// gutter on the right — see term-fit.ts), minus the fixed left gutter above.
-// No-op when metrics or size aren't ready, or the grid already fits.
-function fitTerminal(term: Terminal, container: HTMLElement): void {
-  const cell = cellDimensions(term)
-  if (!cell) {
-    return
-  }
-  const grid = computeGrid(
-    container.clientWidth - TERMINAL_PADDING_LEFT,
-    container.clientHeight,
-    cell,
-  )
-  if (grid && (grid.cols !== term.cols || grid.rows !== term.rows)) {
-    term.resize(grid.cols, grid.rows)
-  }
-}
-
-// ensureFontLoaded blocks until a font is available. The renderer measures
-// cell metrics at open, so bundled fonts (@font-face) must be loaded first;
-// system fonts resolve as no-ops and failures fall back to monospace.
-async function ensureFontLoaded(font: string): Promise<void> {
-  try {
-    await Promise.all([
-      document.fonts.load(`${FONT_PROBE_SIZE}px "${font}"`),
-      document.fonts.load(`bold ${FONT_PROBE_SIZE}px "${font}"`),
-    ])
-  } catch {
-    // Fall back to the system monospace face.
-  }
-}
-
-// carriesFiles tells a file drag from text dragged out of the app's own UI —
-// a selection, a link — which the terminal leaves alone.
-function carriesFiles(transfer: DataTransfer): boolean {
-  return [...transfer.types].includes("Files")
-}
-
-// decodeBase64 turns the base64 PTY payload back into bytes. The backend
-// encodes output so multi-byte UTF-8 sequences survive the JSON envelope.
-function decodeBase64(data: string): Uint8Array {
-  const binary = atob(data)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes
 }
 
 export interface TerminalViewProps {
@@ -173,6 +92,12 @@ export interface TerminalViewProps {
    */
   roster: readonly PaletteSession[]
   visible: boolean
+  /**
+   * Whether this session's PTY runs confined (internal/sandbox). Only the drop
+   * reads it here: a confined session's home is an empty private one, so a file
+   * dragged in from outside its checkout has to arrive as a copy.
+   */
+  sandboxed: boolean
   /**
    * Close this session's card, through the same flow the sidebar's × runs —
    * raised by the exit banner, which is the only affordance here that ends a
@@ -197,13 +122,6 @@ interface LiveTerminal {
   dispose(): void
 }
 
-// SearchResults is the match position xterm's search addon reports: the active
-// match index (0-based, -1 when none) and the total count.
-interface SearchResults {
-  index: number
-  count: number
-}
-
 export function TerminalView({
   sessionId,
   projectId,
@@ -212,6 +130,7 @@ export function TerminalView({
   resume,
   roster,
   visible,
+  sandboxed,
   onClose,
   stillInWorkspace,
 }: TerminalViewProps) {
@@ -230,10 +149,10 @@ export function TerminalView({
   const startedRef = useRef(false)
   // Snapshot + queued output of a hidden (destroyed) terminal.
   const serializedRef = useRef<string | null>(null)
-  // The mouse encoding the snapshot cannot carry (term-modes.ts). Kept apart
-  // from it because it survives the overflow path, where the snapshot is
-  // dropped: it describes the app, not the buffer.
-  const mouseEncodingRef = useRef("")
+  // The modes the snapshot cannot carry (term-modes.ts). Kept apart from it
+  // because they survive the overflow path, where the snapshot is dropped:
+  // they describe the app, not the buffer.
+  const carriedModesRef = useRef("")
   const replayRef = useRef(makeReplayBuffer())
   const visibleRef = useRef(visible)
   const stillInWorkspaceRef = useRef(stillInWorkspace)
@@ -255,10 +174,6 @@ export function TerminalView({
 
   // In-terminal search (Ctrl+F). The open flag mirrors into a ref so the
   // terminal's key handler — wired once at creation — reads the live value.
-  // A file drag is over the terminal; see onDragEnter for the depth counter.
-  const [dropping, setDropping] = useState(false)
-  const dragDepth = useRef(0)
-
   // Set once this session's process is gone, and the whole of the card's
   // terminal state: the scrollback stays on screen, the banner below offers the
   // two ways out of it.
@@ -519,7 +434,9 @@ export function TerminalView({
       return
     }
     serializedRef.current = live.serialize.serialize()
-    mouseEncodingRef.current = mouseEncodingSequence(mouseEncoding(live.term))
+    carriedModesRef.current =
+      mouseEncodingSequence(mouseEncoding(live.term)) +
+      cursorVisibilitySequence(cursorHidden(live.term))
     live.dispose()
     liveRef.current = null
   }
@@ -543,73 +460,23 @@ export function TerminalView({
     }
     // Between the snapshot and the queued tail: the tail is newer output, so
     // anything the app changed there still wins.
-    if (mouseEncodingRef.current) {
-      live.term.write(mouseEncodingRef.current)
+    if (carriedModesRef.current) {
+      live.term.write(carriedModesRef.current)
     }
     for (const chunk of replayRef.current.drain()) {
       live.term.write(chunk)
     }
     serializedRef.current = null
-    mouseEncodingRef.current = ""
+    carriedModesRef.current = ""
     liveRef.current = live
   }
 
-  // Files dropped on the terminal land at the prompt as paths, the way a
-  // native emulator pastes a drop (lib/terminal/drop-files.ts). dragDepth
-  // counts enter/leave: they also fire crossing xterm's own child elements, so
-  // the hint would flicker off mid-drag on the plain boolean.
-  const onDrop = (event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    dragDepth.current = 0
-    setDropping(false)
-    const dropped = readDroppedFiles(event.dataTransfer)
-    if (dropped.length === 0) {
-      return
-    }
-    void (async () => {
-      const { paths, skipped, copied } = await resolveDroppedFiles(cwd, dropped)
-      const paste = composeDroppedPaths(paths, isWindows)
-      if (paste !== "") {
-        writeInput(paste)
-        liveRef.current?.term.focus()
-      }
-      if (skipped.length > 0) {
-        toast.error(`Not attached: ${skipped.join(", ")}`)
-      }
-      // Nothing failed here — the path pasted is simply a copy's, and the two
-      // read alike at the prompt.
-      if (copied.length > 0) {
-        toast.info(`Pasted as a copy: ${copied.join(", ")}`, {
-          description: `Not found under this session or your home, so edits land on the copy, not on your file — and the copy is deleted after ${KEEP_DROPPED_DAYS} days.`,
-        })
-      }
-    })()
-  }
-
-  const onDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
-    if (!carriesFiles(event.dataTransfer)) {
-      return
-    }
-    dragDepth.current += 1
-    setDropping(true)
-  }
-
-  const onDragOver = (event: React.DragEvent<HTMLDivElement>) => {
-    if (!carriesFiles(event.dataTransfer)) {
-      return
-    }
-    // Without this the drop event never fires — and App's window handler
-    // swallows what lands outside a terminal.
-    event.preventDefault()
-    event.dataTransfer.dropEffect = "copy"
-  }
-
-  const onDragLeave = () => {
-    dragDepth.current = Math.max(0, dragDepth.current - 1)
-    if (dragDepth.current === 0) {
-      setDropping(false)
-    }
-  }
+  // Files dropped on the terminal land at the prompt as paths (useTerminalDrop).
+  const { dropping, onDrop, onDragEnter, onDragOver, onDragLeave } = useTerminalDrop(
+    { cwd, sessionId, confined: sandboxed },
+    writeInput,
+    () => liveRef.current?.term.focus(),
+  )
 
   // Create the terminal and its PTY session once per session id. The session
   // runs in the background regardless of visibility and is only torn down
@@ -872,55 +739,16 @@ export function TerminalView({
       )}
       {exited && <TerminalExitBanner exit={exited} onRestart={restart} onClose={onClose} />}
       {searchOpen && (
-        <div className="absolute right-3 top-3 z-20 flex items-center gap-1 rounded-md border bg-popover p-1 text-popover-foreground shadow-lg">
-          <Input
-            autoFocus
-            value={searchQuery}
-            placeholder="Find"
-            aria-label="Search terminal"
-            className="h-7 w-44 border-0 shadow-none focus-visible:ring-0"
-            onChange={(event) => {
-              const query = event.target.value
-              setSearchQuery(query)
-              runSearch(query, "next", true)
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault()
-                runSearch(searchQuery, event.shiftKey ? "prev" : "next")
-              } else if (event.key === "Escape") {
-                event.preventDefault()
-                closeSearch()
-              }
-            }}
-          />
-          <span className="min-w-10 px-1 text-center text-xs tabular-nums text-muted-foreground">
-            {searchResults && searchResults.count > 0
-              ? `${searchResults.index + 1}/${searchResults.count}`
-              : searchQuery
-                ? "0/0"
-                : ""}
-          </span>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label="Previous match"
-            onClick={() => runSearch(searchQuery, "prev")}
-          >
-            <ArrowUp className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label="Next match"
-            onClick={() => runSearch(searchQuery, "next")}
-          >
-            <ArrowDown className="h-3.5 w-3.5" />
-          </Button>
-          <Button size="icon-xs" variant="ghost" aria-label="Close search" onClick={closeSearch}>
-            <X className="h-3.5 w-3.5" />
-          </Button>
-        </div>
+        <TerminalSearchBar
+          query={searchQuery}
+          results={searchResults}
+          onQueryChange={(query) => {
+            setSearchQuery(query)
+            runSearch(query, "next", true)
+          }}
+          onFind={(direction) => runSearch(searchQuery, direction)}
+          onClose={closeSearch}
+        />
       )}
     </div>
   )

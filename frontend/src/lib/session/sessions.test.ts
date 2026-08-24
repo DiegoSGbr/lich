@@ -24,7 +24,9 @@ import {
   sessionOrigin,
   sessionsOf,
   setActiveSession,
+  setSessionEntrypoint,
   setSessionPinned,
+  setSessionSandboxed,
   sidebarGroups,
   type Session,
   type SessionKind,
@@ -45,7 +47,7 @@ function buildState(n: number): SessionState {
 
 describe("isSessionKind", () => {
   it("accepts every provider kind and the shell", () => {
-    for (const kind of ["claude", "codex", "opencode", "omp", "crush", "shell"]) {
+    for (const kind of ["claude", "codex", "antigravity", "opencode", "omp", "crush", "shell"]) {
       expect(isSessionKind(kind)).toBe(true)
     }
   })
@@ -208,6 +210,52 @@ describe("renameSession", () => {
     const state = buildState(2)
     expect(renameSession(state, "nope", "s1", "x")).toBe(state)
     expect(renameSession(state, P, "ghost", "x")).toBe(state)
+  })
+})
+
+describe("setSessionEntrypoint", () => {
+  // A terminal beside an agent session, which is the shape every assertion here
+  // is about: only the terminal can carry a command.
+  const withTerminal = () => addSession(buildState(1), P, "t1", "shell")
+
+  it("records the command and names the card after it while lich owns the name", () => {
+    const state = setSessionEntrypoint(withTerminal(), P, "t1", "lazygit", true)
+    const terminal = sessionsOf(state, P).find((s) => s.id === "t1")
+    expect(terminal?.entrypoint).toBe("lazygit")
+    expect(terminal?.label).toBe("lazygit")
+  })
+
+  it("leaves a name the user chose alone", () => {
+    const named = renameSession(withTerminal(), P, "t1", "Containers")
+    const state = setSessionEntrypoint(named, P, "t1", "lazydocker", false)
+    const terminal = sessionsOf(state, P).find((s) => s.id === "t1")
+    expect(terminal?.entrypoint).toBe("lazydocker")
+    expect(terminal?.label).toBe("Containers")
+  })
+
+  it("clears the command without blanking the card's name", () => {
+    const set = setSessionEntrypoint(withTerminal(), P, "t1", "lazygit", true)
+    const state = setSessionEntrypoint(set, P, "t1", "", true)
+    const terminal = sessionsOf(state, P).find((s) => s.id === "t1")
+    expect(terminal?.entrypoint).toBe("")
+    expect(terminal?.label).toBe("lazygit")
+  })
+
+  it("refuses a provider session, matching what the store will accept", () => {
+    const state = withTerminal()
+    expect(setSessionEntrypoint(state, P, "s1", "lazygit", true)).toBe(state)
+  })
+
+  it("does not mutate the input state", () => {
+    const before = withTerminal()
+    setSessionEntrypoint(before, P, "t1", "lazygit", true)
+    expect(sessionsOf(before, P).find((s) => s.id === "t1")?.entrypoint).toBeUndefined()
+  })
+
+  it("ignores unknown project or session ids", () => {
+    const state = withTerminal()
+    expect(setSessionEntrypoint(state, "nope", "t1", "x", true)).toBe(state)
+    expect(setSessionEntrypoint(state, P, "ghost", "x", true)).toBe(state)
   })
 })
 
@@ -481,6 +529,14 @@ describe("resumableSession", () => {
     })
   })
 
+  it("returns an antigravity session carrying a provider session id", () => {
+    const state = withClaudeSession(buildState(2), "s1", "7bb32ee5-e8e3", "antigravity")
+    expect(resumableSession(state, P, "s1")).toMatchObject({
+      id: "s1",
+      providerSessionId: "7bb32ee5-e8e3",
+    })
+  })
+
   it("returns an omp session carrying a provider session id", () => {
     const state = withClaudeSession(buildState(2), "s1", "019ffb38-ceab", "omp")
     expect(resumableSession(state, P, "s1")).toMatchObject({
@@ -576,10 +632,15 @@ describe("activeTarget", () => {
   const root = "/repo"
 
   it("falls back to the project root when the active session has no checkout", () => {
-    expect(activeTarget(buildState(2), P, root)).toEqual({ sessionId: "s2", path: root })
+    expect(activeTarget(buildState(2), P, root)).toEqual({
+      sessionId: "s2",
+      path: root,
+      kind: "claude",
+      sandboxed: false,
+    })
   })
 
-  it("resolves a worktree session to its checkout", () => {
+  it("resolves a worktree session to its checkout, and reports what it runs", () => {
     const state = restoreSession(buildState(1), P, {
       id: "wt1",
       label: "swift-rabbit",
@@ -589,15 +650,41 @@ describe("activeTarget", () => {
     expect(activeTarget(state, P, root)).toEqual({
       sessionId: "wt1",
       path: "/repo/.worktrees/swift-rabbit",
+      kind: "shell",
+      sandboxed: false,
     })
   })
 
+  // The footer's attach button reads this: a confined session is handed a copy
+  // of anything outside its checkout, and it has to know which sessions those
+  // are before the picker opens.
+  it("reports a confined session as sandboxed", () => {
+    const state = restoreSession(buildState(1), P, {
+      id: "wt1",
+      label: "swift-rabbit",
+      kind: "claude",
+      path: "/repo/.worktrees/swift-rabbit",
+      sandboxed: true,
+    })
+    expect(activeTarget(state, P, root).sandboxed).toBe(true)
+  })
+
   it("keeps the project root when there is no session at all", () => {
-    expect(activeTarget({}, P, root)).toEqual({ sessionId: "", path: root })
+    expect(activeTarget({}, P, root)).toEqual({
+      sessionId: "",
+      path: root,
+      kind: "",
+      sandboxed: false,
+    })
   })
 
   it("is empty off a project route", () => {
-    expect(activeTarget(buildState(2), null, "")).toEqual({ sessionId: "", path: "" })
+    expect(activeTarget(buildState(2), null, "")).toEqual({
+      sessionId: "",
+      path: "",
+      kind: "",
+      sandboxed: false,
+    })
   })
 })
 
@@ -807,5 +894,47 @@ describe("dropClosedSession", () => {
     const before = buildState(2)
     expect(dropClosedSession(before, P, "ghost", "s1")).toBe(before)
     expect(dropClosedSession(before, "other", "s1", "")).toBe(before)
+  })
+})
+
+describe("setSessionSandboxed", () => {
+  const state = () => buildState(2)
+
+  it("marks the session the spawn reported", () => {
+    const next = setSessionSandboxed(state(), "s1", true)
+    expect(next[P]?.sessions[0]?.sandboxed).toBe(true)
+    expect(next[P]?.sessions[1]?.sandboxed).toBeUndefined()
+  })
+
+  it("clears the mark when a respawn reports it unconfined", () => {
+    const confined = setSessionSandboxed(state(), "s1", true)
+    const next = setSessionSandboxed(confined, "s1", false)
+    expect(next[P]?.sessions[0]?.sandboxed).toBeUndefined()
+  })
+
+  // The event fires on every spawn, so an unchanged answer has to return the
+  // same object: a new one re-renders every card in the project for nothing.
+  it("returns the same state when nothing changed", () => {
+    const current = state()
+    expect(setSessionSandboxed(current, "s1", false)).toBe(current)
+    const confined = setSessionSandboxed(current, "s1", true)
+    expect(setSessionSandboxed(confined, "s1", true)).toBe(confined)
+  })
+
+  it("ignores a session it does not know", () => {
+    const current = state()
+    expect(setSessionSandboxed(current, "gone", true)).toBe(current)
+  })
+})
+
+// The mark is dropped rather than set to undefined: the two hydration paths omit
+// the key entirely, and a session that reached the same state two ways must not
+// carry two different shapes.
+describe("setSessionSandboxed shape", () => {
+  it("leaves no sandboxed key on an unconfined session", () => {
+    const confined = setSessionSandboxed(buildState(1), "s1", true)
+    const cleared = setSessionSandboxed(confined, "s1", false)
+    const session = cleared[P]?.sessions[0]
+    expect(session && "sandboxed" in session).toBe(false)
   })
 })

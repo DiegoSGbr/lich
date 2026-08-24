@@ -14,6 +14,8 @@ export function buildSessionState(loaded: StoredProject[]): SessionState {
       kind: isSessionKind(session.kind) ? session.kind : "claude",
       ...(session.path ? { path: session.path } : {}),
       ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}),
+      ...(session.entrypoint ? { entrypoint: session.entrypoint } : {}),
+      ...(session.sandbox === "on" ? { sandboxed: true } : {}),
       ...(session.pinned ? { pinned: true } : {}),
       ...(session.originSessionId
         ? { originSessionId: session.originSessionId, originLabel: session.originLabel }

@@ -385,7 +385,10 @@ var mcpTools = []mcpTool{
 		Schema: schema(map[string]any{
 			"session": property("string",
 				"Label of the target session, exactly as list_sessions returns it. Not a peer-roster name."),
-			"prompt":  property("string", "What to ask that session's agent to do."),
+			"prompt": property("string",
+				"What to ask that session's agent to do. Capped at 8 KB: it is typed at a "+
+					"terminal prompt, so name the paths, branches and commits to read rather "+
+					"than pasting a diff or a file — the target has the repository."),
 			"project": property("string", "Project name, needed only when two live sessions share a label."),
 			"timeout_seconds": property("number",
 				"Seconds to hold the line for a quick answer, at most 90 — longer is capped, "+
@@ -445,13 +448,15 @@ var mcpTools = []mcpTool{
 			"project": property("string",
 				"Project to open the session in, by name. Defaults to your own project."),
 			"kind": property("string",
-				"What the session runs: claude, codex, opencode, omp, crush, or shell. "+
+				"What the session runs: claude, codex, antigravity, opencode, omp, crush, or shell. "+
 					"Defaults to the same agent you are."),
 			"worktree": property("string",
-				"Branch name for a new git worktree to root the session in. Omit to open the "+
-					"session in the project's own directory, beside yours."),
+				"Branch name for a git worktree to root the session in. A branch that already "+
+					"exists is checked out as it stands; one that does not is created. Omit to "+
+					"open the session in the project's own directory, beside yours."),
 			"base": property("string",
-				"Branch the new worktree starts from. Defaults to the project's current branch."),
+				"Branch a new worktree starts from. Defaults to the project's current branch, "+
+					"and is ignored when the worktree branch already exists."),
 			"model": property("string",
 				"Model the new session's provider runs, spelled exactly as that provider's own "+
 					"--model flag takes it — the name or alias, never a lich name for it. Omit "+
@@ -459,7 +464,8 @@ var mcpTools = []mcpTool{
 					"given one."),
 			"prompt": property("string",
 				"Task to hand the new session as soon as its agent is up. Omit to open it idle "+
-					"and send later."),
+					"and send later. Capped at 8 KB, like send_to_session: name what to read, "+
+					"do not paste it."),
 		}),
 		Run: func(c *client, args mcpArgs) (string, error) {
 			var opened spawn.Session
@@ -509,6 +515,31 @@ var mcpTools = []mcpTool{
 		},
 	},
 	{
+		Name: "rename_session",
+		Description: "Rename a lich session: the name on its card, which is also the name it is " +
+			"addressed by. Omit the session to rename your own — the way a card comes to say " +
+			"what the work in it is, rather than the number it was born with. A name another " +
+			"session in that project already holds is refused, because two sessions under one " +
+			"name is the one thing send_to_session cannot resolve. The name becomes the user's: " +
+			"the provider's own auto-title never overwrites it again.",
+		Schema: schema(map[string]any{
+			"label": property("string", "The new name for the card."),
+			"session": property("string",
+				"Session to rename, by the label on its card or the name it answers to. "+
+					"Omit to rename the session you are running in."),
+			"project": property("string",
+				"Project to narrow to, when the same label exists in more than one."),
+		}, "label"),
+		Run: func(c *client, args mcpArgs) (string, error) {
+			var renamed spawn.Renamed
+			call := []any{c.sessionID(), args.text("session"), args.text("project"), args.text("label")}
+			if err := c.call("spawn.Rename", call, shortCall, &renamed); err != nil {
+				return "", err
+			}
+			return renamedText(renamed), nil
+		},
+	},
+	{
 		Name: "list_worktrees",
 		Description: "The git worktrees of a project: what each is called, whether it has " +
 			"uncommitted work, and which sessions are open in it. Use it before opening a " +
@@ -538,11 +569,14 @@ var mcpTools = []mcpTool{
 			"It is the only route back — a peer message does not reach them, because they are " +
 			"waiting on the ticket and reading nothing else.",
 		Schema: schema(map[string]any{
-			"ticket": property("string", "The ticket from the message you were given."),
+			"ticket": property("string", "The ticket from the message you were given. "+
+				"Leave it out only if that message is no longer in your context — then the "+
+				"request open against this session is answered."),
 			"answer": property("string", "Your answer, in full — nothing else is sent back."),
-		}, "ticket", "answer"),
+		}, "answer"),
 		Run: func(c *client, args mcpArgs) (string, error) {
-			if err := c.call("relay.Reply", []any{args.text("ticket"), args.text("answer")}, shortCall, nil); err != nil {
+			call := []any{c.sessionID(), args.text("ticket"), args.text("answer")}
+			if err := c.call("relay.Reply", call, shortCall, nil); err != nil {
 				return "", err
 			}
 			return "Answer sent.", nil

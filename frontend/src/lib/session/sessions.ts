@@ -10,7 +10,14 @@ import { applyOrder } from "@/lib/reorder"
 
 // Provider ids that can back a session, mirrored from internal/providers.Registry
 // (Go) — keep in sync. A session's kind is one of these or the plain shell.
-export const PROVIDER_KINDS = ["claude", "codex", "opencode", "omp", "crush"] as const
+export const PROVIDER_KINDS = [
+  "claude",
+  "codex",
+  "antigravity",
+  "opencode",
+  "omp",
+  "crush",
+] as const
 export type ProviderKind = (typeof PROVIDER_KINDS)[number]
 
 // What a session's PTY runs: a provider's CLI or the user's shell. Values match
@@ -36,6 +43,15 @@ export interface Session {
   // set by the store: a session created in this run has none, and the hook's
   // later report is not mirrored here — a running session has nothing to resume.
   providerSessionId?: string
+  // The command this terminal opens into, absent for a plain shell and for
+  // every provider session — the store refuses to record one against a card
+  // whose PTY runs an agent.
+  entrypoint?: string
+  // Whether this session's PTY runs inside the sandbox (internal/sandbox).
+  // Absent means it does not — the spawn decides it, from the provider's rung,
+  // the checkout and any per-session override, and reports the verdict back;
+  // the card never re-derives it.
+  sandboxed?: boolean
   // Kept at the head of the project's list and refused a close until unpinned.
   pinned?: boolean
   // The session that asked for this one, when it was opened by delegation:
@@ -238,6 +254,74 @@ export function renameSession(
   }
 }
 
+// setSessionSandboxed records whether a session's PTY runs confined, as the
+// spawn reported it. Unknown ids leave the state untouched, and a value that
+// already matches returns the same object — the event fires on every spawn, and
+// a re-render per respawn of an unchanged card is a card that flickers.
+export function setSessionSandboxed(
+  state: SessionState,
+  sessionId: string,
+  sandboxed: boolean,
+): SessionState {
+  const projectId = projectOfSession(state, sessionId)
+  const current = projectId ? state[projectId] : undefined
+  const session = current?.sessions.find((s) => s.id === sessionId)
+  if (!projectId || !current || !session || (session.sandboxed ?? false) === sandboxed) {
+    return state
+  }
+  return {
+    ...state,
+    [projectId]: {
+      ...current,
+      sessions: current.sessions.map((s) => {
+        if (s.id !== sessionId) {
+          return s
+        }
+        // Dropped rather than set to undefined, so an unconfined session carries
+        // no key at all — the shape the two hydration paths produce.
+        const { sandboxed: _was, ...rest } = s
+        return sandboxed ? { ...rest, sandboxed: true } : rest
+      }),
+    },
+  }
+}
+
+// setSessionEntrypoint records the command a terminal session opens into, and
+// takes the command as the card's label while that label is still whatever lich
+// named it — a card called "Terminal 2" that runs lazygit is a card the user has
+// to open to identify. `auto` is what the store answered about the rename it was
+// asked for in the same breath, so the decision is never guessed here: a card
+// the user named keeps its name, and the command shows in its tooltip instead.
+//
+// Unknown project or session ids are ignored, returning the input state
+// unchanged, and a session that is not a terminal is left alone — the store
+// refuses the write for it, so accepting it here would draw a card that does not
+// match the row behind it.
+export function setSessionEntrypoint(
+  state: SessionState,
+  projectId: string,
+  sessionId: string,
+  entrypoint: string,
+  auto: boolean,
+): SessionState {
+  const current = state[projectId]
+  const session = current?.sessions.find((s) => s.id === sessionId)
+  if (!current || !session || session.kind !== "shell") {
+    return state
+  }
+  return {
+    ...state,
+    [projectId]: {
+      ...current,
+      sessions: current.sessions.map((s) =>
+        s.id === sessionId
+          ? { ...s, entrypoint, ...(auto && entrypoint ? { label: entrypoint } : {}) }
+          : s,
+      ),
+    },
+  }
+}
+
 // The pinned block's stand-in id, for the same reason ROOT_GROUP_KEY exists: it
 // is not a path. The block gathers sessions from every checkout, so it can
 // collide with no worktree — those paths are absolute.
@@ -376,7 +460,14 @@ export function removeProject(state: SessionState, projectId: string): SessionSt
 
 // The provider kinds whose CLI can reopen a conversation by id, mirrored from
 // resumeArgs (Go) — keep in sync.
-const RESUMABLE_KINDS: readonly SessionKind[] = ["claude", "codex", "omp", "opencode", "crush"]
+const RESUMABLE_KINDS: readonly SessionKind[] = [
+  "claude",
+  "codex",
+  "antigravity",
+  "omp",
+  "opencode",
+  "crush",
+]
 
 // resumableSession returns the session whose PTY should ask before it spawns,
 // because it carries the provider conversation it ran before the last restart.
@@ -400,22 +491,31 @@ export function sessionsOf(state: SessionState, projectId: string): Session[] {
   return state[projectId]?.sessions ?? []
 }
 
-// activeTarget resolves what a project screen acts on: the active session's id
-// and the path it lives in — a worktree session resolves to its checkout,
-// everything else to the project root. Pure, and the whole of useActiveSession's
-// answer: every screen inside a project — the terminal, its settings, its pull
-// requests — reads this same triple, and so does the chrome beside them.
+// activeTarget resolves what a project screen acts on: the active session's id,
+// the path it lives in — a worktree session resolves to its checkout, everything
+// else to the project root — which provider it runs, and whether it is confined
+// (the footer's attach button hands a confined session a copy instead of a path
+// it cannot open). Pure, and the whole of
+// useActiveSession's answer: every screen inside a project — the terminal, its
+// settings, its pull requests — reads this same triple, and so does the chrome
+// beside them. kind is "" when no session is active, which is not a SessionKind:
+// a screen with nothing running has no provider, and "shell" would be a claim.
 export function activeTarget(
   state: SessionState,
   projectId: string | null,
   projectPath: string,
-): { sessionId: string; path: string } {
+): { sessionId: string; path: string; kind: SessionKind | ""; sandboxed: boolean } {
   if (!projectId) {
-    return { sessionId: "", path: projectPath }
+    return { sessionId: "", path: projectPath, kind: "", sandboxed: false }
   }
   const sessionId = activeSessionId(state, projectId)
   const session = sessionsOf(state, projectId).find((s) => s.id === sessionId)
-  return { sessionId, path: session?.path || projectPath }
+  return {
+    sessionId,
+    path: session?.path || projectPath,
+    kind: session?.kind ?? "",
+    sandboxed: session?.sandboxed ?? false,
+  }
 }
 
 // A worktree's sessions under one roof. `path` is the checkout root ("" for the
@@ -449,7 +549,7 @@ export function groupByWorktree(sessions: Session[]): SessionGroup[] {
 // dnd-kit sortable id cannot be.
 export const ROOT_GROUP_KEY = "__root__"
 
-export function groupKey(path: string): string {
+function groupKey(path: string): string {
   return path || ROOT_GROUP_KEY
 }
 

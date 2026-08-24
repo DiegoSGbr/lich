@@ -41,19 +41,31 @@ const (
 	wsReadLimit = 1 << 20
 	// tokenBytes is the size of the random connect token.
 	tokenBytes = 16
-	// hookBodyLimit bounds a status POST from the Claude Code hook; the payload
-	// is a tiny JSON object, so anything larger is malformed or hostile.
+	// hookBodyLimit bounds a status POST from a provider's hook; the payload is
+	// a tiny JSON object, so anything larger is malformed or hostile.
 	hookBodyLimit = 4 << 10
-	// These are the only session states the hook may report: busy while Claude
-	// is producing output, done when its turn finishes, waiting when Claude is
-	// blocked on the user (permission prompt or idle input, from Notification),
-	// and idle when the session ends (from SessionEnd) — idle clears the card's
+	// These are the only session states a hook may report, in every provider's
+	// spelling (docs/hooks/session-state.md maps each one's own events onto
+	// them): busy while the agent is producing output, done when its turn
+	// finishes, waiting when it is blocked on the user (a permission prompt, or
+	// an idle prompt), and idle when the session ends — idle clears the card's
 	// indicator so a stale spinner/check does not linger past a session or a
 	// /clear.
 	statusBusy    = "busy"
 	statusDone    = "done"
 	statusWaiting = "waiting"
 	statusIdle    = "idle"
+
+	// statusInterrupted is lich's own: the only state it ever publishes that no
+	// provider reports and no hook may send — parseHookRequest rejects it like
+	// any other unknown word. It says a turn ended because the user stopped it
+	// at the PTY, which is neither a finished turn nor a session that has left,
+	// and lich has to say it itself because three of the five providers raise
+	// nothing at all when a turn is interrupted (see Service.noteInterrupt and
+	// docs/hooks/session-state.md). Consumers that only know the four above read
+	// it as "no state", which clears the card's indicator — the right reading:
+	// an interrupted session is sitting at its prompt with nothing to show.
+	statusInterrupted = "interrupted"
 )
 
 // encodeFrame prefixes payload with the session id. The id must fit one byte
@@ -85,8 +97,12 @@ func decodeFrame(buf []byte) (string, []byte, error) {
 // transport is the local WebSocket endpoint. One client (the webview) is
 // expected; a new connection replaces the previous one.
 type transport struct {
-	mu          sync.Mutex
-	conn        *websocket.Conn
+	mu   sync.Mutex
+	conn *websocket.Conn
+	// out is the live connection's writer (writequeue.go). It is swapped with
+	// conn and under the same lock: the two are one client, and send finding a
+	// connection without its writer would have nowhere to put a frame.
+	out         *writeQueue
 	port        int
 	token       string
 	mux         *http.ServeMux
@@ -100,6 +116,11 @@ type transport struct {
 	// Guarded by mu: set via setRestart after the server goroutine is already
 	// running, and read by the request goroutine handling /restart.
 	restart func() error
+	// fallback is where output goes when the socket cannot carry it — the
+	// /events bridge. Guarded by mu and wired by setFallback, for the same
+	// reason restart is: the service owns the bridge and the transport is built
+	// before it.
+	fallback func(id string, data []byte)
 }
 
 // newTransport starts the listener on a random loopback port. input receives
@@ -255,6 +276,28 @@ func (t *transport) setRestart(fn func() error) {
 	t.mu.Unlock()
 }
 
+// setFallback records where a frame goes when the socket refuses it. Wired after
+// construction like setRestart, and read by each connection's writer when it
+// takes over the delivery the socket stopped doing.
+func (t *transport) setFallback(fn func(id string, data []byte)) {
+	t.mu.Lock()
+	t.fallback = fn
+	t.mu.Unlock()
+}
+
+// emitFallback hands one frame to the bridge. The lookup happens per frame
+// rather than once per connection: the listener answers before the service that
+// owns the bridge has wired it, so a writer that read the callback when its
+// client connected could hold on to nothing for the life of that connection.
+func (t *transport) emitFallback(id string, data []byte) {
+	t.mu.Lock()
+	fn := t.fallback
+	t.mu.Unlock()
+	if fn != nil {
+		fn(id, data)
+	}
+}
+
 // ping is the liveness probe a second lich launch uses to tell "a live lich
 // already holds my pinned port" from "the port is taken by something else": only
 // lich serves this behind the token, so a 204 proves the recorded instance is
@@ -268,13 +311,19 @@ func (t *transport) ping(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// goroutines dumps every goroutine's stack, blocked ones included. It answers
-// the failure a log cannot describe: the window stops updating while the
-// process is still alive, so nothing panicked, nothing exited, and nothing was
-// ever written. `lich rage` fetches this into the bug report; an instance that
-// holds its port and will not answer here is itself the finding. Token-gated
-// like every other endpoint, and deliberately not net/http/pprof: this is one
-// dump of one thing, not a profiling surface.
+// leakHeading separates the leak profile from the stacks above it in the dump,
+// so a reader scrolling the bundle finds the short answer without knowing the
+// endpoint writes two things.
+const leakHeading = "\n\n===== leaked goroutines =====\n\n"
+
+// goroutines dumps every goroutine's stack, blocked ones included, then the
+// leak profile over the same process. It answers the failure a log cannot
+// describe: the window stops updating while the process is still alive, so
+// nothing panicked, nothing exited, and nothing was ever written. `lich rage`
+// fetches this into the bug report; an instance that holds its port and will
+// not answer here is itself the finding. Token-gated like every other endpoint,
+// and deliberately not net/http/pprof: this is one dump of one question, not a
+// profiling surface.
 func (t *transport) goroutines(w http.ResponseWriter, r *http.Request) {
 	if !t.authorized(r) {
 		http.Error(w, "invalid token", http.StatusUnauthorized)
@@ -285,6 +334,23 @@ func (t *transport) goroutines(w http.ResponseWriter, r *http.Request) {
 	// hang and a crash are read side by side.
 	if err := pprof.Lookup("goroutine").WriteTo(w, 2); err != nil {
 		slog.Warn("goroutine dump", "err", err)
+	}
+	writeLeaks(w)
+}
+
+// writeLeaks appends the goroutineleak profile: the goroutines blocked on a
+// channel, mutex or WaitGroup that nothing runnable can still reach, which is
+// exactly the shape of a lich that went quiet. It is the narrow answer the full
+// dump above buries, and it costs a leak-detecting GC to collect — acceptable
+// on a debug endpoint reached by hand, not on a poll. debug level 1 is the
+// readable count-and-stack form; level 2 would fall back to every goroutine
+// again, which is the dump we just wrote.
+func writeLeaks(w io.Writer) {
+	if _, err := io.WriteString(w, leakHeading); err != nil {
+		return
+	}
+	if err := pprof.Lookup("goroutineleak").WriteTo(w, 1); err != nil {
+		slog.Warn("goroutine leak profile", "err", err)
 	}
 }
 
@@ -362,15 +428,18 @@ func servePost[T any](
 // hookRequest is a status POST body. Tool and Detail are the optional pair a
 // pre-tool report carries — the provider's own name for the tool it is about to
 // run, and its own words for what that tool acts on. Both are absent from every
-// other report.
+// other report. Reason is the same kind of field for the other end of the
+// contract: what a `waiting` report is blocked on, absent from every state that
+// is not a question.
 type hookRequest struct {
 	SessionID string `json:"session_id"`
 	State     string `json:"state"`
 	Tool      string `json:"tool"`
 	Detail    string `json:"detail"`
+	Reason    string `json:"reason"`
 }
 
-// hookTextLimit bounds the tool name and detail a report may carry, in runes.
+// hookTextLimit bounds the free text a report may carry, in runes.
 // Over-long values are truncated rather than rejected: they are decoration on a
 // state that has to land either way, and losing the spinner because a command
 // line grew is the worse failure.
@@ -388,7 +457,8 @@ func (t *transport) hook(w http.ResponseWriter, r *http.Request) {
 }
 
 // parseHookRequest validates a status POST body: a session id, one of the known
-// states, and the optional tool pair. It never trusts the payload — an unknown
+// states, the optional tool pair and the optional waiting reason. It never
+// trusts the payload — an unknown
 // state is rejected so a stray or hostile POST can't drive the UI into an
 // undefined status, and the free text is trimmed and capped (see hookTextLimit).
 func parseHookRequest(body []byte) (hookRequest, error) {
@@ -409,6 +479,13 @@ func parseHookRequest(body []byte) (hookRequest, error) {
 	// than shown on its own.
 	if req.Tool == "" {
 		req.Detail = ""
+	}
+	req.Reason = clampRunes(strings.TrimSpace(req.Reason), hookTextLimit)
+	// Only a `waiting` is a question, so only a `waiting` has something to be
+	// waiting for. A reason riding any other state names nothing the card could
+	// draw, and holding it would outlive the block it described.
+	if req.State != statusWaiting {
+		req.Reason = ""
 	}
 	return req, nil
 }
@@ -471,10 +548,33 @@ func parseSessionStart(body []byte) (startRequest, error) {
 	if req.ProviderSessionID == "" {
 		return startRequest{}, errors.New("session-start missing provider_session_id")
 	}
+	if !opaqueID(req.ProviderSessionID) {
+		return startRequest{}, fmt.Errorf(
+			"session-start has an unusable provider_session_id %q", req.ProviderSessionID)
+	}
 	if !providers.Known(req.Provider) {
 		return startRequest{}, fmt.Errorf("session-start has unknown provider %q", req.Provider)
 	}
 	return req, nil
+}
+
+// opaqueID reports whether a provider's conversation id is the opaque token
+// every provider actually reports — a UUID, or something spelled like one.
+//
+// It is checked here, at the only door such an id comes through, because
+// downstream it is pasted into a filesystem glob: the transcript a conversation
+// is read from is located by joining the id onto the harness's directory and
+// globbing what lich cannot reconstruct (transcript.go). A path separator there
+// climbs out of that directory — "../../../../etc/passwd" resolves to a real
+// path — and a glob metacharacter widens the pattern until it matches somebody
+// else's conversation, whose text the palette search would then show and whose
+// tokens the cost readout would bill to this session.
+//
+// Spelled as the characters that make an id something other than a token,
+// rather than as one provider's id format: five providers report these and each
+// picks its own shape.
+func opaqueID(id string) bool {
+	return !strings.ContainsAny(id, `/\*?[]`) && !strings.Contains(id, "..")
 }
 
 // titleRequest is an ai-title POST body.
@@ -483,9 +583,9 @@ type titleRequest struct {
 	Title     string `json:"title"`
 }
 
-// sessionTitle receives the ai-title POST from the Claude Code hook and applies
-// it as the session's label via the setTitle callback, which no-ops when the
-// user has renamed the session.
+// sessionTitle receives the title POST from a provider's hook and applies it as
+// the session's label via the setTitle callback, which no-ops when the user has
+// renamed the session.
 func (t *transport) sessionTitle(w http.ResponseWriter, r *http.Request) {
 	servePost(t, w, r, parseSessionTitle, func(req titleRequest) error {
 		if t.setTitle == nil {
@@ -520,7 +620,7 @@ type touchedRequest struct {
 	SessionID string `json:"session_id"`
 }
 
-// sessionTouched receives a POST from the Claude Code hook when a session likely
+// sessionTouched receives a POST from a provider's hook when a session likely
 // changed files on disk (a file-mutating tool ran) and forwards the session id
 // via the touched callback, which nudges an immediate git-status refresh. It is
 // a best-effort latency optimization over the frontend's steady poll, so a
@@ -559,9 +659,10 @@ func (t *transport) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadLimit(wsReadLimit)
 
+	out := newWriteQueue()
 	t.mu.Lock()
-	previous := t.conn
-	t.conn = conn
+	previous, previousOut := t.conn, t.out
+	t.conn, t.out = conn, out
 	t.mu.Unlock()
 	if previous != nil {
 		// Not a graceful close: that waits for the replaced client's close
@@ -569,6 +670,12 @@ func (t *transport) handle(w http.ResponseWriter, r *http.Request) {
 		// Nothing reads the status anyway — the page reconnects on any close.
 		_ = previous.CloseNow()
 	}
+	if previousOut != nil {
+		// After the close above, so the retired writer's next write fails at
+		// once rather than sitting out the send timeout on a dead socket.
+		previousOut.close()
+	}
+	go out.run(conn, func() { t.forget(conn) }, t.emitFallback)
 	go t.readLoop(conn)
 }
 
@@ -592,38 +699,63 @@ func (t *transport) readLoop(conn *websocket.Conn) {
 	}
 }
 
-// drop forgets conn if it is still the active client.
-func (t *transport) drop(conn *websocket.Conn) {
+// forget clears conn as the transport's client and retires the writer that owned
+// its socket, so the frames still queued take the fallback instead of vanishing
+// with the connection. A no-op once some other connection has taken over.
+func (t *transport) forget(conn *websocket.Conn) {
 	t.mu.Lock()
-	if t.conn == conn {
-		t.conn = nil
+	out := t.out
+	if t.conn != conn {
+		out = nil
+	} else {
+		t.conn, t.out = nil, nil
 	}
 	t.mu.Unlock()
+	if out != nil {
+		out.close()
+	}
+}
+
+// drop forgets conn if it is still the active client.
+func (t *transport) drop(conn *websocket.Conn) {
+	t.forget(conn)
 	_ = conn.Close(websocket.StatusNormalClosure, "")
 }
 
-// send delivers one session's output frame to the connected client. It
-// returns false — and drops the client on write failure — when the caller
-// should fall back to the event bridge. One mutex serializes writes for every
-// session; per-session queues only if a local loopback write ever measurably
-// stalls.
+// send hands one session's output frame to the connected client's writer. It
+// returns false when the caller should fall back to the event bridge itself:
+// there is no client, or the frame cannot be addressed to one. A frame the
+// writer accepts and the socket then refuses is not the caller's problem — the
+// writer takes it to the same bridge, in order (see writequeue.go).
+//
+// It never waits on the socket. The write is the slow part, it is bounded only
+// by wsWriteTimeout, and every session's outbox goroutine comes through here;
+// holding a lock across it would recouple the sessions the outbox queues exist
+// to keep apart.
 func (t *transport) send(id string, data []byte) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.conn == nil {
-		return false
-	}
 	frame, err := encodeFrame(id, data)
 	if err != nil {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), wsWriteTimeout)
-	defer cancel()
-	if err := t.conn.Write(ctx, websocket.MessageBinary, frame); err != nil {
-		t.conn = nil
+	t.mu.Lock()
+	out := t.out
+	t.mu.Unlock()
+	if out == nil {
 		return false
 	}
-	return true
+	return out.push(frame)
+}
+
+// flush waits for the queued output of every session to reach the socket. A
+// session calls it before its exit event so the banner cannot overtake the last
+// bytes the session wrote.
+func (t *transport) flush() {
+	t.mu.Lock()
+	out := t.out
+	t.mu.Unlock()
+	if out != nil {
+		out.flush()
+	}
 }
 
 // TransportInfo tells the frontend where the terminal I/O WebSocket lives. A

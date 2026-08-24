@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -221,9 +222,7 @@ func (t *Table) releaseRefresh() {
 func (t *Table) merge(rates map[string]Rate) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	for model, rate := range rates {
-		t.rates[model] = rate
-	}
+	maps.Copy(t.rates, rates)
 }
 
 // fetch downloads the remote table and reduces it to lich's shape — every entry
@@ -257,7 +256,10 @@ func (t *Table) fetch() (map[string]Rate, error) {
 }
 
 // remoteEntry is the subset of a LiteLLM table entry lich reads. Its other forty
-// fields are ignored, so a change to any of them cannot break this.
+// fields are ignored, so a change to any of them cannot break this. It exists
+// beside Rate only for the JSON names, so its fields are Rate's in order and
+// parseRemote converts rather than copies — a price added to Rate then has one
+// place to be added, not two.
 type remoteEntry struct {
 	Input        float64 `json:"input_cost_per_token"`
 	Output       float64 `json:"output_cost_per_token"`
@@ -279,13 +281,7 @@ func parseRemote(data []byte) (map[string]Rate, error) {
 		if entry.Input == 0 && entry.Output == 0 {
 			continue
 		}
-		rates[model] = Rate{
-			Input:        entry.Input,
-			Output:       entry.Output,
-			CacheRead:    entry.CacheRead,
-			CacheWrite:   entry.CacheWrite,
-			CacheWrite1h: entry.CacheWrite1h,
-		}
+		rates[model] = Rate(entry)
 	}
 	return rates, nil
 }

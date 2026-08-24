@@ -31,6 +31,13 @@ export function binKey(id: string): string {
   return id === "claude" ? "claude.bin" : `provider.${id}.bin`
 }
 
+// binOffKey parks a binary layer without erasing it: the path stays in the
+// store, the layer stops resolving. Mirrors store.binOffKey in Go, scoped
+// exactly like the path it parks.
+export function binOffKey(id: string): string {
+  return `${binKey(id)}.off`
+}
+
 // skipPermissionsKey holds the flag that spawns a provider without its
 // permission prompts, in one of two scopes (mirrors store.skipPermissionsKey in
 // Go, which is what the spawn reads). Two keys because a worktree is a throwaway
@@ -47,6 +54,7 @@ export function skipPermissionsKey(id: string, worktree: boolean): string {
 export const skipPermissionFlags: Record<string, string> = {
   claude: "--dangerously-skip-permissions",
   codex: "--dangerously-bypass-approvals-and-sandbox",
+  antigravity: "--dangerously-skip-permissions",
   opencode: "--auto",
   omp: "--auto-approve",
   crush: "--yolo",
@@ -75,6 +83,74 @@ export function skipLevelPair(level: SkipLevel): { here: boolean; worktrees: boo
   return { here: level === "everywhere", worktrees: level !== "never" }
 }
 
+// sandboxKey holds which sessions of a provider run confined (mirrors
+// store.sandboxKey in Go, which is what the spawn reads). Scoped like binKey —
+// a project value wins over the global one — because the checkout full of
+// somebody else's code is the one to confine, and a scratch project is not.
+export function sandboxKey(id: string): string {
+  return `provider.${id}.sandbox`
+}
+
+// The sandbox grant keys, each handing a confined session one credential its
+// private home took away: the ssh agent a push authenticates through, and the
+// GitHub token gh works through (mirror store.sshAgentKey and store.ghTokenKey
+// in Go, which are what the spawn reads).
+//
+// Two keys rather than one because they open different doors — the agent signs
+// with every identity loaded into it, for any host; the token is one account's,
+// with that account's scopes. Neither carries a provider: a grant describes what
+// exists inside the sandbox, not which agent runs in it. Scoped like sandboxKey,
+// stored as "true" or nothing at all.
+export const SSH_AGENT_KEY = "sandbox.ssh-agent"
+export const GH_TOKEN_KEY = "sandbox.gh-token"
+
+// Which sessions of a provider run confined, as one ladder ordered by how much
+// of the machine a session can reach. "ask" sits second because a session
+// nobody answered for runs unconfined, exactly like "off" — it moves who
+// decides, not what the sandbox is. Mirrors the Sandbox* constants in Go.
+export type SandboxLevel = "off" | "ask" | "worktrees" | "everywhere"
+
+const SANDBOX_LEVELS: readonly SandboxLevel[] = ["off", "ask", "worktrees", "everywhere"]
+
+// sandboxLevel reads the stored value. Anything the ladder does not name is
+// "off": an unknown value must never confine a session nobody asked to confine,
+// nor leave one unconfined that the user meant to protect — and "off" is the
+// only answer that surprises no one, because it is what lich did before.
+export function sandboxLevel(value: string): SandboxLevel {
+  return SANDBOX_LEVELS.find((level) => level === value) ?? "off"
+}
+
+// sandboxDefaultFor is what the new-session dialog arrives showing: the rung
+// applied to the checkout the session will start in. It is the frontend's copy
+// of store.SandboxDefault in Go — the dialog has to show the same answer the
+// spawn would reach on its own, or the box the user leaves untouched means
+// something other than what it shows.
+export function sandboxDefaultFor(level: SandboxLevel, worktree: boolean): boolean {
+  if (level === "everywhere") return true
+  return level === "worktrees" && worktree
+}
+
+// How much of a session's own accounting the footer carries, as one ladder
+// ordered by how much it says. The two settings keys stay exactly as they are —
+// this is the shape the user chooses in, not the shape lich stores.
+export type FooterReadout = "off" | "context" | "cost"
+
+// footerReadout folds the stored pair into a rung. The fourth combination — the
+// cost without the model and the ring — is a readout nobody chose: the cost
+// setting was always the extra one, offered beside a readout that was already
+// there. It reads as the top rung, and choosing that rung back turns both on.
+export function footerReadout(context: boolean, cost: boolean): FooterReadout {
+  if (cost) {
+    return "cost"
+  }
+  return context ? "context" : "off"
+}
+
+// footerReadoutPair is the inverse: the pair a chosen rung writes back.
+export function footerReadoutPair(level: FooterReadout): { context: boolean; cost: boolean } {
+  return { context: level !== "off", cost: level === "cost" }
+}
+
 // readEnabled interprets the stored flag: Claude is enabled by default (it was
 // always offered before the providers feature), every other provider is opt-in.
 // An explicit "1"/"0" overrides the default.
@@ -87,6 +163,8 @@ export function readEnabled(id: string, value: string): boolean {
 export interface ProviderState {
   id: ProviderKind
   name: string
+  /** The executable a session spawns — a provider id is not its command. */
+  binary: string
   installed: boolean
   enabled: boolean
 }
@@ -242,6 +320,7 @@ class ProviderStoreImpl implements ProvidersStore {
         .map(async (provider) => ({
           id: provider.id as ProviderKind,
           name: provider.name,
+          binary: provider.binary,
           installed: provider.installed,
           enabled: readEnabled(provider.id, await this.deps.getEnabled(provider.id)),
         })),

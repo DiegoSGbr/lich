@@ -8,16 +8,19 @@ import type { SessionKind } from "./sessions"
 // line at spawn (providers.AcceptsMCPServer). The kind alone answers it, and
 // that answer cannot go stale.
 //
-// opencode and Crush sessions can have the same tools from the companion plugin
-// (agentplugin.HasTools), and are still given the command here on purpose. What
-// the plugin reports is a fact about what is installed now, not about a session
-// started before the install — it only reaches one on its next restart — and an
-// agent offered a tool it does not have answers the user with an error. The
-// command works in all four and costs nothing.
+// Antigravity, opencode, oh-my-pi and Crush sessions can have the same tools
+// from the companion plugin (agentplugin.HasTools), and are still given the
+// command here on purpose. What the plugin reports is a fact about what is
+// installed now, not about a session started before the install — it only
+// reaches one on its next restart — and an agent offered a tool it does not have
+// answers the user with an error. The command works in all of them and costs
+// nothing.
 //
-// The session's declared kind, never the live agent readout: a shell card
-// running `claude` by hand was spawned without the registration, so it has the
-// command and not the tools.
+// The session's declared kind, never the live agent readout. A terminal is not
+// offered the action at all (SessionCard's canDelegate) — the thing reading its
+// prompt is a shell — so the only kind that ever reaches here is the one the
+// session was spawned as, and that is also the one the registration was decided
+// by.
 const TOOL_KINDS: readonly string[] = ["claude", "codex"]
 
 /**

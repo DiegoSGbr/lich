@@ -9,7 +9,9 @@
 import type {
   AppUpdateStatus,
   BaseStatus,
+  BinaryCheck,
   BranchRules,
+  ClosedSession,
   Branches,
   BrowserHandle,
   CommitIdentity,
@@ -17,6 +19,7 @@ import type {
   Diagnostics as DiagnosticsData,
   DiffStats,
   DraftReviewComment,
+  Attachment,
   DropItem,
   MergeMethod,
   PatchNotes as PatchNotesData,
@@ -26,6 +29,7 @@ import type {
   PullRequestConversation,
   PullRequestDetail,
   PullRequestSummary,
+  QuotaPlan,
   RecentProject,
   ReviewCandidate,
   ReviewEvent,
@@ -144,9 +148,17 @@ export const Terminal = {
 export const DropService = {
   /** Absolute paths for the dropped items found under root, in order; "" where
    * the tree holds no single match and the caller must upload a copy instead.
-   * The upload is not here — its body is the file, so it has its own endpoint
-   * (see lib/terminal/drop-files.ts). */
-  Resolve: (root: string, items: DropItem[]) => call<string[]>("drop.Resolve", [root, items]),
+   * `confined` is whether the session runs in the sandbox: its home is an empty
+   * private one, so the home is not searched for it and anything outside the
+   * checkout falls through to the copy. The upload is not here — its body is
+   * the file, so it has its own endpoint (see lib/terminal/drop-files.ts). */
+  Resolve: (root: string, items: DropItem[], confined: boolean) =>
+    call<string[]>("drop.Resolve", [root, items, confined]),
+  /** Open the native file picker and answer with a path the session can open —
+   * the file's own, or a copy's when a confined session cannot reach it. The
+   * picker runs on the backend rather than here: see internal/drop.Attach. */
+  Attach: (sessionId: string, root: string, confined: boolean) =>
+    call<Attachment>("drop.Attach", [sessionId, root, confined]),
 }
 
 export const ProjectService = {
@@ -167,6 +179,10 @@ export const ProjectService = {
   PickSaveFile: (title: string, defaultName: string) =>
     call<string>("project.PickSaveFile", [title, defaultName]),
   Branch: (path: string) => call<string>("project.Branch", [path]),
+  /** Branch for several checkouts at once, keyed by path; a checkout that names
+   * none is left out. For the lists that want each row's branch once as it is
+   * drawn, rather than the per-path poll a live card subscribes to. */
+  BranchesOf: (paths: string[]) => call<Record<string, string>>("project.BranchesOf", [paths]),
   Diff: (path: string) => call<DiffStats>("project.Diff", [path]),
   /** How far the checkout's base branch has moved and what a merge would
    * collide on. null when the repository has no origin to measure against. */
@@ -286,6 +302,9 @@ export const Store = {
   CloseProject: (id: string) => call<null>("store.CloseProject", [id]),
   /** The closed projects offered for reopening, newest first (capped backend-side). */
   RecentProjects: () => call<RecentProject[] | null>("store.RecentProjects", []),
+  /** sandbox is whether this session runs confined ("on"/"off", "" to follow the
+   * provider's rung). It rides the insert because the PTY reads it on the first
+   * spawn — a second call would race the card this one puts on screen. */
   AddSession: (
     projectID: string,
     sessionID: string,
@@ -293,7 +312,8 @@ export const Store = {
     kind: string,
     path: string,
     nextSeq: number,
-  ) => call<null>("store.AddSession", [projectID, sessionID, label, kind, path, nextSeq]),
+    sandbox = "",
+  ) => call<null>("store.AddSession", [projectID, sessionID, label, kind, path, nextSeq, sandbox]),
   /**
    * AddSession for a session that was opened by delegation: originID is the
    * session that asked for it and originLabel what that one was called then.
@@ -328,11 +348,35 @@ export const Store = {
   /** Resume a parked worktree session under a fresh id, or null when none. */
   ReopenWorktreeSession: (projectID: string, path: string, newSessionID: string) =>
     call<StoredSession | null>("store.ReopenWorktreeSession", [projectID, path, newSessionID]),
+  /** The parked sessions, last closed first — the history the palette browses.
+   * Capped store-side, so this is also how far back a search can reach. */
+  ClosedSessions: () => call<ClosedSession[] | null>("store.ClosedSessions", []),
+  /** Resume one parked session by its own id, or null when it is no longer
+   * parked — another window resumed it, or its worktree was removed. */
+  ReopenSession: (sessionID: string, newSessionID: string) =>
+    call<StoredSession | null>("store.ReopenSession", [sessionID, newSessionID]),
+  /** Delete one parked session for good. Refused on a session that is open: a
+   * card on screen is closed, never forgotten. */
+  ForgetSession: (sessionID: string) => call<null>("store.ForgetSession", [sessionID]),
   /** Drop every session row for a worktree path when the worktree is removed. */
   PurgeWorktreeSessions: (projectID: string, path: string) =>
     call<null>("store.PurgeWorktreeSessions", [projectID, path]),
   RenameSession: (sessionID: string, label: string) =>
     call<null>("store.RenameSession", [sessionID, label]),
+  /** The command a terminal session opens into; "" clears it back to a plain
+   * shell. The store refuses it on anything but a shell session. */
+  SetSessionEntrypoint: (sessionID: string, entrypoint: string) =>
+    call<null>("store.SetSessionEntrypoint", [sessionID, entrypoint]),
+  /** Whether this one session runs confined, overriding the provider's rung for
+   * it alone: "on", "off", or "" to follow the setting. Read on every later
+   * spawn, so a reload and a resume keep the answer the session opened with. */
+  SetSessionSandbox: (sessionID: string, sandbox: string) =>
+    call<null>("store.SetSessionSandbox", [sessionID, sandbox]),
+  /** Name a session from an automatic source — the provider's ai-title, or a
+   * terminal's own entrypoint. A no-op once the user has renamed the card;
+   * answers whether the label actually moved. */
+  SetSessionTitle: (sessionID: string, title: string) =>
+    call<boolean>("store.SetSessionTitle", [sessionID, title]),
   /** The provider conversation id recorded for a session, "" when none. */
   ProviderSession: (sessionID: string) => call<string>("store.ProviderSession", [sessionID]),
   /** Re-attach a provider conversation id to a session row. */
@@ -384,6 +428,13 @@ export const System = {
    * Returns "" when it launched a GUI editor detached, or a shell command line
    * to run in a terminal session when the editor is a terminal editor. */
   OpenInEditor: (dir: string, rel: string) => call<string>("system.OpenInEditor", [dir, rel]),
+  /** Open a session's checkout — the folder itself — in $VISUAL/$EDITOR. Same
+   * two answers as OpenInEditor: "" for a detached GUI launch, or a shell
+   * command line to run in a terminal session. */
+  OpenFolderInEditor: (dir: string) => call<string>("system.OpenFolderInEditor", [dir]),
+  /** Show a session's checkout in the platform's file manager. Rejects a path
+   * that is no longer a folder, so a card outliving its worktree says so. */
+  OpenFolder: (dir: string) => call<null>("system.OpenFolder", [dir]),
   /** Version, platform and log path — the page cannot derive any of the three. */
   Diagnostics: () => call<DiagnosticsData>("system.Diagnostics", []),
   /** Open the log's folder in the platform's file manager, for attaching it. */
@@ -394,11 +445,33 @@ export const System = {
   /** Raise a desktop notification: a headline and an optional second line.
    * The caller decides it is warranted — the backend only delivers. */
   Notify: (summary: string, detail: string) => call<null>("system.Notify", [summary, detail]),
+  /** What confines a session on this machine — "bubblewrap", "sandbox-exec" —
+   * or "" when nothing can. A fact about the machine, not about a provider.
+   * The name rather than a yes: the two backends have different holes, and the
+   * Sandbox pane says which one is in play. */
+  SandboxBackend: () => call<string>("system.SandboxBackend", []),
+  /** The identities loaded in the user's ssh agent, one readable line each.
+   * Shown beside the setting that hands the agent to a confined session: that
+   * setting reads as "let it push with my GitHub key" and actually covers every
+   * key in the list. Empty for no agent, no ssh-add, or an agent holding
+   * nothing — all three mean the same thing to whoever is deciding. */
+  SSHAgentKeys: () => call<string[]>("system.SSHAgentKeys", []),
 }
 
 export const Providers = {
   /** Every known provider with its install state (binary found on PATH). */
   Detect: () => call<DetectedProvider[]>("providers.Detect", []),
+  /** Resolve a configured binary the way the spawn does, and report whether it
+   * can be run. "" answers `empty` — the layer below is what will be used. */
+  Verify: (bin: string) => call<BinaryCheck>("providers.Verify", [bin]),
+}
+
+export const Quota = {
+  /** Plan usage for every provider that meters a subscription, for the account
+   * a session spends — an empty id reads lich's own login, the machine-wide
+   * question. Served from a five-minute cache per account, so calling it often
+   * is cheap and asks nothing extra of endpoints that rate-limit. */
+  Plans: (sessionId: string) => call<QuotaPlan[]>("quota.Plans", [sessionId]),
 }
 
 export const Browser = {

@@ -68,7 +68,7 @@ func TestGHAccountForPath(t *testing.T) {
 	}
 	// A worktree lives outside the project directory; only its session row ties
 	// the path back to the project.
-	if err := svc.AddSession("p1", "s1", "fix", "claude", "/data/worktrees/p1/fix", 2); err != nil {
+	if err := svc.AddSession("p1", "s1", "fix", "claude", "/data/worktrees/p1/fix", 2, ""); err != nil {
 		t.Fatalf("AddSession: %v", err)
 	}
 	if err := svc.SetSetting(ghAccountKey, "p1", "octocat"); err != nil {
@@ -127,6 +127,48 @@ func TestProviderBinResolution(t *testing.T) {
 	}
 }
 
+// TestProviderBinParkedLayer pins what a switched-off layer does: it resolves as
+// if it were unset, while the path it holds stays in the store — which is the
+// whole point of the switch, since deleting the path was the old way to do this.
+func TestProviderBinParkedLayer(t *testing.T) {
+	svc := newTestStore(t)
+	_ = svc.SetSetting("provider.codex.bin", globalScope, "global-codex")
+	_ = svc.SetSetting("provider.codex.bin", "p1", "p1-codex")
+
+	_ = svc.SetSetting("provider.codex.bin.off", "p1", "true")
+	if got := svc.ProviderBin("codex", "p1"); got != "global-codex" {
+		t.Errorf("parked project layer = %q, want global-codex", got)
+	}
+	if got, _ := svc.GetSetting("provider.codex.bin", "p1"); got != "p1-codex" {
+		t.Errorf("parked path = %q, want it kept as p1-codex", got)
+	}
+
+	// Parking the global layer too leaves the provider's own default.
+	_ = svc.SetSetting("provider.codex.bin.off", globalScope, "true")
+	if got := svc.ProviderBin("codex", "p1"); got != "" {
+		t.Errorf("both layers parked = %q, want \"\"", got)
+	}
+	// A project scope parked while global runs still reads the global value.
+	_ = svc.SetSetting("provider.codex.bin.off", globalScope, "false")
+	if got := svc.ProviderBin("codex", "p2"); got != "global-codex" {
+		t.Errorf("unparked global = %q, want global-codex", got)
+	}
+
+	// Anything but the literal "true" is a layer nobody switched off — the key
+	// is absent for every override configured before it existed.
+	_ = svc.SetSetting("provider.codex.bin.off", "p1", "1")
+	if got := svc.ProviderBin("codex", "p1"); got != "p1-codex" {
+		t.Errorf("non-\"true\" off value = %q, want p1-codex", got)
+	}
+
+	// Claude parks through the legacy key's own suffix.
+	_ = svc.SetSetting(claudeBinKey, globalScope, "global-claude")
+	_ = svc.SetSetting(claudeBinKey+".off", globalScope, "true")
+	if got := svc.ProviderBin("claude", "p1"); got != "" {
+		t.Errorf("parked claude = %q, want \"\"", got)
+	}
+}
+
 // TestSkipPermissionsIsScopedByCheckout pins the two scopes apart: the flag a
 // session in the project's own directory reads is not the one a session in a
 // worktree reads, so turning it on for throwaway checkouts leaves the main
@@ -168,5 +210,42 @@ func TestSkipPermissionsIsScopedByCheckout(t *testing.T) {
 	_ = svc.SetSetting("provider.claude.skip-permissions", globalScope, "1")
 	if svc.SkipPermissions(providers.Claude, "p1", "/repo/alpha") {
 		t.Error("value \"1\" skips permissions, want only \"true\" to")
+	}
+}
+
+func TestSessionCustomBin(t *testing.T) {
+	svc := newTestStore(t)
+	if err := svc.AddProject("p1", "one", "/tmp/one"); err != nil {
+		t.Fatalf("add project: %v", err)
+	}
+	if err := svc.AddSession("p1", "s1", "card", providers.Claude, "/tmp/one", 0, ""); err != nil {
+		t.Fatalf("add session: %v", err)
+	}
+
+	// Nothing configured: the session runs the provider's own binary.
+	if svc.SessionCustomBin("s1") {
+		t.Error("unconfigured session reads as custom")
+	}
+	// A session lich has no row for is not custom either — the reading it gates
+	// is the one every session got before this existed.
+	if svc.SessionCustomBin("gone") {
+		t.Error("unknown session reads as custom")
+	}
+
+	// The binary configured for another provider is not this session's.
+	_ = svc.SetSetting(binKey(providers.Codex), globalScope, "/opt/codex")
+	if svc.SessionCustomBin("s1") {
+		t.Error("another provider's binary reads as this session's")
+	}
+
+	_ = svc.SetSetting(claudeBinKey, "p1", "/home/me/claude-work.sh")
+	if !svc.SessionCustomBin("s1") {
+		t.Error("a project override must read as custom")
+	}
+
+	// A parked layer is skipped exactly as ProviderBin skips it.
+	_ = svc.SetSetting(binOffKey(providers.Claude), "p1", "true")
+	if svc.SessionCustomBin("s1") {
+		t.Error("a parked binary must read as the provider's own")
 	}
 }

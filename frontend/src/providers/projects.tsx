@@ -3,8 +3,8 @@ import type { ReactNode } from "react"
 import { toast } from "sonner"
 import { Bell, Folder, MessageSquareDashed } from "lucide-react"
 import { useMatch, useNavigate } from "react-router-dom"
-import type { Project, RecentProject } from "@/lib/api-types"
-import type { StoredProject as StoreProject } from "@/lib/api-types"
+import type { ClosedSession, Project, RecentProject } from "@/lib/api-types"
+import type { StoredProject as StoreProject, StoredSession } from "@/lib/api-types"
 import { ProjectService, Store, System } from "@/lib/rpc"
 import { onAppEvent } from "@/lib/app-events"
 import {
@@ -22,7 +22,9 @@ import {
   restoreSession,
   sessionsOf,
   setActiveSession,
+  setSessionEntrypoint as recordEntrypoint,
   setSessionPinned,
+  setSessionSandboxed,
   type Session,
   type SessionKind,
   type SessionState,
@@ -40,15 +42,18 @@ import {
   CLOSED_EVENT,
   OPENED_EVENT,
   RELAY_STALLED_EVENT,
+  SANDBOX_EVENT,
   STATUS_EVENT,
   TITLE_EVENT,
   TOUCHED_EVENT,
   decideStatusNotice,
   isIdEvent,
   isRelayStalledEvent,
+  isSandboxEvent,
   isStatusEvent,
   isTitleEvent,
   shouldToastAttention,
+  statusReason,
   toClosedSession,
   toOpenedSession,
   toSessionStatus,
@@ -68,6 +73,22 @@ export { useProjects } from "./projects-context"
 
 const newSessionId = (): string => crypto.randomUUID()
 
+// cardFromStored turns the row a resume hands back into the card the sidebar
+// draws. Shared by both doors into a resume — the worktree picker and the
+// history list — so a field one carried and the other dropped cannot happen.
+const cardFromStored = (restored: StoredSession): Session => ({
+  id: restored.id,
+  label: restored.label,
+  kind: isSessionKind(restored.kind) ? restored.kind : "claude",
+  path: restored.path,
+  ...(restored.providerSessionId ? { providerSessionId: restored.providerSessionId } : {}),
+  ...(restored.entrypoint ? { entrypoint: restored.entrypoint } : {}),
+  ...(restored.sandbox === "on" ? { sandboxed: true } : {}),
+  ...(restored.originSessionId
+    ? { originSessionId: restored.originSessionId, originLabel: restored.originLabel }
+    : {}),
+})
+
 // The first session of any project is always "Session 1"; the counter then
 // points at 2 for the next one.
 const FIRST_LABEL = "Session 1"
@@ -84,14 +105,24 @@ const UNLABELED_SESSION = "A session"
 
 // ProjectsProvider is the write-through layer over the SQLite store: it mirrors
 // every mutation to the store and hydrates from it on launch so open projects
-// and their sessions survive restarts. In-project mutations read the latest
-// rendered session state through sessionsRef, which is safe because none of them
-// awaits a state-changing call before reading it.
+// and their sessions survive restarts. In-project mutations read session state
+// through sessionsRef and publish it through commit, which keeps the two in step
+// without waiting for a render.
 export function ProjectsProvider({ children }: { children: ReactNode }) {
   const [projects, setProjects] = useState<Project[]>([])
   const [sessions, setSessions] = useState<SessionState>({})
   const sessionsRef = useRef(sessions)
   sessionsRef.current = sessions
+  // commit publishes new session state and advances the ref in the same breath.
+  // Every mutation reads the ref, and React renders once per tick at the
+  // earliest: two of them inside one tick — a worktree's occupants being closed
+  // together, two backend events delivered back to back — would otherwise both
+  // read the state from before the first, and the second would put back what the
+  // first took away.
+  const commit = useCallback((next: SessionState) => {
+    sessionsRef.current = next
+    setSessions(next)
+  }, [])
   const projectsRef = useRef(projects)
   projectsRef.current = projects
   // The always-present Home tab's project id, resolved at launch — a pinned,
@@ -127,7 +158,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
 
   const applyLoaded = useCallback((loaded: StoreProject[]) => {
     setProjects(loaded.map(toProject))
-    setSessions(buildSessionState(loaded))
+    commit(buildSessionState(loaded))
   }, [])
 
   // Restore the workspace once on launch, and seed the always-present Home tab:
@@ -154,8 +185,8 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     })()
   }, [applyLoaded])
 
-  // The backend auto-applies the Claude ai-title as a session's label (only
-  // while the user has not renamed it) and emits this event with the change.
+  // A label changed outside the window: the auto-applied Claude ai-title (only
+  // while the user has not renamed it), or `lich rename` and its MCP tool.
   // Mirror it into local state so the card updates live; the store already
   // persisted it, so this never writes back.
   useEffect(() => {
@@ -170,7 +201,23 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       }
       const next = relabelSession(sessionsRef.current, projectId, id, label)
       if (next !== sessionsRef.current) {
-        setSessions(next)
+        commit(next)
+      }
+    })
+    return () => off()
+  }, [])
+
+  // Every spawn reports whether its PTY runs confined. Mirrored into local
+  // state so the card wears its mark the moment the session opens, rather than
+  // at the next reload — the row is already written, so this never writes back.
+  useEffect(() => {
+    const off = onAppEvent(SANDBOX_EVENT, (data) => {
+      if (!isSandboxEvent(data)) {
+        return
+      }
+      const next = setSessionSandboxed(sessionsRef.current, data.id, data.confined)
+      if (next !== sessionsRef.current) {
+        commit(next)
       }
     })
     return () => off()
@@ -195,7 +242,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       }
       const next = adoptSession(sessionsRef.current, projectId, session, nextSeq)
       if (next !== sessionsRef.current) {
-        setSessions(next)
+        commit(next)
       }
     })
     return () => off()
@@ -216,7 +263,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
         closed.activeId,
       )
       if (next !== sessionsRef.current) {
-        setSessions(next)
+        commit(next)
       }
     })
     return () => off()
@@ -249,21 +296,28 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
   // which is what its sessions and its worktree directory hang off. Cancelling
   // leaves the row exactly as it was, to relocate on the next attempt; a
   // directory another project already holds is refused backend-side.
+  //
+  // Answers whether the project is open afterwards, for the caller that has more
+  // to do once it is: resuming a session of a closed project reopens the project
+  // first, and a cancelled relocate has to stop that resume rather than land a
+  // card in a project the window is not holding.
   const openRecent = useCallback(
-    async (recent: RecentProject) => {
+    async (recent: RecentProject): Promise<boolean> => {
       if (await ProjectService.Exists(recent.path)) {
         await adopt(recent)
-        return
+        return true
       }
       try {
         const moved = await ProjectService.Relocate(recent.id)
         if (!moved) {
-          return
+          return false
         }
         await adopt(moved)
         toast.success(`${moved.name} now opens ${displayPath(moved.path)}`)
+        return true
       } catch (error) {
         toast.error(`Relocate failed: ${errorText(error)}`)
+        return false
       }
     },
     [adopt],
@@ -293,7 +347,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       }
       const index = projects.findIndex((project) => project.id === id)
       setProjects((prev) => prev.filter((project) => project.id !== id))
-      setSessions((prev) => removeProject(prev, id))
+      commit(removeProject(sessionsRef.current, id))
       void Store.CloseProject(id)
       // Closing a background tab leaves focus untouched; closing the active one
       // falls back to the previous tab (then the next, then Home when none left).
@@ -312,20 +366,30 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     const next = addSession(sessionsRef.current, projectId, sessionId, resolvedKind, path)
     const project = next[projectId]
     const created = project.sessions[project.sessions.length - 1]
-    setSessions(next)
+    commit(next)
     void Store.AddSession(projectId, sessionId, created.label, resolvedKind, path, project.nextSeq)
     return sessionId
   }, [])
 
+  // sandbox is the answer the new-worktree dialog collected: "on", "off", or ""
+  // when the machine cannot confine anything and nothing was asked.
   const newWorktreeSession = useCallback(
-    (projectId: string, wt: { name: string; path: string }) => {
+    (projectId: string, wt: { name: string; path: string }, sandbox = "") => {
       const sessionId = newSessionId()
       const kind = projectDefaultProviderKind(projectId)
       const next = addSession(sessionsRef.current, projectId, sessionId, kind, wt.path, wt.name)
       const project = next[projectId]
       const created = project.sessions[project.sessions.length - 1]
-      setSessions(next)
-      void Store.AddSession(projectId, sessionId, created.label, kind, wt.path, project.nextSeq)
+      commit(next)
+      void Store.AddSession(
+        projectId,
+        sessionId,
+        created.label,
+        kind,
+        wt.path,
+        project.nextSeq,
+        sandbox,
+      )
       return sessionId
     },
     [],
@@ -341,19 +405,40 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
         newWorktreeSession(projectId, wt)
         return
       }
-      const session: Session = {
-        id: restored.id,
-        label: restored.label,
-        kind: isSessionKind(restored.kind) ? restored.kind : "claude",
-        path: restored.path,
-        ...(restored.providerSessionId ? { providerSessionId: restored.providerSessionId } : {}),
-        ...(restored.originSessionId
-          ? { originSessionId: restored.originSessionId, originLabel: restored.originLabel }
-          : {}),
-      }
-      setSessions(restoreSession(sessionsRef.current, projectId, session))
+      commit(restoreSession(sessionsRef.current, projectId, cardFromStored(restored)))
     },
     [newWorktreeSession],
+  )
+
+  // Resume one session picked out of the history, wherever it was parked. The
+  // project comes back first when its tab is gone — a card cannot land in a
+  // project the window is not holding — and a cancelled relocate stops the
+  // resume rather than reopening the session into nowhere.
+  //
+  // A row the store no longer has is not an error: another window resumed it, or
+  // its worktree was removed since the list was drawn. The toast says which,
+  // because the row disappearing with no explanation reads as a failure.
+  const resumeClosedSession = useCallback(
+    async (closed: ClosedSession) => {
+      if (!sessionsRef.current[closed.projectId]) {
+        const opened = await openRecent({
+          id: closed.projectId,
+          name: closed.projectName,
+          path: closed.projectPath,
+        })
+        if (!opened) {
+          return
+        }
+      }
+      const restored = await Store.ReopenSession(closed.id, newSessionId())
+      if (!restored) {
+        toast(`${closed.label} is no longer available to resume`)
+        return
+      }
+      commit(restoreSession(sessionsRef.current, closed.projectId, cardFromStored(restored)))
+      navigate(`/projects/${closed.projectId}`)
+    },
+    [openRecent, navigate],
   )
 
   // dropSession removes a session's card and persists that removal via `persist`
@@ -371,55 +456,42 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       if (removed === sessionsRef.current) {
         return Promise.resolve()
       }
-      setSessions(removed)
+      commit(removed)
       return persist(activeSessionId(removed, projectId))
     },
     [],
   )
 
-  // Undo re-creates the row a close deleted, from what the page still holds,
-  // rather than parking it for the toast's lifetime: parking would need a
-  // reopen-by-id the store has no other reason to grow, and every app exit
-  // inside the toast window would strand a hidden parked row that a later
-  // worktree resume could resurrect. Re-creating owns no window — the close is
-  // final the moment it is made, and the undo is a plain new write. What the
-  // row does not carry back: label_auto (a restored card is auto-titleable
-  // again, even if its name was hand-picked) and the cost ledgers of any
-  // transcript it will not run through again.
+  // Undo puts the parked row back rather than re-creating one: every close parks
+  // now, so the reopen-by-id the history list needed is the same door an undo
+  // wants, and re-inserting a second row for a session the store still holds
+  // would leave the first one hidden in the history forever.
   //
-  // The PTY is not held open for the window either — a closed session's terminal
-  // is gone. The restored card comes back unspawned, so the resume prompt is
-  // what brings the conversation with it, exactly as for a parked worktree.
+  // What it therefore keeps that the old re-insert dropped: label_auto, the cost
+  // ledgers, and the position — the resume appends and the reorder below puts the
+  // card back in its slot.
+  //
+  // The PTY is not held open for the toast's lifetime — a closed session's
+  // terminal is gone. The restored card comes back unspawned under a fresh id, so
+  // the resume prompt is what brings the conversation with it, exactly as for a
+  // parked worktree.
   const restoreClosedSession = useCallback(
-    (projectId: string, session: Session, index: number, nextSeq: number) => {
-      const next = restoreSession(sessionsRef.current, projectId, session, index)
+    async (projectId: string, session: Session, index: number) => {
+      const restored = await Store.ReopenSession(session.id, newSessionId())
+      if (!restored) {
+        toast.error(`Could not bring ${session.label} back`)
+        return
+      }
+      const next = restoreSession(sessionsRef.current, projectId, cardFromStored(restored), index)
       if (next === sessionsRef.current) {
         return // the project was closed while the toast was up
       }
-      setSessions(next)
-      const order = sessionsOf(next, projectId).map((s) => s.id)
-      const {
-        id,
-        label,
-        kind,
-        path = "",
-        providerSessionId,
-        originSessionId = "",
-        originLabel = "",
-      } = session
-      void Store.AddSessionFrom(
+      commit(next)
+      // The resume appends, so the slot the card went back to is a reorder.
+      void Store.ReorderSessions(
         projectId,
-        id,
-        label,
-        kind,
-        path,
-        nextSeq,
-        originSessionId,
-        originLabel,
+        sessionsOf(next, projectId).map((s) => s.id),
       )
-        .then(() => providerSessionId && Store.SetProviderSession(id, providerSessionId))
-        // AddSession appends: the slot the card went back to is a reorder.
-        .then(() => Store.ReorderSessions(projectId, order))
     },
     [],
   )
@@ -432,31 +504,20 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
         return
       }
       const session = project.sessions[index]
-      const { nextSeq } = project
-      // The conversation id lives on the row, not on the card — a session started
-      // in this run never mirrors it into the page — so it is read back before
-      // the delete takes it with it: an undo without it restores an empty card.
-      const conversation = session.providerSessionId
-        ? Promise.resolve(session.providerSessionId)
-        : Store.ProviderSession(sessionId).catch(() => "")
-      const deleted = dropSession(projectId, sessionId, (activeID) =>
-        conversation.then(() => Store.DeleteSession(projectId, sessionId, activeID)),
+      // Parked, not deleted: the row is what the history lists and what an undo
+      // resumes, and its conversation id, cost ledgers and chosen name all ride
+      // on it. Removing the checkout is the one close that still deletes
+      // (discardSession), because a row must not outlive its directory.
+      const parked = dropSession(projectId, sessionId, (activeID) =>
+        Store.CloseSession(projectId, sessionId, activeID),
       )
       toast(`Closed ${session.label}`, {
         duration: UNDO_TOAST_MS,
         action: {
           label: "Undo",
-          // Waits on the delete: the store can sit on a lock for seconds, and an
-          // insert that overtook it would be deleted right back out.
-          onClick: () =>
-            void Promise.all([conversation, deleted]).then(([providerSessionId]) =>
-              restoreClosedSession(
-                projectId,
-                { ...session, ...(providerSessionId ? { providerSessionId } : {}) },
-                index,
-                nextSeq,
-              ),
-            ),
+          // Waits on the park: the store can sit on a lock for seconds, and a
+          // resume that overtook it would find the row still open and do nothing.
+          onClick: () => void parked.then(() => restoreClosedSession(projectId, session, index)),
         },
       })
     },
@@ -472,6 +533,8 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     [dropSession],
   )
 
+  // closeSession without the toast: the keep-or-remove dialog already asked, so
+  // there is nothing left to offer an undo for.
   const keepSession = useCallback(
     (projectId: string, sessionId: string) => {
       void dropSession(projectId, sessionId, (activeID) =>
@@ -486,7 +549,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     if (next === sessionsRef.current) {
       return
     }
-    setSessions(next)
+    commit(next)
     void Store.SetActiveSession(projectId, sessionId)
   }, [])
 
@@ -608,6 +671,10 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       }
       const label = project.sessions.find((s) => s.id === id)?.label ?? UNLABELED_SESSION
       const projectName = projectsRef.current.find((p) => p.id === projectId)?.name
+      // Read off the raw event like the status above, and for the same reason:
+      // the store collapses a repeat "waiting", and a second prompt in one turn
+      // is a second question to show.
+      const reason = statusReason(data)
 
       // The desktop channel answers to window focus and to its own per-status
       // preference, both decided by decideStatusNotice; the toast below keeps
@@ -635,6 +702,12 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       toast(
         <div className="flex min-w-0 flex-col">
           <span>{label} needs your input</span>
+          {/* What it is blocked on, when the provider's event had words for it
+              (docs/hooks/session-state.md). The toast is read from across the
+              screen and its whole job is to say which card is worth the trip. */}
+          {reason && (
+            <span className="mt-0.5 truncate text-xs text-muted-foreground">{reason}</span>
+          )}
           {projectName && (
             <span className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
               <Folder className="size-3 shrink-0" />
@@ -658,23 +731,42 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     return () => off()
   }, [navigate, activateSession])
 
-  // Opening a project puts its cards on screen, so its sessions' statuses count
-  // as seen — and the cleanup marks them again on the way out, with the project
-  // being left. Without that second pass, a turn that finished while you sat in
-  // the project would badge the tab you just walked away from. A turn still
-  // running keeps its tab badged either way: only "done" reads this.
+  // The one session whose terminal is on screen, which is the only one the user
+  // can be said to have read. Everything that answers "what came back while I
+  // was away" hangs off it: the card's own ring, its project's tab badge and
+  // the notification queue all ask the same question of the same mark.
+  //
+  // Three moments count as reading it: arriving at the card, a report landing
+  // while it is on screen, and coming back to a window that was in the
+  // background. The window's focus is what separates the last two from a card
+  // left open in an app nobody is looking at — the same fact the desktop
+  // notification answers to, and one only the page holds. The cleanup marks the
+  // card being left, so a turn that finished while it was on screen does not
+  // badge the tab on the way out.
+  const focusedSessionId = activeProjectId ? activeSessionId(sessions, activeProjectId) : ""
   useEffect(() => {
-    if (!activeProjectId) {
+    if (!focusedSessionId) {
       return
     }
-    const markSeen = () => {
-      for (const session of sessionsOf(sessionsRef.current, activeProjectId)) {
-        markSessionSeen(session.id)
+    const markSeen = () => markSessionSeen(focusedSessionId)
+    const markSeenIfWatched = () => {
+      if (document.hasFocus()) {
+        markSeen()
       }
     }
-    markSeen()
-    return markSeen
-  }, [activeProjectId])
+    markSeenIfWatched()
+    const off = onAppEvent(STATUS_EVENT, (data) => {
+      if (isIdEvent(data) && data.id === focusedSessionId) {
+        markSeenIfWatched()
+      }
+    })
+    window.addEventListener("focus", markSeen)
+    return () => {
+      off()
+      window.removeEventListener("focus", markSeen)
+      markSeen()
+    }
+  }, [focusedSessionId])
 
   // A session that likely changed files on disk nudges an immediate git-status
   // refresh for the path its card watches (its worktree, else the project's),
@@ -720,7 +812,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     if (next === sessionsRef.current) {
       return
     }
-    setSessions(next)
+    commit(next)
     void Store.ReorderSessions(projectId, ids)
   }, [])
 
@@ -729,8 +821,29 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     if (next === sessionsRef.current) {
       return
     }
-    setSessions(next)
+    commit(next)
     void Store.RenameSession(sessionId, label)
+  }, [])
+
+  // setEntrypoint records the command a terminal opens into and reports back,
+  // because saving it changes nothing the user can see: the running PTY keeps
+  // whatever is in it, and the command only takes over on the next spawn. The
+  // card is left to say the rest — its name once lich still owns the name, its
+  // tooltip once the user has taken it over.
+  const setEntrypoint = useCallback((projectId: string, sessionId: string, entrypoint: string) => {
+    Store.SetSessionEntrypoint(sessionId, entrypoint)
+      // The store answers whether the label actually moved; it refuses a card
+      // the user has renamed, and that answer is what decides the card here.
+      .then(() => (entrypoint ? Store.SetSessionTitle(sessionId, entrypoint) : false))
+      .then((renamed) => {
+        commit(recordEntrypoint(sessionsRef.current, projectId, sessionId, entrypoint, !!renamed))
+        toast.success(entrypoint ? "Entrypoint set" : "Entrypoint cleared", {
+          description: entrypoint
+            ? "Runs the next time this terminal starts."
+            : "This terminal starts a plain shell again.",
+        })
+      })
+      .catch((error: unknown) => toast.error(`Could not save the entrypoint: ${errorText(error)}`))
   }, [])
 
   const pinSession = useCallback((projectId: string, sessionId: string, pinned: boolean) => {
@@ -738,7 +851,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     if (next === sessionsRef.current) {
       return
     }
-    setSessions(next)
+    commit(next)
     void Store.SetSessionPinned(sessionId, pinned)
   }, [])
 
@@ -754,11 +867,13 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       newSession,
       newWorktreeSession,
       reopenWorktreeSession,
+      resumeClosedSession,
       closeSession,
       discardSession,
       keepSession,
       activateSession,
       renameSession,
+      setEntrypoint,
       pinSession,
       reorderProjects,
       reorderSessions,
@@ -774,11 +889,13 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       newSession,
       newWorktreeSession,
       reopenWorktreeSession,
+      resumeClosedSession,
       closeSession,
       discardSession,
       keepSession,
       activateSession,
       renameSession,
+      setEntrypoint,
       pinSession,
       reorderProjects,
       reorderSessions,

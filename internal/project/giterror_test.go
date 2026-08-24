@@ -26,8 +26,14 @@ func TestGitMessage(t *testing.T) {
 			"A branch or worktree with that name already exists.",
 		},
 		{
-			"a branch checked out elsewhere",
+			"a branch checked out elsewhere, git before 2.36",
 			"fatal: 'fix/poll' is already checked out at '/data/worktrees/p/fix'",
+			errTest,
+			"That branch is already checked out in another worktree.",
+		},
+		{
+			"a branch checked out elsewhere, git since 2.36",
+			"fatal: 'fix/poll' is already used by worktree at '/data/worktrees/p/fix'",
 			errTest,
 			"That branch is already checked out in another worktree.",
 		},
@@ -36,6 +42,14 @@ func TestGitMessage(t *testing.T) {
 			"fatal: '/data/worktrees/p/fix' contains modified or untracked files, use --force to delete it",
 			errTest,
 			"That worktree has uncommitted changes. Remove it from the sidebar to discard them.",
+		},
+		{
+			"a key whose passphrase nothing can be typed into",
+			"ssh_askpass: exec(/usr/lib/ssh/ssh-askpass): No such file or directory\r\n" +
+				"git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.",
+			errTest,
+			"That remote's ssh key needs a passphrase, and lich has no terminal to ask for it. " +
+				"Load the key with `ssh-add` in a terminal, then try again.",
 		},
 		{
 			"a remote that rejected the key",
