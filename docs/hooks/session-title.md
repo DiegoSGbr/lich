@@ -51,15 +51,17 @@ where it is cut, is the client's business.
 **A client that trims does it by codepoint, never by byte.** lich takes the
 string as sent and the card truncates what will not fit, so a title cut through
 the middle of a character is not rejected anywhere — it reaches the card as a
-trailing `U+FFFD`, and only for a title whose 80th character is not ASCII.
-`cut -c` is the way to get there: it counts characters only where the locale
-says UTF-8, and bytes under `LC_ALL=C`. lich passes the environment it was
-launched with straight into the PTY (`internal/terminal/childenv.go` drops
-AppImage internals and nothing else, and the sandbox sets only `HOME`), so a
-session started from a desktop carries that desktop's locale and never sees
-this. One started where the locale is not set does, and the report is the same
-shape either way — which is what makes it a thing to write down rather than to
-catch.
+trailing `U+FFFD`, and only when a multibyte character straddles byte 80. Which
+character that is depends on every multibyte one before it, so the 80th
+character being ASCII does not make a title safe: `é` + 77 ASCII + `é` splits on
+its second `é` while the 80th character is a plain `b`. `cut -c` is the way to
+get there: it counts characters only where the locale says UTF-8, and bytes
+under `LC_ALL=C`. lich passes the environment it was launched with straight into
+the PTY (`internal/terminal/childenv.go` drops AppImage internals and nothing
+else, and the sandbox sets only `HOME`), so a session started from a desktop
+carries that desktop's locale and never sees this. One started where the locale
+is not set does, and the report is the same shape either way — which is what
+makes it a thing to write down rather than to catch.
 
 Send it on `Stop`. Re-sending on every `Stop` is fine — lich only applies it
 while the label is still automatic (see below), so a stable title is idempotent.
