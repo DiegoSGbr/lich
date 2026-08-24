@@ -56,7 +56,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
-import { System, Terminal as TerminalService } from "@/lib/rpc"
+import { Browser, System, Terminal as TerminalService } from "@/lib/rpc"
 import { queuePaste } from "@/lib/terminal/paste-queue"
 import type { DelegateGroup } from "@/lib/session/delegate-targets"
 import { delegatePrompt, delegateWorktreePrompt } from "@/lib/session/delegate-prompt"
@@ -66,7 +66,6 @@ import { requestTerminalFocus } from "@/lib/terminal/focus-request"
 import { useSessionIntent } from "@/lib/use-sidebar-intent"
 import { useProjects } from "@/providers/projects"
 import { SessionTargetPicker } from "./SessionTargetPicker"
-import { toast } from "sonner"
 import { EntrypointDialog } from "./EntrypointDialog"
 
 interface SessionCardProps {

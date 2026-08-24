@@ -477,6 +477,8 @@ export interface BrowserHandle {
   title: string
   owner: string
   headed: boolean
+}
+
 /** internal/providers.Check — what a configured binary resolves to. `path` is
  * the executable a session would spawn, empty for every status but "ok". */
 export interface BinaryCheck {
