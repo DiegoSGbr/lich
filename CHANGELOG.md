@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   badge only looked again when the branch or its last commit moved, and opening
   a pull request moves neither, so it waited for the window to lose and regain
   focus.
+- **The native window opens on Windows.** It looked fonts up through
+  fontconfig, which Windows does not ship, so it closed at launch and lich
+  fell back to the web window. On Windows it now finds the installed fonts
+  itself, Cascadia Mono or Consolas for the terminal by default, and the font
+  pickers in Settings list them.
 
 ## [0.68.0] - 2026-10-16
 
