@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The native window offers to remove a worktree when its last session closes.** The
+  Closed toast gains Remove worktree beside Undo; a worktree lich did not create, or
+  one with uncommitted changes, is named in a dialog before it goes.
+
 - **The native window's terminal takes the cell under the pointer.** A click,
   a drag selection, a link and a program tracking the mouse all read the
   pointer offset by the terminal's padding, so the cell they took sat below
