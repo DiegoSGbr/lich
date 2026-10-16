@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"os"
 	"sync"
 
 	"gioui.org/app"
@@ -83,13 +85,18 @@ func (u *window) quitLich() {
 	u.leave()
 }
 
-// leave closes the window for good, past onClosing.
+// leave closes the window for good, past onClosing, and ends the process.
+// It exits rather than wait for the DestroyEvent: on macOS Gio sends that
+// from the view's dealloc, which AppKit runs when its event loop next wakes,
+// so a window closed while nothing touches the machine stayed alive.
 func (u *window) leave() {
 	c := &u.closer
 	c.mu.Lock()
 	c.leaving, c.running = true, 0
 	c.mu.Unlock()
+	log.Print("closing the window")
 	u.win.Perform(system.ActionClose)
+	os.Exit(0)
 }
 
 // layoutClosePrompt draws CloseDialog while a close is held.
