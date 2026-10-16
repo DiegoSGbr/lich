@@ -46,6 +46,8 @@ from `main` either drowns in merges or freezes the web app for months.
   `lich-native` next to the `lich` binary with the backend's port and token in its environment. Closing the
   native window ends nothing: the backend and its sessions go on, and the web window can be opened on them
   again.
+- **`lich gallery`** opens `lich-gallery` (built from `native/cmd/ui-gallery`), the UI kit's gallery, which needs no
+  backend; it is looked up beside `lich` the same way, or at `LICH_GALLERY`.
 - **`frontend/` and `shell/` stay untouched** until the cutover. The native window does not reuse the
   frontend's code; it is a reference for what to port, nothing more.
 
@@ -64,12 +66,30 @@ built from a pinned Ghostty commit.
   the endpoints back, and the native window says another window took over instead of going stale. Making both
   endpoints accept several clients is what using the two side by side would take; it is not needed to
   homologate the native window.
-- **The tray and `lich focus` open the web window.** "Show lich" and `lich focus` know only the web window, so
-  with the native one open they open a second, competing client.
-- **No replay of per-session live state.** The working directory a terminal moved to and the last turn's
-  usage (model, context) arrive only as events; a window that connects later shows the checkout's path and no
-  usage until the next `cd` or turn. The web window has the same gap after a reload; a snapshot RPC closes it
-  for both.
+- **Settings › Window picks the window lich opens** (`window.kind`, web by default). A launch, the tray's
+  Show lich, a second launch and `lich focus` all open the chosen one (`system.ShowWindow`), closing the other
+  first: the web window through `system.CloseWindow`, the native one through the `window-close` event. The
+  tray's second item opens the other window without changing the choice, and so does Switch now in the
+  dialog that changing the choice offers. A native window that is missing
+  beside `lich`, or ends before it attached, leaves the web window open in its place, with a toast saying why
+  (`system.TakeWindowFallback`). macOS has no native window build, so the choice is not offered there.
+- **No replay of a session's working directory.** The directory a terminal moved to arrives only as an event;
+  a window that connects later shows the checkout's path until the next `cd`. A session's status and usage are
+  not part of the gap: the native window reads `terminal.TurnStates` right after attaching to `/events`. The web
+  window has the cwd gap too, and still the status and usage one after a reload; the same RPC would close them.
+- **Clickable notifications are Linux only.** The native window talks to the freedesktop notification server
+  itself (`desktop_notes_linux.go`); on Windows and macOS it still raises the backend's plain `system.Notify`,
+  with no click, no replacing and nothing taken down. On Wayland, Open brings the window up through
+  xdg-activation (`Window.Activate` in the lichdotdev/gio fork) with the token the server hands over; a
+  compositor may only mark the window urgent instead (Hyprland does unless `misc:focus_on_activate` is on).
+  What each notification server makes of it:
+  - **swaync** draws Open and Dismiss as buttons and hands over the activation token, so Open raises the
+    window. It crops the icon to a circle, which is why lich's icon is a disc with its badge inside.
+  - **mako** draws no buttons: a left click is Open, a right click dismisses, and `makoctl menu` lists both.
+  - **GNOME Shell and KDE Plasma** draw the buttons.
+  - **dunst** closes a note on a left click without running its action unless its config says
+    `mouse_left_click = do_action, close_current`.
+  Measured with swaync and mako on Hyprland; dunst, GNOME, KDE and niri are read from their documentation.
 - **Translations are TypeScript.** The interface catalogs live in `frontend/src/lib/i18n`; the native window
   needs the same strings. Before the native window shows user text beyond the spike's, the catalogs move to a
   form both windows read.

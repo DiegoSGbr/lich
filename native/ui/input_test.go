@@ -72,6 +72,28 @@ func TestTextareaGrowsWithItsText(t *testing.T) {
 	}
 }
 
+func TestTextareaSpacesLinesAtTextSMLeading(t *testing.T) {
+	th, ed := testTheme(), new(widget.Editor)
+	ta := th.Textarea(ed, "")
+	ed.SetText(strings.Repeat("line\n", 9))
+	ten := inputSize(ta.Layout, 300, 1000).Y
+	ed.SetText(strings.Repeat("line\n", 10))
+	eleven := inputSize(ta.Layout, 300, 1000).Y
+	// text-sm is 14px/20px: each added line adds one 20px line box.
+	if got := eleven - ten; got != 20 {
+		t.Errorf("one more line grew the textarea by %dpx, want 20", got)
+	}
+}
+
+// The web's text box is lines × 20px plus py-2: four lines are 96px tall.
+func TestTextareaIsAsTallAsItsLinesOfLeading(t *testing.T) {
+	th, ed := testTheme(), new(widget.Editor)
+	ed.SetText("one\ntwo\nthree\nfour")
+	if got := inputSize(th.Textarea(ed, "").Layout, 300, 1000).Y; got != 96 {
+		t.Errorf("four lines: height %d, want 96", got)
+	}
+}
+
 func TestInputGroupKeepsRowHeightAndFillsWidth(t *testing.T) {
 	th, ed := testTheme(), new(widget.Editor)
 	g := th.InputGroup(ed, "Filter")
@@ -181,6 +203,24 @@ func TestInputBoxPaintsTheBrowsersColors(t *testing.T) {
 	}
 	if want := th.Ring; !toggleIs(img, at(80, 0), want) {
 		t.Errorf("focused border %v, want ring %v", img.RGBAAt(at(80, 0).X, at(80, 0).Y), want)
+	}
+}
+
+// A bare input is no box: the page shows through where the fill, the border
+// and the focus ring would be, focused or not.
+func TestBareInputDrawsNoBox(t *testing.T) {
+	th, ed := testTheme(), new(widget.Editor)
+	in := th.Input(ed, "Name")
+	in.Bare = true
+	rig := newInputRig(t, 160, 36, in.Layout)
+	rig.router.Source().Execute(key.FocusCmd{Tag: ed})
+	rig.frame()
+	img := rig.frame()
+	for _, at := range []image.Point{{X: 4, Y: 18}, {X: 80, Y: 0}, {X: -2, Y: 18}} {
+		p := image.Pt(rig.margin+at.X, rig.margin+at.Y)
+		if c := img.RGBAAt(p.X, p.Y); c.A != 0 {
+			t.Errorf("pixel %v is %v, want nothing drawn", at, c)
+		}
 	}
 }
 

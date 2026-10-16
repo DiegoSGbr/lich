@@ -40,11 +40,33 @@ export interface BaseStatus {
   conflicts: string[] | null
 }
 
+/** internal/project.BaseFreshness — where a local branch stands against its
+ * upstream, read right after fetching it. */
+export interface BaseFreshness {
+  /** "origin/main" form; "" for a branch that tracks nothing, every count then 0. */
+  upstream: string
+  ahead: number
+  behind: number
+  /** Why the fetch failed; absent when it did not. The counts are then against
+   * whatever an earlier fetch left. */
+  fetchError?: string
+}
+
 /** internal/project.PullRequest — the branch's open GitHub PR (gh CLI). */
 export interface PullRequest {
   number: number
   url: string
   state: string
+}
+
+/**
+ * internal/project.PRChanged — on the "pull-request-changed" event, once a
+ * pull request write through lich landed on GitHub. number is 0 where the
+ * write addressed a thread or a review rather than a pull request.
+ */
+export interface PRChanged {
+  path: string
+  number: number
 }
 
 /** internal/project.ChecksRollup — gh statusCheckRollup collapsed to counts. */
@@ -334,8 +356,6 @@ export interface Issue {
  * detected from the repository root when the file is absent. */
 export interface WorktreeSetup {
   script: string
-  /** The run command every checkout of the project opens a Run card on. */
-  run: string
   suggestion?: string
   /** The files behind suggestion, e.g. "pnpm-lock.yaml". */
   detected?: string
@@ -350,7 +370,8 @@ export interface RevertLine {
   text: string
 }
 
-/** internal/project.RevertResult: what undoing a line revert hands back. */
+/** internal/project.RevertResult: what undoing a line revert hands back. Both
+ * patches are base64, opaque here: handed back to RestoreLines as they came. */
 export interface RevertResult {
   patch: string
   /** "" when the index did not hold the change and was left alone. */
@@ -376,10 +397,6 @@ export interface StoredSession {
   providerSessionId: string
   /** The command a terminal session opens into; always "" for a provider one. */
   entrypoint: string
-  /** Whether this row is its checkout's Run card (internal/spawn.Run). The one
-   * per checkout: the Run menu item goes to this card instead of opening a
-   * second one, and only closing the card frees the slot. */
-  run: boolean
   /** Whether this session runs confined: "on", "off", or "" for a row nothing
    * has spawned yet. Written by the spawn, which is what resolves the rung. */
   sandbox: string
@@ -390,6 +407,9 @@ export interface StoredSession {
   folder: string
   /** The palette colour the card is painted with, "" for one that follows the theme. */
   color: string
+  /** The Claude Code profile the session runs in (internal/claudeprofile): a
+   * slug, "" for Personal and for every other provider. */
+  profile: string
   /** The session that asked for this one, "" for a session nobody delegated. */
   originSessionId: string
   /** What that session was called at the time; all that survives its close. */
@@ -482,6 +502,9 @@ export interface ExternalSession {
   projectPath: string
   /** Unix seconds of the provider's last recorded activity. */
   updatedAt: number
+  /** The Claude Code profile the conversation lives in ("personal" for the
+   * default one), which a resume of it runs in; absent for other providers. */
+  profile?: string
 }
 
 /** internal/terminal.TranscriptMatch — a session whose conversation mentions a
@@ -580,6 +603,22 @@ export interface ThemeDefinition {
   source?: ThemeSource
   app: Record<string, string>
   terminal: Record<string, string>
+  /** Syntax highlighting by highlighting tag; the native window reads it, this
+   * window ignores it. */
+  syntax?: Record<string, SyntaxStyle>
+  /** The id of this theme's variant for the other scheme; the native window
+   * follows the OS to it, this window ignores it. */
+  pair?: string
+}
+
+/** internal/themes.SyntaxStyle — one tag's highlighting. A theme file may
+ * write it as a bare color; the backend always sends the object. */
+export interface SyntaxStyle {
+  color?: string
+  bold?: boolean
+  italic?: boolean
+  underline?: boolean
+  strikethrough?: boolean
 }
 
 /** internal/themes.BrokenTheme — a stored theme lich cannot load, kept visible so it can be removed. */
@@ -644,6 +683,9 @@ export interface TrayLabels {
   show: string
   running: string
   quit: string
+  /** Open the window Show does not. */
+  openNative: string
+  openWeb: string
 }
 
 /** internal/system.Diagnostics — what a bug report opens with. */

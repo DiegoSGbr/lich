@@ -61,6 +61,10 @@ func run(w *app.Window) error {
 		Mono:    "Go Mono",
 		Surface: ui.Dark.Background,
 	})
+	g.toaster.Invalidate = w.Invalidate
+	if *flagToasts {
+		g.raiseDemoToasts()
+	}
 	started := time.Now()
 	var ops op.Ops
 	for {
@@ -105,6 +109,7 @@ type gallery struct {
 	inert    widget.Clickable
 	inputs   [6]widget.Editor
 	textarea widget.Editor
+	areaFit  ui.TextareaResize
 	groups   [3]widget.Editor
 	copyURL  widget.Clickable
 
@@ -124,6 +129,7 @@ type gallery struct {
 	menu            ui.MenuState
 	contextMenu     ui.MenuState
 	pinned          bool
+	cardColor       string
 	lastAction      string
 
 	dialog       ui.DialogState
@@ -131,6 +137,14 @@ type gallery struct {
 	dialogOpener widget.Clickable
 	dialogCancel widget.Clickable
 	dialogDelete widget.Clickable
+
+	sortable    ui.Sortable
+	footerLeft  []string
+	footerRight []string
+
+	side *sidebar
+
+	toastState
 }
 
 func newGallery(th *ui.Theme) *gallery {
@@ -147,6 +161,9 @@ func newGallery(th *ui.Theme) *gallery {
 	g.toggles[1].Value = true
 	g.groupBold.Value = "left"
 	g.groupGrid.Value = "list"
+	g.footerLeft = []string{"Attach", "Files", "3 · +10 -2", "PR #123"}
+	g.footerRight = []string{"feature/toolbar", "Opus 4.1 · high", "Context 42%", "12:30"}
+	g.side = newSidebar(g.icon)
 	return g
 }
 
@@ -164,6 +181,9 @@ func (g *gallery) layout(gtx C) D {
 	paint.Fill(gtx.Ops, ui.Dark.Background)
 	return g.root.Layout(gtx, func(gtx C) D {
 		g.layoutDialog(gtx)
+		toaster := g.th.Toaster(&g.toaster, false)
+		toaster.Expand = *flagToastsExpanded
+		toaster.Layout(gtx)
 		return g.th.ScrollArea(&g.page).Layout(gtx, 1, func(gtx C, _ int) D {
 			return layout.UniformInset(pagePad).Layout(gtx, g.content)
 		})
@@ -182,12 +202,15 @@ func (g *gallery) content(gtx C) D {
 					g.section("Button", g.buttonsSection),
 					g.section("Input, Textarea, InputGroup", g.inputsSection),
 					g.section("Tooltip, menus and Dialog", g.overlaysSection),
+					g.section("Chip, ResizeHandle, Collapse, Presence, Sortable list", g.sidebarSection),
 				)),
 				ui.Gap(6),
 				layout.Flexed(1, stack(6,
 					g.section("Checkbox, Switch, Toggle, ToggleGroup", g.selectionSection),
 					g.section("Tabs", g.tabsSection),
 					g.section("Label, Text, Skeleton, Separator, icons", g.typographySection),
+					g.section("Wrap, Sortable", g.layoutSection),
+					g.section("Toast", g.toastsSection),
 				)),
 			)
 		}),

@@ -2,6 +2,9 @@ package gioterm
 
 /*
 #cgo pkg-config: libghostty-vt-static
+// The library is linked statically everywhere; on Windows the header's
+// default is to import it from a DLL, which the static .lib does not provide.
+#cgo CFLAGS: -DGHOSTTY_STATIC
 #include <stdlib.h>
 #include <string.h>
 #include <ghostty/vt.h>
@@ -18,6 +21,33 @@ static GhosttyResult install_write_pty(GhosttyTerminal t, uintptr_t handle) {
 	GhosttyResult r = ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_USERDATA, (const void*)handle);
 	if (r != GHOSTTY_SUCCESS) return r;
 	return ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_WRITE_PTY, (const void*)on_write_pty);
+}
+
+static GhosttyResult set_default_colors(GhosttyTerminal t, GhosttyColorRgb fg, GhosttyColorRgb bg) {
+	GhosttyResult r = ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &fg);
+	if (r != GHOSTTY_SUCCESS) return r;
+	return ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &bg);
+}
+
+// A NULL cursor clears the default, which leaves the cursor inverting the
+// cell under it.
+static GhosttyResult set_cursor_color(GhosttyTerminal t, const GhosttyColorRgb* c) {
+	return ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_COLOR_CURSOR, c);
+}
+
+// set_ansi starts from the built-in 256-color palette and replaces the
+// first 16 entries where has[i], so a theme that names only some of them
+// keeps the built-in rest.
+static GhosttyResult set_ansi(GhosttyTerminal t, const GhosttyColorRgb* ansi, const uint8_t* has) {
+	GhosttyColorRgb pal[256];
+	GhosttyResult r = ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, NULL);
+	if (r != GHOSTTY_SUCCESS) return r;
+	r = ghostty_terminal_get(t, GHOSTTY_TERMINAL_DATA_COLOR_PALETTE_DEFAULT, pal);
+	if (r != GHOSTTY_SUCCESS) return r;
+	for (int i = 0; i < 16; i++) {
+		if (has[i]) pal[i] = ansi[i];
+	}
+	return ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, pal);
 }
 
 enum {
@@ -42,6 +72,8 @@ typedef struct {
 	bool cursor_visible;
 	uint16_t cursor_x, cursor_y;
 	uint32_t bg, fg;
+	bool has_cursor_color;
+	uint32_t cursor_color;
 } snap_t;
 
 static uint32_t pack(GhosttyColorRgb c) { return (uint32_t)c.r << 16 | (uint32_t)c.g << 8 | c.b; }
@@ -77,6 +109,13 @@ static void read_cell(GhosttyRenderStateRowCells cells, cell_t* c) {
 	if (st.faint) c->flags |= CELL_FAINT;
 }
 
+// Selected cells draw inverted, Ghostty's own default for a selection.
+static void mark_selected(GhosttyRenderStateRowCells cells, cell_t* c) {
+	bool selected = false;
+	ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_SELECTED, &selected);
+	if (selected) c->flags ^= CELL_INVERSE;
+}
+
 // Copies every dirty viewport row into out (cols*rows cells, row-major) and
 // flags it in dirty_rows. One cgo crossing per frame instead of several per cell.
 static snap_t snapshot(GhosttyRenderState rs, GhosttyTerminal t, GhosttyRenderStateRowIterator it,
@@ -99,6 +138,8 @@ static snap_t snapshot(GhosttyRenderState rs, GhosttyTerminal t, GhosttyRenderSt
 	ghostty_render_state_get(rs, GHOSTTY_RENDER_STATE_DATA_COLORS, &colors);
 	s.bg = pack(colors.background);
 	s.fg = pack(colors.foreground);
+	s.has_cursor_color = colors.cursor_has_value;
+	if (colors.cursor_has_value) s.cursor_color = pack(colors.cursor);
 	s.dirty = dirty;
 	if (dirty == GHOSTTY_RENDER_STATE_DIRTY_FALSE) return s;
 	if (s.cols != cols || s.rows != rows) {
@@ -120,6 +161,7 @@ static snap_t snapshot(GhosttyRenderState rs, GhosttyTerminal t, GhosttyRenderSt
 		uint16_t x = 0;
 		while (x < cols && ghostty_render_state_row_cells_next(cells)) {
 			read_cell(cells, &out[(size_t)y * cols + x]);
+			mark_selected(cells, &out[(size_t)y * cols + x]);
 			x++;
 		}
 		for (; x < cols; x++) memset(&out[(size_t)y * cols + x], 0, sizeof(cell_t));
@@ -142,8 +184,10 @@ import "C"
 
 import (
 	"fmt"
+	"image/color"
 	"runtime/cgo"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 )
 
@@ -167,6 +211,10 @@ type snap struct {
 	cursorX       int
 	cursorY       int
 	bg, fg        uint32
+	// cursor is the cursor's color when hasCursor, else the cursor inverts
+	// the cell under it.
+	hasCursor bool
+	cursor    uint32
 }
 
 //export goWritePty
@@ -178,21 +226,38 @@ func goWritePty(h C.uintptr_t, data *C.uint8_t, n C.size_t) {
 // Terminal is one emulated terminal: libghostty-vt's state machine plus the
 // cell grid a Renderer draws. Its methods are safe from several goroutines.
 type Terminal struct {
-	mu    sync.Mutex
-	t     C.GhosttyTerminal
-	rs    C.GhosttyRenderState
-	it    C.GhosttyRenderStateRowIterator
-	cells C.GhosttyRenderStateRowCells
-	enc   C.GhosttyKeyEncoder
-	ev    C.GhosttyKeyEvent
+	mu sync.Mutex
+	// dark is the color scheme DSR 996 answers, read by the callback that
+	// runs inside Write with mu held; schemeSet is SetColors having set it.
+	dark      atomic.Bool
+	schemeSet bool
+	t         C.GhosttyTerminal
+	rs        C.GhosttyRenderState
+	it        C.GhosttyRenderStateRowIterator
+	cells     C.GhosttyRenderStateRowCells
+	enc       C.GhosttyKeyEncoder
+	ev        C.GhosttyKeyEvent
+
+	// Made on first use: most terminals never see a mouse report or a
+	// selection.
+	mouseEnc C.GhosttyMouseEncoder
+	mouseEv  C.GhosttyMouseEvent
+	gest     C.GhosttySelectionGesture
+	// pressCell is the viewport cell the last press landed on.
+	pressCell [2]int
 
 	handle  cgo.Handle
 	replies func([]byte)
 
-	cols, rows int
-	raw        []C.cell_t
-	dirty      []uint8
-	grid       []cell
+	cols, rows   int
+	cellW, cellH int
+	raw          []C.cell_t
+	dirty        []uint8
+	grid         []cell
+
+	// wheelRest is the wheel scroll short of a whole row, carried to the
+	// next WheelRows: a touchpad scrolls a few pixels at a time.
+	wheelRest float32
 }
 
 func check(what string, r C.GhosttyResult) error {
@@ -202,11 +267,12 @@ func check(what string, r C.GhosttyResult) error {
 	return nil
 }
 
-// New creates a cols x rows terminal. replies receives what the terminal
+// New creates a cols x rows terminal of cellW x cellH pixel cells, the size
+// pointer positions are read in and size reports tell the program. replies receives what the terminal
 // answers the program on its own (device attributes, mode and size reports),
 // which belongs on the program's input. It runs inside Write with the
 // terminal locked, so it must not call back into the Terminal.
-func New(cols, rows int, replies func([]byte)) (*Terminal, error) {
+func New(cols, rows, cellW, cellH int, replies func([]byte)) (*Terminal, error) {
 	v := &Terminal{replies: replies}
 	v.handle = cgo.NewHandle(v)
 	steps := []struct {
@@ -215,6 +281,7 @@ func New(cols, rows int, replies func([]byte)) (*Terminal, error) {
 	}{
 		{"terminal_new", func() C.GhosttyResult { return C.ghostty_terminal_new(nil, &v.t, C.uint16_t(cols), C.uint16_t(rows)) }},
 		{"install_write_pty", func() C.GhosttyResult { return C.install_write_pty(v.t, C.uintptr_t(v.handle)) }},
+		{"install_color_scheme", v.installColorScheme},
 		{"render_state_new", func() C.GhosttyResult { return C.ghostty_render_state_new(nil, &v.rs) }},
 		{"row_iterator_new", func() C.GhosttyResult { return C.ghostty_render_state_row_iterator_new(nil, &v.it) }},
 		{"row_cells_new", func() C.GhosttyResult { return C.ghostty_render_state_row_cells_new(nil, &v.cells) }},
@@ -226,7 +293,9 @@ func New(cols, rows int, replies func([]byte)) (*Terminal, error) {
 			return nil, err
 		}
 	}
-	v.allocGrid(cols, rows)
+	if err := v.Resize(cols, rows, cellW, cellH); err != nil {
+		return nil, err
+	}
 	return v, nil
 }
 
@@ -239,6 +308,9 @@ func (v *Terminal) allocGrid(cols, rows int) {
 
 // Write feeds program output to the terminal.
 func (v *Terminal) Write(b []byte) {
+	if len(b) == 0 {
+		return
+	}
 	v.mu.Lock()
 	C.ghostty_terminal_vt_write(v.t, (*C.uint8_t)(unsafe.Pointer(&b[0])), C.size_t(len(b)))
 	v.mu.Unlock()
@@ -253,6 +325,8 @@ func (v *Terminal) Resize(cols, rows, cellW, cellH int) error {
 		return err
 	}
 	v.allocGrid(cols, rows)
+	v.clearWrappedPromptHeads()
+	v.cellW, v.cellH = cellW, cellH
 	return nil
 }
 
@@ -263,11 +337,31 @@ func (v *Terminal) Scroll(delta int) {
 	v.mu.Unlock()
 }
 
+// WheelRows is the rows a wheel scroll of dy pixels moves, negative is up.
+// What falls short of a whole row counts toward the next call.
+func (v *Terminal) WheelRows(dy float32) int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	h := float32(max(v.cellH, 1))
+	v.wheelRest += dy
+	rows := int(v.wheelRest / h)
+	v.wheelRest -= float32(rows) * h
+	return rows
+}
+
 // Size is the grid in cells.
 func (v *Terminal) Size() (cols, rows int) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	return v.cols, v.rows
+}
+
+// CellSize is the pixel size of a cell the terminal reads pointer positions
+// in, as New or the last Resize set it.
+func (v *Terminal) CellSize() (w, h int) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.cellW, v.cellH
 }
 
 // Snapshot is the terminal state a Renderer draws for one frame.
@@ -284,10 +378,55 @@ func (v *Terminal) Update() (Snapshot, error) {
 	return Snapshot{s: s, cells: v.grid, dirty: dirty}, err
 }
 
+// Colors are a terminal's defaults: what a cell that sets no color of its
+// own is drawn in. A zero (transparent) Cursor or ANSI entry keeps
+// libghostty's own.
+type Colors struct {
+	Foreground, Background color.NRGBA
+	Cursor                 color.NRGBA
+	// ANSI are palette entries 0-15: black, red, green, yellow, blue,
+	// magenta, cyan, white, then their bright variants.
+	ANSI [16]color.NRGBA
+}
+
+// SetColors sets the terminal's default colors. A program's OSC 4/10/11/12
+// override still wins over them.
+func (v *Terminal) SetColors(c Colors) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if err := check("set colors", C.set_default_colors(v.t, cRGB(c.Foreground), cRGB(c.Background))); err != nil {
+		return err
+	}
+	v.setScheme(c.Background)
+	var cursor *C.GhosttyColorRgb
+	if c.Cursor.A != 0 {
+		rgb := cRGB(c.Cursor)
+		cursor = &rgb
+	}
+	if err := check("set cursor color", C.set_cursor_color(v.t, cursor)); err != nil {
+		return err
+	}
+	var ansi [16]C.GhosttyColorRgb
+	var has [16]C.uint8_t
+	for i, col := range c.ANSI {
+		if col.A != 0 {
+			ansi[i], has[i] = cRGB(col), 1
+		}
+	}
+	return check("set palette", C.set_ansi(v.t, &ansi[0], &has[0]))
+}
+
+func cRGB(c color.NRGBA) C.GhosttyColorRgb {
+	return C.GhosttyColorRgb{r: C.uint8_t(c.R), g: C.uint8_t(c.G), b: C.uint8_t(c.B)}
+}
+
 // Close frees the terminal. It must not be used afterwards.
 func (v *Terminal) Close() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	C.ghostty_selection_gesture_free(v.gest, v.t)
+	C.ghostty_mouse_event_free(v.mouseEv)
+	C.ghostty_mouse_encoder_free(v.mouseEnc)
 	C.ghostty_key_event_free(v.ev)
 	C.ghostty_key_encoder_free(v.enc)
 	C.ghostty_render_state_row_cells_free(v.cells)
@@ -327,6 +466,8 @@ func (v *Terminal) update() (snap, []uint8, error) {
 		cursorY:       int(s.cursor_y),
 		bg:            uint32(s.bg),
 		fg:            uint32(s.fg),
+		hasCursor:     bool(s.has_cursor_color),
+		cursor:        uint32(s.cursor_color),
 	}, v.dirty, nil
 }
 

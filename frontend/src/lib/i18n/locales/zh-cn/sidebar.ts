@@ -172,9 +172,6 @@ export const sidebar = {
   sessionLaunchMenuItems: {
     terminal: "终端",
     newTerminal: "新建终端",
-    run: "运行",
-    goToRunCard: "前往运行卡片",
-    runNotOnWindows: "运行脚本是 sh 脚本，不会在 Windows 上运行。",
     runConfined: "受限运行",
     openSession: "打开会话",
     back: "返回",
@@ -243,15 +240,12 @@ export const sidebar = {
       "位于 {path} 的工作树包含未提交的更改。删除后这些更改将被永久丢弃。分支会保留。",
     discardAndRemove: "丢弃更改并删除",
   },
-  worktreeScriptRows: {
+  worktreeSetupRow: {
     setupEditorLabel: "设置脚本，保存到 {file}",
-    runEditorLabel: "运行命令，保存到 {file}",
     discard: "丢弃",
     detected: "检测到 {detected}。在新工作树中运行 {command}？",
     use: "使用",
     edit: "编辑",
-    noRunCommand: "没有运行命令，因此该检出保留的端口保持未使用。",
-    set: "设置",
   },
   worktreeSandboxRow: {
     runConfined: "受限运行",

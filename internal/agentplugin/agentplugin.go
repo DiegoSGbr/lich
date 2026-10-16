@@ -29,6 +29,7 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/omartelo/lich/internal/ghrelease"
@@ -113,6 +114,12 @@ type Service struct {
 	// say "this binary cannot be resolved", which is the branch that decides
 	// whether a session is promised tools it does not have.
 	lichBin func() string
+	// emit reports a pass over a provider's profiles (profiles.go); nil keeps
+	// an install to Personal alone. installMu keeps one plugin CLI install
+	// running at a time: a profile's marketplace clone is linked to Personal's
+	// for Claude Code, and a login's install can land in the middle of a pass.
+	emit      func(name string, data any)
+	installMu sync.Mutex
 }
 
 // New returns a service that shells out through bins.
@@ -259,10 +266,8 @@ func computeStatus(id string, available, installed bool, installedVer, latestVer
 // is one, by writing the released files where there is not.
 func (s *Service) Install(provider string) error {
 	switch provider {
-	case providers.Claude:
-		return s.claudeInstall()
-	case providers.Codex:
-		return s.codexInstall()
+	case providers.Claude, providers.Codex:
+		return s.installAndFollow(provider)
 	case providers.Antigravity:
 		return s.antigravityInstall()
 	case providers.OpenCode:
@@ -277,6 +282,22 @@ func (s *Service) Install(provider string) error {
 		return s.kiroInstall()
 	}
 	return fmt.Errorf("no lich plugin for provider %q", provider)
+}
+
+// installAndFollow installs into Personal, then into every other profile of
+// the provider in the background (followPersonal), so a profile never stays on
+// a release Personal left.
+func (s *Service) installAndFollow(provider string) error {
+	s.installMu.Lock()
+	err := profileProviders[provider].install(s, nil)
+	s.installMu.Unlock()
+	if err != nil {
+		return err
+	}
+	if s.emit != nil {
+		go s.followPersonal(provider)
+	}
+	return nil
 }
 
 // Update pulls the newest compatible release into a provider, which is the
@@ -340,7 +361,12 @@ func providerName(id string) string {
 // run executes a mutation on a provider's CLI, returning its combined output on
 // failure so the reason reaches the user instead of a bare exit code.
 func (s *Service) run(provider string, args ...string) error {
-	out, err := s.exec(provider, cmdTimeout, args...)
+	return s.runIn(nil, provider, args...)
+}
+
+// runIn is run with env as the CLI's environment, nil for lich's own.
+func (s *Service) runIn(env []string, provider string, args ...string) error {
+	out, err := s.execIn(env, provider, cmdTimeout, args...)
 	if err != nil {
 		return fmt.Errorf("%s %s: %w: %s",
 			s.bin(provider), strings.Join(args, " "), err, strings.TrimSpace(out))
@@ -357,9 +383,15 @@ func (s *Service) read(provider string, args ...string) (string, error) {
 
 // exec spawns a provider's CLI and returns its combined output.
 func (s *Service) exec(provider string, timeout time.Duration, args ...string) (string, error) {
+	return s.execIn(nil, provider, timeout, args...)
+}
+
+// execIn is exec with env as the CLI's environment, nil for lich's own.
+func (s *Service) execIn(env []string, provider string, timeout time.Duration, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, s.bin(provider), args...)
+	cmd.Env = env
 	winexec.Hide(cmd)
 	cmd.WaitDelay = waitDelay
 	out, err := cmd.CombinedOutput()

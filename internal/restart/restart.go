@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/omartelo/lich/internal/chromium"
 )
 
 // WaitEnv marks a lich process spawned to succeed a restarting one. The
@@ -39,6 +41,8 @@ type Coordinator struct {
 	// args are the successor's arguments: lich's own, so its window opens
 	// with the switches this one was launched with.
 	args []string
+	// windowOpen reports whether lich's window is up; nil until SetWindowOpen.
+	windowOpen func() bool
 	// spawn is the seam for tests; it defaults to the build-tagged primitive.
 	spawn func(exe string, env, args []string) error
 }
@@ -65,6 +69,28 @@ func (c *Coordinator) SetStop(stop func()) {
 	c.mu.Unlock()
 }
 
+// SetWindowOpen supplies whether lich's window is up when a restart happens.
+// With none up the successor starts without one as well: whatever client was
+// on this backend instead (`lich native`'s window) reconnects to the successor,
+// and a web window opening in its place would take its sockets.
+func (c *Coordinator) SetWindowOpen(open func() bool) {
+	c.mu.Lock()
+	c.windowOpen = open
+	c.mu.Unlock()
+}
+
+// successorArgs are the successor's arguments: this lich's window switches,
+// behind chromium.NoWindowArg when no window is up.
+func (c *Coordinator) successorArgs() []string {
+	c.mu.Lock()
+	open := c.windowOpen
+	c.mu.Unlock()
+	if open == nil || open() {
+		return c.args
+	}
+	return append([]string{chromium.NoWindowArg}, c.args...)
+}
+
 // Quit ends this lich: every session goes with it, and nothing is launched in
 // its place.
 func (c *Coordinator) Quit() error {
@@ -82,13 +108,13 @@ func (c *Coordinator) Quit() error {
 // starts first and blocks retrying the pinned port; then this process exits,
 // and the freed port lets the successor bind and open a fresh window.
 func (c *Coordinator) Do() error {
-	return c.launch(c.exePath, c.args, successorEnv(c.env))
+	return c.launch(c.exePath, c.successorArgs(), successorEnv(c.env))
 }
 
 // Install hands replacement and relaunch to Inno Setup. It waits for this PID
 // to exit before touching files, so the window and main's defers finish first.
 func (c *Coordinator) Install(installer string) error {
-	env, err := relaunchEnv(c.env, c.args)
+	env, err := relaunchEnv(c.env, c.successorArgs())
 	if err != nil {
 		return err
 	}

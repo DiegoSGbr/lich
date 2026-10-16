@@ -1,4 +1,4 @@
-// Package icons draws the two icon sets the web app uses, from their SVG
+// Package icons draws the icon sets the web app uses, from their SVG
 // geometry:
 //
 //   - Lucide (lucide.dev, ISC; some icons MIT from Feather): the whole set of
@@ -9,9 +9,12 @@
 //     so a port uses the name they alias ("house", "ellipsis").
 //   - Lobe (github.com/lobehub/lobe-icons, MIT): the AI provider marks lich
 //     uses, the same paths frontend/src/components/ProviderIcon.tsx vendors.
+//   - Sonner (sonner.emilkowal.ski, MIT): the four type icons its toasts
+//     draw, Heroicons solid paths sonner 2.0.7 ships in its bundle.
 //
-// Each set's license sits beside it (lucide/LICENSE, lobe/LICENSE) and must
-// travel with any copy, the binary's third-party notices included.
+// Each set's license sits beside it (lucide/LICENSE, lobe/LICENSE,
+// sonner/LICENSE) and must travel with any copy, the binary's third-party
+// notices included.
 package icons
 
 import (
@@ -156,6 +159,16 @@ func (ic *Icon) Layout(gtx layout.Context, size unit.Dp, c color.NRGBA) layout.D
 		}
 	}
 	return layout.Dimensions{Size: image.Pt(px, px)}
+}
+
+// LayoutFilled draws the icon as Layout does with its outlines filled too:
+// the fill-current that makes a Lucide glyph read as on, like a set pin.
+func (ic *Icon) LayoutFilled(gtx layout.Context, size unit.Dp, c color.NRGBA) layout.Dimensions {
+	scale := float32(gtx.Dp(size)) / viewBox
+	for _, sh := range ic.shapes {
+		paint.FillShape(gtx.Ops, c, clip.Outline{Path: sh.spec(gtx, scale)}.Op())
+	}
+	return ic.Layout(gtx, size, c)
 }
 
 func (sh shape) spec(gtx layout.Context, scale float32) clip.PathSpec {

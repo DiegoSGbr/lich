@@ -35,10 +35,16 @@ func TestParseInstalledVersion(t *testing.T) {
 			wantOK: true,
 		},
 		{
-			name:   "falls back to any scope",
-			json:   `{"plugins":{"lich@lich-plugin":[{"scope":"project","version":"1.2.3"}]}}`,
-			want:   "1.2.3",
-			wantOK: true,
+			name:   "project scope only is not installed",
+			json:   `{"plugins":{"lich@lich-plugin":[{"scope":"project","projectPath":"/work/app","version":"1.2.3"}]}}`,
+			want:   "",
+			wantOK: false,
+		},
+		{
+			name:   "local scope only is not installed",
+			json:   `{"plugins":{"lich@lich-plugin":[{"scope":"local","projectPath":"/work/app","version":"1.2.3"}]}}`,
+			want:   "",
+			wantOK: false,
 		},
 		{
 			name:   "missing key",
@@ -169,6 +175,17 @@ func TestClaudeInstalledVersionReadsConfigDir(t *testing.T) {
 	}
 }
 
+func TestClaudeInstalledVersionReadsPluginCacheDir(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", writeClaudeState(t, `{"plugins":{"lich@lich-plugin":[{"scope":"user","version":"0.3.1"}]}}`))
+	moved := writeClaudeState(t, `{"plugins":{"lich@lich-plugin":[{"scope":"user","version":"0.4.0"}]}}`)
+	t.Setenv("CLAUDE_CODE_PLUGIN_CACHE_DIR", filepath.Join(moved, "plugins"))
+
+	ver, ok := claudeInstalledVersion()
+	if !ok || ver != "0.4.0" {
+		t.Fatalf("got (%q,%v), want (0.4.0,true)", ver, ok)
+	}
+}
+
 func TestClaudeInstalledVersionMissingFile(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	if ver, ok := claudeInstalledVersion(); ok || ver != "" {
@@ -186,9 +203,11 @@ func TestClaudeInstalledVersionNoConfigDir(t *testing.T) {
 }
 
 // writeClaudeState lays out a Claude Code config dir holding body as its
-// installed-plugin state, and returns the dir.
+// installed-plugin state, and returns the dir. It clears the variable that
+// would move the plugins directory out of it.
 func writeClaudeState(t *testing.T, body string) string {
 	t.Helper()
+	t.Setenv("CLAUDE_CODE_PLUGIN_CACHE_DIR", "")
 	dir := t.TempDir()
 	pluginsDir := filepath.Join(dir, "plugins")
 	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
@@ -378,6 +397,13 @@ const (
 	// environment so a test decides what the machine's Crush says.
 	fakeCLIDirs    = "LICH_TEST_FAKE_CLI_DIRS"
 	fakeCLIVersion = "LICH_TEST_FAKE_CLI_VERSION"
+	// fakeCLIEnvLog, when set, gets one line per call naming the Claude Code
+	// config dir and token the call ran with, so a test can tell which profile
+	// a call ran as.
+	fakeCLIEnvLog = "LICH_TEST_FAKE_CLI_ENV_LOG"
+	// fakeCLICodexEnvLog is fakeCLIEnvLog for Codex: the CODEX_HOME and the API
+	// key each call ran with.
+	fakeCLICodexEnvLog = "LICH_TEST_FAKE_CLI_CODEX_ENV_LOG"
 )
 
 func TestMain(m *testing.M) {
@@ -395,6 +421,12 @@ func TestMain(m *testing.M) {
 		_, _ = f.WriteString(line)
 		_ = f.Close()
 	}
+	if log := os.Getenv(fakeCLIEnvLog); log != "" {
+		appendEnvLine(log, os.Getenv("CLAUDE_CONFIG_DIR")+"|"+os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"))
+	}
+	if log := os.Getenv(fakeCLICodexEnvLog); log != "" {
+		appendEnvLine(log, os.Getenv("CODEX_HOME")+"|"+os.Getenv("CODEX_API_KEY"))
+	}
 	if failOn := os.Getenv(fakeCLIFail); failOn != "" && strings.Contains(strings.Join(os.Args[1:], " "), failOn) {
 		fmt.Fprintln(os.Stderr, "fake cli: refusing "+failOn)
 		os.Exit(1)
@@ -408,12 +440,23 @@ func TestMain(m *testing.M) {
 		if v := os.Getenv(fakeCLIVersion); v != "" {
 			fmt.Println("crush version v" + v)
 		}
+	case "plugin list --json":
+		printCodexPluginList()
 	}
 	os.Exit(0)
 }
 
 // stubBin is a BinResolver naming a fixed binary for every provider, standing in
 // for the store.
+func appendEnvLine(log, line string) {
+	f, err := os.OpenFile(log, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		os.Exit(2)
+	}
+	_, _ = f.WriteString(line + "\n")
+	_ = f.Close()
+}
+
 type stubBin string
 
 func (b stubBin) ProviderBin(string, string) string { return string(b) }

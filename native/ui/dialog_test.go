@@ -111,6 +111,18 @@ func TestDialogEscapeDismisses(t *testing.T) {
 	}
 }
 
+// TestDialogEscapeReleaseKeepsItOpen proves only the press dismisses: the
+// release of an Escape that closed a popup in the dialog comes a frame after
+// the popup is gone, and must not take the dialog with it.
+func TestDialogEscapeReleaseKeepsItOpen(t *testing.T) {
+	r := newDialogRig()
+	r.settle()
+	r.router.Queue(key.Event{Name: key.NameEscape, State: key.Release})
+	if dismissed, _ := r.frame(); dismissed {
+		t.Error("an Escape release dismissed the dialog")
+	}
+}
+
 // Opening focuses the panel, so Tab walks the dialog's own controls in order:
 // the footer action, then the ×, which Space presses.
 func TestDialogTakesFocusAndCloseButtonDismisses(t *testing.T) {
@@ -194,4 +206,47 @@ func dialogRender(t *testing.T, ops *op.Ops) *image.NRGBA {
 		}
 	}
 	return img
+}
+
+// A Raw dialog is its widget and nothing else, hung Top of the window's height
+// from the top, over the scrim it names: PickerDialog's popup.
+func TestDialogRawPanelHangsFromTopOverItsOwnScrim(t *testing.T) {
+	r := newDialogRig()
+	const top, scrim = 0.14, 0.5
+	var raw layout.Constraints
+	frame := func() {
+		r.ops.Reset()
+		gtx := layout.Context{
+			Ops: &r.ops, Now: r.now, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(dialogTestWindow), Source: r.router.Source(),
+		}
+		d := r.th.Dialog(&r.state, true, "", "")
+		d.MaxWidth, d.Top, d.Scrim = 400, top, scrim
+		d.Raw = func(gtx C) D {
+			raw = gtx.Constraints
+			gtx.Constraints = layout.Exact(image.Pt(gtx.Constraints.Max.X, 200))
+			return Fill(gtx, r.th.Popover, 0)
+		}
+		d.Layout(gtx)
+		r.under.Layout(gtx, func(gtx C) D { return Fill(gtx, color.NRGBA{B: 0xff, A: 0xff}, 0) })
+		r.router.Frame(&r.ops)
+	}
+	frame()
+	r.now = r.now.Add(dialogTransition)
+	frame()
+	if raw.Max.X != 400 || raw.Min.X != 400 {
+		t.Errorf("the widget is laid out at the panel's width, got %v", raw)
+	}
+	img := dialogRender(t, &r.ops)
+	panelTop := int(top * float32(dialogTestWindow.Y))
+	if !near(img.NRGBAAt(dialogTestWindow.X/2, panelTop+5), Dark.Popover) {
+		t.Errorf("panel is not at %d px from the top: %v", panelTop, img.NRGBAAt(dialogTestWindow.X/2, panelTop+5))
+	}
+	if near(img.NRGBAAt(dialogTestWindow.X/2, panelTop-6), Dark.Popover) {
+		t.Error("panel starts above its Top")
+	}
+	// black/50 over 0xff blue, scaled in linear light as scrimAlpha does.
+	if got, want := img.NRGBAAt(5, 5).B, uint8(121); got > want+2 || got+2 < want {
+		t.Errorf("content under the scrim: blue %d, want %d", got, want)
+	}
 }

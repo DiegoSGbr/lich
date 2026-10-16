@@ -74,8 +74,17 @@ func (s *Service) Start(
 		name = recorded
 	}
 	name = relay.RosterNameOf(name, cwd, id)
-	awaits := s.awaitsStart(kind)
-	sess, cwd, err := s.spawnSession(id, projectID, cwd, kind, resume, name, fork, setup, cols, rows)
+	// Before the lock: it may read the disk for the conversation's profile.
+	bornIn, err := s.store.SessionProfile(id)
+	if err != nil {
+		return err
+	}
+	profileDir, err := s.profileDir(id, kind, resume)
+	if err != nil {
+		return err
+	}
+	awaits := s.awaitsStart(kind, profileDir)
+	sess, cwd, err := s.spawnSession(id, projectID, cwd, kind, resume, profileDir, name, fork, setup, cols, rows)
 	if err != nil || sess == nil {
 		return err
 	}
@@ -89,6 +98,7 @@ func (s *Service) Start(
 	// overwrites whatever the previous PTY left in the frontend's stores.
 	s.hub.Emit(cwdEventName, cwdEvent{ID: id, Cwd: cwd})
 	s.hub.Emit(agentEventName, agentEvent{ID: id, Agent: ""})
+	s.reportProfileMove(id, bornIn)
 	s.reportSandbox(id, sess.confined, sess.sandboxLinks)
 	s.reportMCPServers(id, kind, cwd)
 	// Bound to the effective cwd rather than the requested one, and outside
@@ -104,7 +114,7 @@ func (s *Service) Start(
 // The returned cwd is the effective start directory (the input, or the
 // resolved home when it was empty).
 func (s *Service) spawnSession(
-	id, projectID, cwd, kind, resume, name string, fork, setup bool, cols, rows int,
+	id, projectID, cwd, kind, resume, profileDir, name string, fork, setup bool, cols, rows int,
 ) (*session, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -114,7 +124,7 @@ func (s *Service) spawnSession(
 	}
 	// Whatever the previous provider left open under this id died with its PTY,
 	// and the first report of the new one has to be read against its own turn.
-	s.turns.forget(id)
+	s.forgetTurn(id)
 	cols, rows = s.sizeFor(cols, rows)
 
 	if cwd == "" {
@@ -145,6 +155,11 @@ func (s *Service) spawnSession(
 	if err != nil {
 		return nil, "", err
 	}
+	// The configured binary still runs, so a wrapper exporting a
+	// CLAUDE_CONFIG_DIR (or CODEX_HOME) of its own wins over the profile.
+	if profileDir != "" {
+		env = profileEnv(kind, env, profileDir)
+	}
 	spec := ptySpec{
 		bin: resolveCommand(kind, s.store.ProviderBin(kind, projectID), userShell()),
 		args: providerArgs(
@@ -157,6 +172,7 @@ func (s *Service) spawnSession(
 		cols: cols,
 		rows: rows,
 	}
+	spec = withShellIntegration(spec, kind, s.shellIntegrationDir)
 	// Before wrapSetup, so a fresh worktree terminal carrying both runs the
 	// project's setup script first, then the entrypoint, then the shell.
 	spec = wrapEntrypoint(spec, kind, s.store.SessionEntrypoint(id), runtime.GOOS)
@@ -172,7 +188,7 @@ func (s *Service) spawnSession(
 	inSandbox := confined(s.store, id, kind, projectID, cwd)
 	creds := s.sandboxCredentials(projectID, cwd, inSandbox)
 	spec, skippedLinks := wrapSandbox(
-		spec, kind, userHome(), sessionDropDir(s.dropDir, id, inSandbox), inSandbox, creds,
+		spec, kind, userHome(), sessionDropDir(s.dropDir, id, inSandbox), profileDir, inSandbox, creds,
 	)
 	p, err := startPTY(spec)
 	if err != nil {
@@ -203,7 +219,7 @@ func (s *Service) spawnSession(
 	s.sessions[id] = sess
 	// Outside mu's protection by design (see Service.spawns), and stored with the
 	// registration so no report can arrive for a session whose kind is unknown.
-	s.spawns.Store(id, spawn{kind: kind, cwd: cwd})
+	s.spawns.Store(id, spawn{kind: kind, cwd: cwd, projectID: projectID, profile: profileSlug(kind, profileDir)})
 	sess.announce(skipped)
 	go s.stream(id, sess)
 	return sess, cwd, nil
@@ -237,13 +253,16 @@ func (s *Service) providerKind(id, reported string) string {
 	return reported
 }
 
-// spawn is how one live session's PTY was started: the kind it runs and the
-// directory it was rooted at. The cwd is the spawn directory and not the
-// foreground one the watcher follows (cwd.go) — Crush keeps its database in the
-// checkout it was started in, which a `cd` inside the session does not move.
+// spawn is how one live session's PTY was started: the kind it runs, the
+// project and directory it was rooted at, and the profile it runs in ("" for
+// Personal). The cwd is the spawn directory and not the foreground
+// one the watcher follows (cwd.go) — Crush keeps its database in the checkout it
+// was started in, which a `cd` inside the session does not move.
 type spawn struct {
-	kind string
-	cwd  string
+	kind      string
+	cwd       string
+	projectID string
+	profile   string
 }
 
 // spawnOf is how a live session's PTY was started, or the zero spawn once it is

@@ -89,6 +89,20 @@ func TestTabsTriggersShareTheWidestWidth(t *testing.T) {
 	}
 }
 
+func TestTabsTriggersShrinkToTheirContentWhenTheWidestDoesNotFit(t *testing.T) {
+	th := testTheme()
+	names := tabsNames("a", "b", "c", "a much longer trigger")
+	natural := 0
+	for _, n := range names {
+		natural += layoutAt(func(gtx C) D { return th.Tabs(new(TabsState), n).Layout(gtx) }, 0, 2000).Size.X - 2*int(tabsListPad)
+	}
+	width := natural + 2*int(tabsListPad) + 20
+	d := layoutAt(func(gtx C) D { return th.Tabs(new(TabsState), names...).Layout(gtx) }, 0, width)
+	if d.Size.X != width {
+		t.Errorf("got width %d, want the %d available, shared past each trigger's content", d.Size.X, width)
+	}
+}
+
 func TestTabsVerticalStacksTriggers(t *testing.T) {
 	th := testTheme()
 	s := th.Tabs(new(TabsState), tabsNames("Account", "Password", "Billing")...)
@@ -101,12 +115,29 @@ func TestTabsVerticalStacksTriggers(t *testing.T) {
 	}
 }
 
-func TestTabsGhostHugsItsContent(t *testing.T) {
+// The ghost list matches the web dock's: RightDock's h-8 Tabs root shrinks
+// the list to 32px, and its triggers fill it less p-0.5 and 1px: 27px.
+func TestTabsGhostIsTwentyEightTall(t *testing.T) {
 	s := testTheme().Tabs(new(TabsState), tabsNames("Code", "Review")...)
 	s.Variant = TabsVariantGhost
 	d := layoutAt(func(gtx C) D { return s.Layout(gtx) }, 0, 600)
-	if d.Size.Y >= 36 || d.Size.Y < 26 {
-		t.Errorf("h-auto list: got height %d, want text-xs line + py-0.5 + border + p-0.5 (26..35)", d.Size.Y)
+	if d.Size.Y != 28 {
+		t.Errorf("got list height %d, want the 28dp trigger alone", d.Size.Y)
+	}
+	s.State.Selected = 0
+	img := tabsRender(t, tabsFrame(new(input.Router), time.Unix(0, 0), func(gtx C) D { return s.Layout(gtx) }))
+	// Left of the label, clear of the rounded corners: the accent fill's rows.
+	top, bottom := -1, -1
+	for y := range 40 {
+		if toggleIs(img, image.Pt(9, y), Dark.Accent) {
+			bottom = y
+			if top < 0 {
+				top = y
+			}
+		}
+	}
+	if top != 0 || bottom-top+1 != 28 {
+		t.Errorf("active fill rows %d..%d, want 28 rows from 0 (no list padding)", top, bottom)
 	}
 }
 
@@ -230,5 +261,19 @@ func TestTabsFocusRingAppearsAroundFocusedTrigger(t *testing.T) {
 	after := tabsPixel(tabsRender(t, tabsFrame(&r, time.Unix(0, 0), w)), 1, 18)
 	if before == after {
 		t.Errorf("pixel left of the first trigger stayed %v, want the focus ring", after)
+	}
+}
+
+func TestTabsGhostTriggersTakeTheirOwnWidth(t *testing.T) {
+	th := testTheme()
+	width := func(names ...string) int {
+		s := th.Tabs(new(TabsState), tabsNames(names...)...)
+		s.Variant = TabsVariantGhost
+		return layoutAt(func(gtx C) D { return s.Layout(gtx) }, 0, 2000).Size.X
+	}
+	short, long := width("a"), width("a much longer trigger")
+	// The ghost list has no padding; the pair adds gap-1.
+	if got, want := width("a", "a much longer trigger"), short+long+4; got != want {
+		t.Errorf("ghost triggers: got list width %d, want each trigger at its own width (%d)", got, want)
 	}
 }

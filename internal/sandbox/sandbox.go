@@ -26,6 +26,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/omartelo/lich/internal/claudeprofile"
 	"github.com/omartelo/lich/internal/providers"
 )
 
@@ -79,10 +80,15 @@ func stateDirs(providerID, home string) []string {
 	case providers.Claude:
 		// The JSON file beside the directory holds the account, so a session
 		// without it starts at the login prompt.
-		return []string{
-			envDir("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude")),
-			filepath.Join(home, ".claude.json"),
+		config := envDir("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+		dirs := []string{config, filepath.Join(home, ".claude.json")}
+		// CLAUDE_CODE_PLUGIN_CACHE_DIR can move the plugins directory out of the
+		// config dir; claudeprofile resolves it the way the session will.
+		plugins := claudeprofile.PluginsDir(claudeprofile.Personal, config)
+		if filepath.IsAbs(plugins) && !strings.HasPrefix(plugins, config+string(filepath.Separator)) {
+			dirs = append(dirs, plugins)
 		}
+		return dirs
 	case providers.Codex:
 		return []string{envDir("CODEX_HOME", filepath.Join(home, ".codex"))}
 	case providers.Antigravity:
@@ -107,16 +113,19 @@ func stateDirs(providerID, home string) []string {
 			filepath.Join(dataHome(home), "crush"),
 		}
 	case providers.Cursor:
-		// Two, because Cursor splits its state and reaches the second half
-		// through the home directly rather than through its config dir: the
-		// credentials (`auth.json`, `cli-config.json`) and the chats are under
-		// the config dir (providers.CursorConfigDir, which is not xdg-basedir
-		// and says why), while `~/.cursor` holds the `mcp.json` it reads, its
-		// per-project transcripts and its CLI state. With no XDG_CONFIG_HOME
-		// the two are the same directory, which is the usual case.
+		// Up to three, because Cursor splits its state and reaches two of them
+		// without its config dir: `cli-config.json` and the chats are under the
+		// config dir (providers.CursorConfigDir, which is not xdg-basedir and
+		// says why), the login `auth.json` under its own directory
+		// (providers.CursorAuthDir, which is xdg-basedir on Linux), and
+		// `~/.cursor` holds the `mcp.json` it reads, its per-project transcripts
+		// and its CLI state. With no variable set the first and last are the
+		// same directory and the login is in ~/.config/cursor.
 		dirs := []string{providers.CursorConfigDir(home)}
-		if underHome := filepath.Join(home, ".cursor"); underHome != dirs[0] {
-			dirs = append(dirs, underHome)
+		for _, dir := range []string{filepath.Join(home, ".cursor"), providers.CursorAuthDir(home)} {
+			if !slices.Contains(dirs, dir) {
+				dirs = append(dirs, dir)
+			}
 		}
 		return dirs
 	case providers.Kiro:
@@ -137,8 +146,8 @@ func stateDirs(providerID, home string) []string {
 
 // ompAgentDir resolves oh-my-pi's agent directory. A named profile wins outright
 // over the explicit override — the order `omp config path` was measured to
-// apply, and the same rule lives in internal/agentplugin/omp.go and
-// internal/terminal/transcript.go.
+// apply, and the same rule lives in internal/ompprofile, which
+// internal/agentplugin and internal/terminal answer through.
 func ompAgentDir(home string) string {
 	if profile := os.Getenv("OMP_PROFILE"); profile != "" {
 		return filepath.Join(home, ".omp", "profiles", profile, "agent")

@@ -52,6 +52,11 @@ type Service struct {
 	// (basestatus.go). Zero value ready; it holds a mutex, so a Service is
 	// passed by pointer and never copied.
 	bases baseCache
+	// baseRefs remembers the remote base refs just fetched, so a worktree
+	// created right after BaseFreshness does not fetch the same ref again.
+	baseRefs refetchGuard
+	// emit reports a pull request write (prchanged.go); nil reports nothing.
+	emit func(name string, data any)
 }
 
 // New returns a project service using the given picker.

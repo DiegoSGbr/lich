@@ -2,303 +2,277 @@ package main
 
 import (
 	"image"
-	"image/color"
-	"math"
-	"strings"
 	"time"
 
-	"gioui.org/f32"
-	"gioui.org/font"
 	"gioui.org/layout"
-	"gioui.org/op"
-	"gioui.org/op/clip"
-	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget"
-	"github.com/omartelo/lich/native/lichclient"
 	"github.com/omartelo/lich/native/ui"
 	"github.com/omartelo/lich/native/ui/icons"
 )
 
-// sidebarWidth matches the web sidebar's default 18rem.
-const sidebarWidth = 288
+// remDp is one rem in dp: the web's 16px root font.
+const remDp = 16
 
 type sidebar struct {
-	newShell  widget.Clickable
-	newClaude widget.Clickable
-	list      widget.List
-	cards     map[string]*widget.Clickable
-	closes    map[string]*widget.Clickable
-	folds     map[string]*widget.Clickable
-	collapsed map[string]bool
-	icPlus    *icons.Icon
-	icChev    *icons.Icon
-	icOpen    *icons.Icon
-	icBranch  *icons.Icon
-	icClose   *icons.Icon
-	started   time.Time
+	root *ui.Root // where tooltips and menus float
+	// The session cards, keyed by session id.
+	tips    map[string]*ui.Tooltip
+	menus   map[string]*ui.MenuState
+	renames map[string]*ui.InlineEdit
+	// renamed is the label a rename committed during this frame's layout.
+	renamed  sessionRename
+	cards    map[string]*widget.Clickable
+	closes   map[string]*widget.Clickable
+	pins     map[string]*widget.Clickable
+	prChips  map[string]*widget.Clickable
+	icBranch *icons.Icon
+	icClose  *icons.Icon
+	icPin    *icons.Icon
+	icShield *icons.Icon
+	icBehind *icons.Icon
+	icClash  *icons.Icon
+	icPR     *icons.Icon
+	started  time.Time
+
+	// The panel: its persisted layout and the resize strip on its edge.
+	widthRem float64
+	open     bool
+	resize   ui.ResizeHandle
+	list     widget.List
+	hints    map[string]*ui.Tooltip
+	header   sidebarHeader
+	sort     ui.Sortable // the blocks, by their headers
+	carry    ui.SortCarry
+	blocks   map[string]*blockState
+	naming   folderNaming
+	rail     sidebarRail
+	morph    sidebarMorph
+	// launchProviders is this frame's m.launchProviders(), what every launch
+	// menu lists.
+	launchProviders []launchProvider
 }
 
-func newSidebar() *sidebar {
+func newSidebar(root *ui.Root) *sidebar {
 	s := &sidebar{
-		cards:     map[string]*widget.Clickable{},
-		closes:    map[string]*widget.Clickable{},
-		folds:     map[string]*widget.Clickable{},
-		collapsed: map[string]bool{},
-		icPlus:    icons.Lucide("plus"),
-		icChev:    icons.Lucide("chevron-right"),
-		icOpen:    icons.Lucide("chevron-down"),
-		icBranch:  icons.Lucide("git-branch"),
-		icClose:   icons.Lucide("x"),
-		started:   time.Now(),
+		root:     root,
+		cards:    map[string]*widget.Clickable{},
+		closes:   map[string]*widget.Clickable{},
+		pins:     map[string]*widget.Clickable{},
+		tips:     map[string]*ui.Tooltip{},
+		menus:    map[string]*ui.MenuState{},
+		renames:  map[string]*ui.InlineEdit{},
+		prChips:  map[string]*widget.Clickable{},
+		icBranch: icons.Lucide("git-branch"),
+		icClose:  icons.Lucide("x"),
+		icPin:    icons.Lucide("pin"),
+		icShield: icons.Lucide("shield"),
+		icBehind: icons.Lucide("arrow-down"),
+		icClash:  icons.Lucide("triangle-alert"),
+		icPR:     icons.Lucide("git-pull-request-arrow"),
+		started:  time.Now(),
+		widthRem: sidebarDefaultRem,
+		open:     true,
+		hints:    map[string]*ui.Tooltip{},
+		blocks:   map[string]*blockState{},
+		rail:     sidebarRail{cards: map[string]*widget.Clickable{}, tips: map[string]*ui.Tooltip{}},
 	}
+	s.header.phases = map[sessionPhase]bool{}
 	s.list.Axis = layout.Vertical
+	s.rail.list.Axis = layout.Vertical
 	return s
+}
+
+// holdsKeys reports whether the sidebar wants the keyboard the terminal
+// otherwise takes: the filter field holds focus, a card or a folder is being
+// renamed, a menu is open, or the new folder dialog is up.
+func (s *sidebar) holdsKeys() bool {
+	if s.header.searchFocused || s.naming.open {
+		return true
+	}
+	for _, r := range s.renames {
+		if r.Active() {
+			return true
+		}
+	}
+	for _, m := range s.menus {
+		if m.Opened() {
+			return true
+		}
+	}
+	if s.header.newMenu.Opened() {
+		return true
+	}
+	for _, b := range s.blocks {
+		if b.rename.Active() || b.launch.Opened() || b.options.Opened() {
+			return true
+		}
+	}
+	return false
 }
 
 // sidebarAction is what a frame's clicks asked for.
 type sidebarAction struct {
 	activate string // session id
 	close    string // session id
-	newKind  string // "shell" or "claude"
+	pin      string // session id
+	pinTo    bool   // the pin the click asked for
+	openPR   int    // a pull request to show on the Pulls screen
+	launch   launchRequest
+	// Open in, from the card menu: a directory for a shell session, the
+	// editor or the file manager.
+	terminalAt, editorAt, folderAt string
+	rename                         sessionRename
+	color, colorTo                 string // session id, and its new tint ("" for the theme)
+	continueIn                     continueRequest
+	worktree                       bool // the + menu asked for a worktree session
+	sidebarWrites
 }
 
-func (s *sidebar) layout(gtx C, th *ui.Theme, groups []group, active string) (D, sidebarAction) {
+// sidebarWrites are the block-level writes, carried out off the frame by
+// writeSidebar.
+type sidebarWrites struct {
+	fold       string // block key to fold or unfold
+	file       fileRequest
+	paint      paintRequest
+	folder     folderRename
+	blockOrder []string // every movable block's key, in the dragged order
+	cardOrder  blockReorder
+	saveWidth  bool // the resize ended: store the panel's width
+	saveOpen   bool // the panel opened or closed: store it
+}
+
+// launchRequest is a new session: kind "" for none, dir "" for the project's
+// own checkout, folder the folder it is filed under.
+type launchRequest struct{ kind, dir, folder string }
+
+// fileRequest files ids under folder, "" to take them out; nil ids for none.
+type fileRequest struct {
+	ids    []string
+	folder string
+}
+
+// paintRequest tints every card of a folder at once; nil ids for none.
+type paintRequest struct {
+	ids   []string
+	color string
+}
+
+// folderRename renames a folder, or ungroups it for an empty to; from "" for
+// none.
+type folderRename struct{ from, to string }
+
+// blockReorder is one block's cards in their dragged order; key "" for none.
+type blockReorder struct {
+	key string
+	ids []string
+}
+
+// sessionRename is a label typed into a card.
+type sessionRename struct{ id, label string }
+
+// takeCard keeps what one card's clicks asked for, leaving the block-level
+// writes of the frame alone.
+func (a *sidebarAction) takeCard(c sidebarAction) {
+	pick := func(dst *string, src string) {
+		if src != "" {
+			*dst = src
+		}
+	}
+	pick(&a.activate, c.activate)
+	pick(&a.close, c.close)
+	if c.openPR != 0 {
+		a.openPR = c.openPR
+	}
+	pick(&a.terminalAt, c.terminalAt)
+	pick(&a.editorAt, c.editorAt)
+	pick(&a.folderAt, c.folderAt)
+	if c.pin != "" {
+		a.pin, a.pinTo = c.pin, c.pinTo
+	}
+	if c.color != "" {
+		a.color, a.colorTo = c.color, c.colorTo
+	}
+	if c.rename.id != "" {
+		a.rename = c.rename
+	}
+	if c.file.ids != nil {
+		a.file = c.file
+	}
+	if c.continueIn.id != "" {
+		a.continueIn = c.continueIn
+	}
+}
+
+// layout is App.tsx's sidebar mount: the open sidebar, or its rail, or the
+// morph between them.
+func (s *sidebar) layout(gtx C, th *ui.Theme, m *model, active string) (D, sidebarAction) {
+	if s.morph.active() {
+		return s.morphing(gtx, th, m, active)
+	}
+	return s.shape(gtx, th, m, active, s.open)
+}
+
+func (s *sidebar) shape(gtx C, th *ui.Theme, m *model, active string, open bool) (D, sidebarAction) {
+	if !open {
+		return s.rail.layout(gtx, th, s, m, active)
+	}
+	return s.panel(gtx, th, m, active)
+}
+
+// setOpen is App.tsx's toggleSidebar: the switch, stored, morphed to.
+func (s *sidebar) setOpen(gtx C, open bool, act *sidebarAction) {
+	s.open, act.saveOpen = open, true
+	s.morph.begin(gtx)
+}
+
+// panel is SessionSidebar's aside: `relative flex flex-col rounded-lg
+// bg-sidebar p-2`, the header row, the filter when open, the blocks, and the
+// resize strip (resizeHandle).
+func (s *sidebar) panel(gtx C, th *ui.Theme, m *model, active string) (D, sidebarAction) {
 	var act sidebarAction
-	if s.newShell.Clicked(gtx) {
-		act.newKind = "shell"
-	}
-	if s.newClaude.Clicked(gtx) {
-		act.newKind = "claude"
-	}
-	gtx.Constraints = layout.Exact(image.Pt(gtx.Dp(sidebarWidth), gtx.Constraints.Max.Y))
-	dims := layout.Background{}.Layout(gtx,
-		func(gtx C) D { return ui.Fill(gtx, th.Sidebar, ui.RadiusLG) },
-		func(gtx C) D {
-			th := th.On(th.Sidebar)
-			return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx C) D {
-				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-					layout.Rigid(func(gtx C) D { return s.toolbar(gtx, th) }),
-					ui.VGap(2),
-					layout.Flexed(1, func(gtx C) D {
-						d, a := s.items(gtx, th, groups, active)
-						act.activate, act.close = a.activate, a.close
-						return d
-					}),
-				)
-			})
-		},
-	)
-	return dims, act
-}
-
-func (s *sidebar) toolbar(gtx C, th *ui.Theme) D {
-	button := func(c *widget.Clickable, text string) layout.FlexChild {
-		return layout.Flexed(1, func(gtx C) D {
-			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			b := th.Button(c, text)
-			b.Icon, b.Variant, b.Size = s.icPlus, ui.VariantGhost, ui.SizeSM
-			return b.Layout(gtx)
-		})
-	}
-	return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-		button(&s.newShell, "Shell"),
-		ui.Gap(1),
-		button(&s.newClaude, "Claude"),
-	)
-}
-
-type row struct {
-	group   *group
-	session *sessionView
-}
-
-func (s *sidebar) items(gtx C, th *ui.Theme, groups []group, active string) (D, sidebarAction) {
-	var rows []row
-	for gi := range groups {
-		g := &groups[gi]
-		rows = append(rows, row{group: g})
-		if s.collapsed[g.path] {
-			continue
+	width, released := s.resize.Update(gtx, unit.Dp(s.widthRem*remDp), sidebarMinRem*remDp, sidebarMaxRem*remDp)
+	s.widthRem, act.saveWidth = float64(width)/remDp, released
+	size := image.Pt(gtx.Dp(width), gtx.Constraints.Max.Y)
+	gtx.Constraints = layout.Exact(size)
+	ui.Fill(gtx, th.Sidebar, ui.RadiusLG)
+	on := th.On(th.Sidebar)
+	view := m.sidebarBlocks(s.header.filter())
+	s.launchProviders = m.launchProviders()
+	layout.UniformInset(ui.Space(2)).Layout(gtx, func(gtx C) D {
+		children := []layout.FlexChild{
+			layout.Rigid(func(gtx C) D { return s.headerRow(gtx, on, m, &act) }),
+			ui.VGap(2),
 		}
-		for si := range g.sessions {
-			rows = append(rows, row{group: g, session: &g.sessions[si]})
+		if s.header.open {
+			children = append(children, layout.Rigid(func(gtx C) D { return s.filterRow(gtx, on, view) }), ui.VGap(2))
 		}
-	}
-	var act sidebarAction
-	d := th.ScrollArea(&s.list).Layout(gtx, len(rows), func(gtx C, i int) D {
-		r := rows[i]
-		top := unit.Dp(6)
-		switch {
-		case i == 0:
-			top = 0
-		case r.session == nil:
-			top = 12
-		}
-		return layout.Inset{Top: top}.Layout(gtx, func(gtx C) D {
-			if r.session == nil {
-				return s.groupHeader(gtx, th, r.group)
-			}
-			d, a := s.card(gtx, th, r.session, r.session.ID == active)
-			if a.activate != "" {
-				act.activate = a.activate
-			}
-			if a.close != "" {
-				act.close = a.close
-			}
-			return d
-		})
+		children = append(children, layout.Flexed(1, func(gtx C) D {
+			// -mr-2: the scroll column reaches the panel's edge, so its
+			// scrollbar sits in the padding and its pr-2 keeps the cards off it.
+			gtx.Constraints.Max.X += gtx.Dp(ui.Space(2))
+			return s.blockList(gtx, on, view, active, &act)
+		}))
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 	})
-	return d, act
+	s.resizeHandle(gtx, on, size)
+	return D{Size: size}, act
 }
 
-func clickable(m map[string]*widget.Clickable, key string) *widget.Clickable {
-	c, ok := m[key]
+// resizeHandle lays the resize strip out in the gutter past the panel's
+// right edge: on the edge itself its lit strip would cover the block list's
+// scrollbar, which runs in the panel's padding.
+func (s *sidebar) resizeHandle(gtx C, th *ui.Theme, panel image.Point) {
+	gtx.Constraints = layout.Exact(image.Pt(panel.X+gtx.Dp(ui.ResizeWidth), panel.Y))
+	s.resize.Layout(gtx, th)
+}
+
+// hint is the Tooltip state of one Hint, keyed by what it labels.
+func (s *sidebar) hint(key string) *ui.Tooltip {
+	t, ok := s.hints[key]
 	if !ok {
-		c = new(widget.Clickable)
-		m[key] = c
+		t = new(ui.Tooltip)
+		s.hints[key] = t
 	}
-	return c
-}
-
-func (s *sidebar) groupHeader(gtx C, th *ui.Theme, g *group) D {
-	click := clickable(s.folds, g.path)
-	if click.Clicked(gtx) {
-		s.collapsed[g.path] = !s.collapsed[g.path]
-	}
-	nameColor := ui.Alpha(th.MutedForeground, 0.7)
-	if click.Hovered() {
-		nameColor = th.MutedForeground
-	}
-	return click.Layout(gtx, func(gtx C) D {
-		return layout.Inset{Top: 2, Bottom: 2, Left: 4, Right: 4}.Layout(gtx, func(gtx C) D {
-			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(func(gtx C) D {
-					ic := s.icOpen
-					if s.collapsed[g.path] {
-						ic = s.icChev
-					}
-					return ic.Layout(gtx, 12, nameColor)
-				}),
-				ui.Gap(1.5),
-				layout.Rigid(func(gtx C) D {
-					return th.Text(11, strings.ToUpper(g.name)).In(nameColor).Weight(font.SemiBold).Layout(gtx)
-				}),
-				ui.Gap(1.5),
-				layout.Flexed(1, th.Separator),
-			)
-		})
-	})
-}
-
-func (s *sidebar) card(gtx C, th *ui.Theme, sv *sessionView, active bool) (D, sidebarAction) {
-	var act sidebarAction
-	click, closeClick := clickable(s.cards, sv.ID), clickable(s.closes, sv.ID)
-	if click.Clicked(gtx) {
-		act.activate = sv.ID
-	}
-	if closeClick.Clicked(gtx) {
-		act.close = sv.ID
-	}
-	d := click.Layout(gtx, func(gtx C) D {
-		return layout.Background{}.Layout(gtx,
-			func(gtx C) D {
-				return ui.Fill(gtx, cardFill(th, sv.Color, active, click.Hovered()), ui.RadiusMD)
-			},
-			func(gtx C) D {
-				return layout.Stack{Alignment: layout.NE}.Layout(gtx,
-					layout.Stacked(func(gtx C) D { return s.cardBody(gtx, th, sv) }),
-					layout.Stacked(func(gtx C) D {
-						return layout.UniformInset(ui.Space(2)).Layout(gtx, func(gtx C) D {
-							return closeButton(gtx, th, closeClick, s.icClose, click.Hovered())
-						})
-					}),
-				)
-			},
-		)
-	})
-	return d, act
-}
-
-func (s *sidebar) cardBody(gtx C, th *ui.Theme, sv *sessionView) D {
-	gtx.Constraints.Min.X = gtx.Constraints.Max.X
-	path := displayPath(sv.shown)
-	if sv.host != "" {
-		path = unknownCwd(sv.host)
-	}
-	rows := []layout.FlexChild{
-		layout.Rigid(func(gtx C) D {
-			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(func(gtx C) D { return s.statusRing(gtx, th, sv) }),
-				ui.Gap(1.5),
-				// pr-11: the title stops short of the controls in the corner.
-				layout.Flexed(1, func(gtx C) D {
-					return layout.Inset{Right: ui.Space(11)}.Layout(gtx, th.Text(ui.TextSM, sv.Label).Weight(font.Medium).Layout)
-				}),
-			)
-		}),
-		ui.VGap(2),
-		layout.Rigid(th.Text(ui.TextXS, path).Muted().Mono().LayoutTail),
-	}
-	if sv.git.Branch != "" {
-		rows = append(rows, ui.VGap(2), layout.Rigid(func(gtx C) D { return s.branchRow(gtx, th, sv.git) }))
-	}
-	return layout.Inset{Top: ui.Space(2), Bottom: ui.Space(2), Left: ui.Space(2.5), Right: ui.Space(2.5)}.Layout(gtx, func(gtx C) D {
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
-	})
-}
-
-// branchRow is the card's last line: the branch, and on the right the
-// checkout's changes while it has any.
-func (s *sidebar) branchRow(gtx C, th *ui.Theme, git lichclient.DiffStats) D {
-	children := []layout.FlexChild{
-		layout.Rigid(func(gtx C) D { return s.icBranch.Layout(gtx, 12, th.MutedForeground) }),
-		ui.Gap(1),
-		layout.Flexed(1, th.Text(ui.TextXS, git.Branch).Muted().Layout),
-	}
-	if git.Files > 0 {
-		children = append(children, ui.Gap(2), layout.Rigid(func(gtx C) D { return diffStat(gtx, th, git.Added, git.Deleted) }))
-	}
-	return layout.Flex{Alignment: layout.Middle}.Layout(gtx, children...)
-}
-
-// statusRing draws the ring SessionStatusIcon draws around the provider mark:
-// spinning while busy, amber when waiting on the user, emerald when done.
-func (s *sidebar) statusRing(gtx C, th *ui.Theme, sv *sessionView) D {
-	size := gtx.Dp(22)
-	stroke := float32(gtx.Dp(1.5))
-	center := f32.Pt(float32(size)/2, float32(size)/2)
-	radius := float32(size)/2 - stroke/2
-	switch sv.status {
-	case "busy", "compacting":
-		strokeArc(gtx, center, radius, stroke, 0, 2*math.Pi, ui.Alpha(th.MutedForeground, 0.25))
-		turn := float32(time.Since(s.started).Seconds()) * 2 * math.Pi
-		strokeArc(gtx, center, radius, stroke, turn, math.Pi/2, th.MutedForeground)
-		gtx.Execute(op.InvalidateCmd{})
-	case "waiting":
-		strokeArc(gtx, center, radius, stroke, 0, 2*math.Pi, th.ToneWait)
-	case "done":
-		strokeArc(gtx, center, radius, stroke, 0, 2*math.Pi, th.TonePass)
-	}
-	gtx.Constraints = layout.Exact(image.Pt(size, size))
-	return layout.Center.Layout(gtx, func(gtx C) D {
-		return th.Text(10, providerMark(sv.Kind)).Muted().Weight(font.Bold).Layout(gtx)
-	})
-}
-
-// ponytail: provider logos are a letter; the real port needs ProviderIcon's SVGs.
-func providerMark(kind string) string {
-	if kind == "shell" || kind == "" {
-		return ">_"
-	}
-	return strings.ToUpper(kind[:1])
-}
-
-func strokeArc(gtx C, center f32.Point, radius, width, start, sweep float32, c color.NRGBA) {
-	var p clip.Path
-	p.Begin(gtx.Ops)
-	from := f32.Pt(center.X+radius*float32(math.Cos(float64(start))), center.Y+radius*float32(math.Sin(float64(start))))
-	p.MoveTo(from)
-	p.ArcTo(center, center, sweep)
-	paint.FillShape(gtx.Ops, c, clip.Stroke{Path: p.End(), Width: width}.Op())
+	return t
 }

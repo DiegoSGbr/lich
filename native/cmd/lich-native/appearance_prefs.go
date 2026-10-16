@@ -1,0 +1,236 @@
+package main
+
+import (
+	"context"
+	"math"
+	"strconv"
+
+	"gioui.org/font"
+	"gioui.org/font/gofont"
+	"gioui.org/text"
+	"gioui.org/unit"
+
+	"github.com/omartelo/lich/native/fonts"
+	"github.com/omartelo/lich/native/gioterm"
+	"github.com/omartelo/lich/native/lichclient"
+)
+
+// ponytail: English until the native window has i18n.
+const (
+	toastTerminalFontFailed = "Couldn't draw the terminal in %s: %v"
+	toastEditorFontFailed   = "Couldn't draw the code in %s: %v"
+	toastUIFontFailed       = "Couldn't draw the interface in %s: %v"
+)
+
+// The Appearance settings beyond the theme. The web keeps zoom, the terminal
+// text size and font, and the spend ceiling in its own localStorage
+// (providers/settings.tsx), out of this window's reach, so these keys are the
+// native window's, named after the web's storage keys; only the close action
+// is the web's own workspace setting.
+const (
+	zoomKey             = "lich.appearance.zoom"
+	terminalFontSizeKey = "lich.terminal.fontSize"
+	terminalFontKey     = "lich.terminal.font"
+	editorFontSizeKey   = "lich.editor.fontSize"
+	editorFontKey       = "lich.editor.font"
+	uiFontKey           = "lich.appearance.font"
+	costBudgetKey       = "lich.footer.costBudget"
+	closeActionKey      = "window.closeAction" // close-request.ts CLOSE_ACTION_SETTING_KEY
+	windowKindKey       = "window.kind"        // system.WindowKindKey
+)
+
+// providers/settings.tsx's limits.
+const (
+	zoomMin             = 0.5
+	zoomMax             = 2
+	zoomStep            = 0.1
+	defaultZoom         = 1
+	terminalFontSizeMin = 8
+	terminalFontSizeMax = 32
+	terminalFontStep    = 1
+	defaultTerminalSize = 14
+	editorFontSizeMin   = 8
+	editorFontSizeMax   = 32
+	defaultEditorSize   = 14
+)
+
+// close-request.ts CLOSE_ACTIONS.
+const (
+	closeAsk        = "ask"
+	closeBackground = "background"
+	closeQuit       = "quit"
+)
+
+// appearancePrefs are the Appearance values the window applies.
+type appearancePrefs struct {
+	zoom     float64
+	fontSize int
+	// The fonts are "" for System: the system's monospace for the terminal and
+	// the code views, and its sans for the interface.
+	font           string
+	editorFontSize int
+	editorFont     string
+	uiFont         string
+	budget         float64 // 0 is no ceiling
+	closeAction    string
+	windowKind     string
+}
+
+// clampZoom is settings.tsx clampZoom: bounded, snapped to one decimal.
+func clampZoom(v float64) float64 {
+	return math.Round(math.Min(zoomMax, math.Max(zoomMin, v))*10) / 10
+}
+
+func clampTerminalFontSize(v int) int { return min(terminalFontSizeMax, max(terminalFontSizeMin, v)) }
+
+func clampEditorFontSize(v int) int { return min(editorFontSizeMax, max(editorFontSizeMin, v)) }
+
+// systemOr is family, or the fontconfig alias for the system's when it is
+// "".
+func systemOr(family, alias string) string {
+	if family == "" {
+		return alias
+	}
+	return family
+}
+
+func (p appearancePrefs) terminalFamily() string { return systemOr(p.font, fonts.SystemMono) }
+
+func (p appearancePrefs) codeFamily() string { return systemOr(p.editorFont, fonts.SystemMono) }
+
+// clampCostBudget is settings.tsx clampCostBudget: cents, never negative,
+// and none for what is not a number.
+func clampCostBudget(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0
+	}
+	return math.Round(math.Max(0, v)*100) / 100
+}
+
+// closeActionOf is close-request.ts closeActionOf: nothing stored, or a value
+// from a newer lich, asks.
+func closeActionOf(stored string) string {
+	switch stored {
+	case closeBackground, closeQuit:
+		return stored
+	}
+	return closeAsk
+}
+
+// closeQuits is close-request.ts closeOutcome: with no session running, or
+// quit as the kept answer, closing quits; otherwise the user is asked.
+func closeQuits(action string, live int) bool { return live == 0 || action == closeQuit }
+
+// parseNumber is parseNumberPref: what does not parse is the fallback.
+func parseNumber(raw string, fallback float64) float64 {
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return fallback
+	}
+	return v
+}
+
+// loadAppearancePrefs reads the stored values.
+func loadAppearancePrefs(ctx context.Context, c *lichclient.Client) (appearancePrefs, error) {
+	raw := map[string]string{}
+	for _, key := range []string{zoomKey, terminalFontSizeKey, terminalFontKey, editorFontSizeKey, editorFontKey, uiFontKey, costBudgetKey, closeActionKey, windowKindKey} {
+		v, err := c.GetSetting(ctx, key, "")
+		if err != nil {
+			return appearancePrefs{}, err
+		}
+		raw[key] = v
+	}
+	p := appearancePrefs{
+		zoom:           clampZoom(parseNumber(raw[zoomKey], defaultZoom)),
+		fontSize:       clampTerminalFontSize(int(math.Round(parseNumber(raw[terminalFontSizeKey], defaultTerminalSize)))),
+		font:           raw[terminalFontKey],
+		editorFontSize: clampEditorFontSize(int(math.Round(parseNumber(raw[editorFontSizeKey], defaultEditorSize)))),
+		editorFont:     raw[editorFontKey],
+		uiFont:         raw[uiFontKey],
+		budget:         clampCostBudget(parseNumber(raw[costBudgetKey], 0)),
+		closeAction:    closeActionOf(raw[closeActionKey]),
+		windowKind:     windowKindOf(raw[windowKindKey]),
+	}
+	return p, nil
+}
+
+// loadAppearance reads the Appearance values and applies them before the
+// first frame; Settings hands every later change to applyAppearance.
+func (u *window) loadAppearance() error {
+	p, err := loadAppearancePrefs(u.ctx, u.client)
+	if err != nil {
+		return err
+	}
+	u.settings.look.prefs, u.settings.look.apply = p, u.applyAppearance
+	u.applyAppearance(p)
+	return nil
+}
+
+// applyAppearance puts p on screen: the interface zoom, the terminals'
+// font, and the ceiling the cost readout colours against.
+func (u *window) applyAppearance(p appearancePrefs) {
+	u.zoom = p.zoom
+	if err := u.terms.setFont(p.terminalFamily(), unit.Sp(p.fontSize)); err != nil {
+		u.toaster.Show(failure(toastTerminalFontFailed, p.terminalFamily(), err))
+	}
+	if err := u.setCodeFont(p.codeFamily(), unit.Sp(p.editorFontSize)); err != nil {
+		u.toaster.Show(failure(toastEditorFontFailed, p.codeFamily(), err))
+	}
+	if err := u.setInterfaceFonts(interfaceFonts{sans: p.uiFont, mono: p.codeFamily()}); err != nil {
+		u.toaster.Show(failure(toastUIFontFailed, systemOr(p.uiFont, fonts.SystemSans), err))
+	}
+	u.footer.setBudget(p.budget)
+	u.win.Invalidate()
+}
+
+// setCodeFont redraws the Code tab and both review panels in family at size.
+func (u *window) setCodeFont(family string, size unit.Sp) error {
+	if err := u.dock.code.preview.setFont(family, size); err != nil {
+		return err
+	}
+	if err := u.review.setFont(family, size); err != nil {
+		return err
+	}
+	return u.pulls.view.files.setFont(family, size)
+}
+
+// onestFamily is the bundled interface face, offered beside the installed
+// families.
+const onestFamily = "Onest"
+
+// interfaceFonts are the interface's two faces as stored: its sans ("" for
+// System) and its monospace, the code's family.
+type interfaceFonts struct{ sans, mono string }
+
+// setInterfaceFonts builds the interface's shaper again when its sans or its
+// monospace changed: System's sans for "", Onest from the binary, any other
+// through fontconfig, and the code's family for the paths, file names and
+// counts the interface sets in monospace.
+func (u *window) setInterfaceFonts(want interfaceFonts) error {
+	if u.uiFonts != nil && *u.uiFonts == want {
+		return nil
+	}
+	sans, sansTypeface, err := uiFaces(want.sans)
+	if err != nil {
+		return err
+	}
+	mono, err := gioterm.Faces(want.mono)
+	if err != nil {
+		return err
+	}
+	shaper := text.NewShaper(text.WithCollection(append(append(gofont.Collection(), sans...), mono...)))
+	u.th.Shaper, u.theme.Shaper = shaper, shaper
+	u.theme.Sans, u.theme.Mono = sansTypeface, mono[0].Font.Typeface
+	u.uiFonts = &want
+	return nil
+}
+
+func uiFaces(stored string) ([]font.FontFace, font.Typeface, error) {
+	if stored == onestFamily {
+		faces, err := fonts.Faces()
+		return faces, fonts.Sans, err
+	}
+	family := systemOr(stored, fonts.SystemSans)
+	faces, err := fonts.Load(family)
+	return faces, font.Typeface(family), err
+}

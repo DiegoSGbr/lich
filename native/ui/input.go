@@ -31,6 +31,11 @@ var (
 	inputLeadingIconSz = Space(4)
 	inputBorderWidth   = unit.Dp(1)
 	inputRingWidth     = unit.Dp(3) // ring-3
+	// The clear button sits like an InputGroup inline-end addon holding an
+	// icon-xs button: pr-2 -mr-1 from the edge, the control's pr-1.5 beside it.
+	inputClearInset    = inputGroupAddonPad - inputGroupButtonPull
+	inputClearPadRight = inputClearInset + buttonSizes[SizeIconXS].height + inputGroupControlNear
+	inputClearIcon     = icons.Lucide("x")
 )
 
 // The dark-mode alphas of input.tsx: dark:bg-input/30, focus-visible:ring-ring/50,
@@ -45,7 +50,7 @@ const (
 )
 
 // inputState is what the aria and :focus-visible classes of an input select on.
-type inputState struct{ focused, invalid, disabled bool }
+type inputState struct{ focused, invalid, disabled, bare bool }
 
 // inputPaint is the box's three layers, opaque, or transparent where a layer
 // is not drawn.
@@ -60,6 +65,9 @@ func inputFill(th *Theme) color.NRGBA { return th.Over(Alpha(th.Palette.Input, i
 // the class list, which is how shadcn means it to win. The ring is a
 // box-shadow, so it lands on the surface, not on the fill.
 func inputPaintFor(th *Theme, st inputState, borderless bool) inputPaint {
+	if st.bare {
+		return inputPaint{}
+	}
 	p := th.Palette
 	fill := inputFill(th)
 	box := th.On(fill)
@@ -99,9 +107,16 @@ type InputStyle struct {
 	// Borderless is border-0 focus-visible:ring-0, for a field that sits in a
 	// panel that is already a box.
 	Borderless bool
-	Disabled   bool
-	Invalid    bool
-	theme      *Theme
+	// Bare draws no box at all, neither fill, border nor ring: the text
+	// field of common/PickerDialog, which is a row of its panel.
+	Bare bool
+	// Clear, when set, is a ghost X at the right edge while the field has
+	// text: pressing it empties the field, as an undo step, and leaves the
+	// focus in it.
+	Clear    *widget.Clickable
+	Disabled bool
+	Invalid  bool
+	theme    *Theme
 }
 
 // Input is a default input over editor.
@@ -125,13 +140,45 @@ func (s InputStyle) Layout(gtx C) D {
 	if s.Leading != nil {
 		left = inputLeadingPadX
 	}
+	if s.Clear != nil && s.Clear.Clicked(gtx) {
+		clearEditor(gtx, s.Editor)
+	}
+	showClear := s.Clear != nil && s.Editor.Len() > 0
 	field := s.field(left)
-	st := inputState{invalid: s.Invalid, disabled: s.Disabled}
+	if showClear {
+		field.padRight = inputClearPadRight
+	}
+	st := inputState{invalid: s.Invalid, disabled: s.Disabled, bare: s.Bare}
 	return inputFrame(gtx, s.theme, s.Editor, st, s.Borderless, func(gtx C) D {
 		d := field.layout(gtx, h)
 		s.layoutLeading(gtx, h)
+		if showClear {
+			s.layoutClear(gtx, h)
+		}
 		return d
 	})
+}
+
+// clearEditor empties editor the way select-all and Backspace would. The
+// field's owner reads the text before the field is drawn, so the next frame
+// is the one that sees it empty.
+func clearEditor(gtx C, editor *widget.Editor) {
+	editor.SetCaret(editor.Len(), 0)
+	editor.Delete(1)
+	gtx.Execute(key.FocusCmd{Tag: editor})
+	gtx.Execute(op.InvalidateCmd{})
+}
+
+func (s InputStyle) layoutClear(gtx C, h int) {
+	inner := s.theme.On(inputPaintFor(s.theme, inputState{disabled: s.Disabled}, s.Borderless).fill)
+	b := inner.Button(s.Clear, "")
+	b.Icon, b.Variant, b.Size, b.Disabled = inputClearIcon, VariantGhost, SizeIconXS, s.Disabled
+	gtx.Constraints.Min = image.Point{}
+	macro := op.Record(gtx.Ops)
+	d := b.Layout(gtx)
+	call := macro.Stop()
+	defer op.Offset(image.Pt(gtx.Constraints.Max.X-gtx.Dp(inputClearInset)-d.Size.X, (h-d.Size.Y)/2)).Push(gtx.Ops).Pop()
+	call.Add(gtx.Ops)
 }
 
 func (s InputStyle) field(left unit.Dp) inputText {
@@ -191,26 +238,50 @@ func (f inputText) layout(gtx C, height int) D {
 	width := gtx.Constraints.Max.X
 	left, right, padY := gtx.Dp(f.padLeft), gtx.Dp(f.padRight), gtx.Dp(f.padY)
 	inner := image.Pt(max(width-left-right, 0), 0)
-	growMin, growMax := max(gtx.Dp(f.minHeight)-2*padY, 0), max(gtx.Constraints.Max.Y-2*padY, 0)
+	padTop, padBottom := padY, padY
+	if !f.single {
+		// The leading Gio leaves off the first and last lines rides on the
+		// padding, so the text box is lines × line-height as on the web.
+		leading := f.missingLeading(gtx)
+		padTop += leading / 2
+		padBottom += leading - leading/2
+	}
+	padding := padTop + padBottom
+	growMin, growMax := max(gtx.Dp(f.minHeight)-padding, 0), max(gtx.Constraints.Max.Y-padding, 0)
 	gtx.Constraints.Min = image.Pt(inner.X, 0)
 	gtx.Constraints.Max = image.Pt(inner.X, growMax)
 	if f.single {
-		gtx.Constraints.Max.Y = max(height-2*padY, 0)
+		gtx.Constraints.Max.Y = max(height-padding, 0)
 	} else {
 		gtx.Constraints.Min.Y = growMin
 	}
 	macro := op.Record(gtx.Ops)
 	d := f.layoutEditor(gtx)
 	call := macro.Stop()
-	h, y := height, padY
+	h, y := height, padTop
 	if f.single {
 		y = (height - d.Size.Y) / 2
 	} else {
-		h = d.Size.Y + 2*padY
+		h = d.Size.Y + padding
 	}
 	defer op.Offset(image.Pt(left, y)).Push(gtx.Ops).Pop()
 	call.Add(gtx.Ops)
 	return D{Size: image.Pt(width, h)}
+}
+
+// missingLeading is the px Gio's text leaves off a block's first and last
+// lines together: it spaces lines at the line height but sizes a line alone
+// to its glyphs. 0 for a size the leading table does not hold.
+func (f inputText) missingLeading(gtx C) int {
+	leading, ok := tailwindLeading[f.size]
+	if !ok {
+		return 0
+	}
+	macro := op.Record(gtx.Ops)
+	gtx.Constraints = layout.Constraints{Max: image.Pt(math.MaxInt32, math.MaxInt32)}
+	line := widget.Label{MaxLines: 1, LineHeight: leading, LineHeightScale: 1}.Layout(gtx, f.theme.Shaper, f.font, f.size, "Mg", op.CallOp{})
+	macro.Stop()
+	return max(gtx.Sp(leading)-line.Size.Y, 0)
 }
 
 // layoutEditor is material.EditorStyle's recipe: the placeholder is measured
@@ -229,8 +300,14 @@ func (f inputText) layoutEditor(gtx C) D {
 	if f.single {
 		maxLines = 1
 	}
+	hintLabel := widget.Label{MaxLines: maxLines, Truncator: "…"}
+	if leading, ok := tailwindLeading[f.size]; ok {
+		// Gio scales an explicit LineHeight by 1.2 unless told otherwise.
+		hintLabel.LineHeight, hintLabel.LineHeightScale = leading, 1
+		f.editor.LineHeight, f.editor.LineHeightScale = leading, 1
+	}
 	hintMacro := op.Record(gtx.Ops)
-	hd := widget.Label{MaxLines: maxLines, Truncator: "…"}.Layout(gtx, f.theme.Shaper, f.font, f.size, f.placeholder, hintMat)
+	hd := hintLabel.Layout(gtx, f.theme.Shaper, f.font, f.size, f.placeholder, hintMat)
 	hintCall := hintMacro.Stop()
 	gtx.Constraints.Min.Y = max(gtx.Constraints.Min.Y, hd.Size.Y)
 	d := f.editor.Layout(gtx, f.theme.Shaper, f.font, f.size, textMat, selMat)

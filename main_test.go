@@ -13,6 +13,7 @@ import (
 	"github.com/omartelo/lich/internal/relay"
 	"github.com/omartelo/lich/internal/rpc"
 	"github.com/omartelo/lich/internal/store"
+	"github.com/omartelo/lich/internal/system"
 	"github.com/omartelo/lich/internal/terminal"
 )
 
@@ -23,7 +24,10 @@ import (
 // Deny takes any string — fails TestDeniedMethodsExist.
 var denied = map[string]reflect.Type{
 	"store.Close":                     reflect.TypeFor[*store.Service](),
+	"system.SetNativeWindow":          reflect.TypeFor[*system.Service](),
+	"system.SetWindowChoice":          reflect.TypeFor[*system.Service](),
 	"store.SetSessionGone":            reflect.TypeFor[*store.Service](),
+	"store.SetProjectChanged":         reflect.TypeFor[*store.Service](),
 	"store.SetConversationsOf":        reflect.TypeFor[*store.Service](),
 	"store.SetCheckoutsOf":            reflect.TypeFor[*store.Service](),
 	"drop.Upload":                     reflect.TypeFor[*drop.Service](),
@@ -35,6 +39,8 @@ var denied = map[string]reflect.Type{
 	"relay.RunSchedules":              reflect.TypeFor[*relay.Service](),
 	"relay.ParkResume":                reflect.TypeFor[*relay.Service](),
 	"agentplugin.RepairRegistrations": reflect.TypeFor[*agentplugin.Service](),
+	"agentplugin.SetEmit":             reflect.TypeFor[*agentplugin.Service](),
+	"agentplugin.SyncProfiles":        reflect.TypeFor[*agentplugin.Service](),
 	"relay.SetPlugins":                reflect.TypeFor[*relay.Service](),
 	"relay.SetPromptLanguage":         reflect.TypeFor[*relay.Service](),
 	"terminal.SetPromptLanguage":      reflect.TypeFor[*terminal.Service](),
@@ -57,6 +63,7 @@ type stubService struct{}
 func (stubService) Close() error               { return nil }
 func (stubService) CloseBy() error             { return nil }
 func (stubService) SetSessionGone() error      { return nil }
+func (stubService) SetProjectChanged() error   { return nil }
 func (stubService) Upload() error              { return nil }
 func (stubService) Save() error                { return nil }
 func (stubService) Purge() error               { return nil }
@@ -67,6 +74,8 @@ func (stubService) ParkResume() error          { return nil }
 func (stubService) SetUsageLimit() error       { return nil }
 func (stubService) RunLimitWatch() error       { return nil }
 func (stubService) RepairRegistrations() error { return nil }
+func (stubService) SetEmit() error             { return nil }
+func (stubService) SyncProfiles() error        { return nil }
 func (stubService) SetPlugins() error          { return nil }
 func (stubService) SetPromptLanguage() error   { return nil }
 func (stubService) SetAccounts() error         { return nil }

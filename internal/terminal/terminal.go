@@ -232,6 +232,9 @@ type Store interface {
 	ProviderSession(sessionID string) (string, error)
 	SessionModel(sessionID string) string
 	SessionEffort(sessionID string) string
+	SessionProfile(sessionID string) (string, error)
+	SessionKind(sessionID string) string
+	SetSessionProfile(sessionID, profile string) error
 	SessionUltracode(sessionID string) bool
 	SessionSubagentDepth(sessionID string) int
 	InheritUltracode(sessionID, forkedFrom string) error
@@ -359,6 +362,12 @@ type Service struct {
 	usageReports     usageReports
 	rateLimitsMu     sync.Mutex
 	rateLimitReports func(sessionID string, limits []quota.ReportedLimit)
+	// statuses is the last session-status payload of each live session, which
+	// TurnStates hands a window that attached after it was published.
+	statuses statusBook
+	// shellIntegrationDir holds the shell scripts that mark a shell session's
+	// prompt (SetShellIntegrationDir); "" spawns shells without them.
+	shellIntegrationDir string
 }
 
 // SetDropDir names the directory holding the copies of dropped files
@@ -497,7 +506,7 @@ func (s *Service) onHookState(req hookRequest) {
 	// card would draw it as a human being blocked (see turnLog).
 	if s.turns.report(req.SessionID, req.State) {
 		s.noteUnread(req.SessionID, req.State == statusDone)
-		s.hub.Emit(statusEventName, statusEvent{
+		s.publishStatus(statusEvent{
 			ID:     req.SessionID,
 			State:  req.State,
 			Tool:   req.Tool,
@@ -663,7 +672,7 @@ func (s *Service) noteInterrupt(id string) {
 	if !s.turns.interrupt(id) {
 		return
 	}
-	s.hub.Emit(statusEventName, statusEvent{ID: id, State: statusInterrupted})
+	s.publishStatus(statusEvent{ID: id, State: statusInterrupted})
 	// An interrupted turn is still a turn that ended, and it changed files like
 	// any other. Closing the window here is what keeps the panel from holding
 	// an older turn open until the next one finishes.
@@ -827,7 +836,7 @@ func (s *Service) CloseBy(id, closerID string) error {
 	s.spawns.Delete(id)
 	// A turn dies with its session, and an open one left behind would keep the
 	// machine awake for a card that no longer exists.
-	s.turns.forget(id)
+	s.forgetTurn(id)
 
 	// Before the bail below, because a card is closed far more often than it is
 	// running: its row is deleted either way, so nothing will ever ask what its

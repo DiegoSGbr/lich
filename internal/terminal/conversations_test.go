@@ -99,9 +99,9 @@ func TestClaudeConversations(t *testing.T) {
 		`{"type":"user","cwd":"/work/alpha","message":{"content":"sub"}}`+"\n")
 
 	assertConversations(t, claudeConversations(),
-		store.Conversation{Kind: "claude", ID: "titled", Title: "fix login", Cwd: "/work/alpha"},
-		store.Conversation{Kind: "claude", ID: "untitled", Title: "why is the build red", Cwd: "/work/alpha"},
-		store.Conversation{Kind: "claude", ID: "ai", Title: "Greeting", Cwd: "/work/alpha"},
+		store.Conversation{Kind: "claude", ID: "titled", Title: "fix login", Cwd: "/work/alpha", Profile: "personal"},
+		store.Conversation{Kind: "claude", ID: "untitled", Title: "why is the build red", Cwd: "/work/alpha", Profile: "personal"},
+		store.Conversation{Kind: "claude", ID: "ai", Title: "Greeting", Cwd: "/work/alpha", Profile: "personal"},
 	)
 }
 
@@ -125,8 +125,8 @@ func TestCodexConversations(t *testing.T) {
 		`{"id":"c2","thread_name":"Named by the user"}`+"\n")
 
 	assertConversations(t, codexConversations(),
-		store.Conversation{Kind: "codex", ID: "c1", Title: "port the theme loader", Cwd: "/work/alpha"},
-		store.Conversation{Kind: "codex", ID: "c2", Title: "Named by the user", Cwd: "/work/alpha"},
+		store.Conversation{Kind: "codex", ID: "c1", Title: "port the theme loader", Cwd: "/work/alpha", Profile: "personal"},
+		store.Conversation{Kind: "codex", ID: "c2", Title: "Named by the user", Cwd: "/work/alpha", Profile: "personal"},
 	)
 }
 
@@ -144,8 +144,8 @@ func TestOMPConversations(t *testing.T) {
 		`{"type":"session","id":"sub","cwd":"/work/alpha"}`+"\n")
 
 	assertConversations(t, ompConversations(),
-		store.Conversation{Kind: "omp", ID: "o1", Title: "Find relay deadline test", Cwd: "/work/alpha"},
-		store.Conversation{Kind: "omp", ID: "o2", Cwd: "/work/alpha"},
+		store.Conversation{Kind: "omp", ID: "o1", Title: "Find relay deadline test", Cwd: "/work/alpha", Profile: "personal"},
+		store.Conversation{Kind: "omp", ID: "o2", Cwd: "/work/alpha", Profile: "personal"},
 	)
 }
 
@@ -186,8 +186,8 @@ func TestCursorConversations(t *testing.T) {
 
 	got := cursorConversations()
 	assertConversations(t, got,
-		store.Conversation{Kind: "cursor", ID: "u1", Title: "which providers do you route?", Cwd: "/work/alpha"},
-		store.Conversation{Kind: "cursor", ID: "u2", Cwd: "/work/alpha"},
+		store.Conversation{Kind: "cursor", ID: "u1", Title: "which providers do you route?", Cwd: "/work/alpha", Profile: "personal"},
+		store.Conversation{Kind: "cursor", ID: "u2", Cwd: "/work/alpha", Profile: "personal"},
 	)
 	if i := slices.IndexFunc(got, func(c store.Conversation) bool { return c.ID == "u1" }); got[i].UpdatedAt != 1787675503 {
 		t.Errorf("u1 UpdatedAt = %d, want updatedAtMs in seconds", got[i].UpdatedAt)
@@ -228,7 +228,7 @@ func TestOpencodeConversations(t *testing.T) {
 
 	got := opencodeConversations()
 	assertConversations(t, got,
-		store.Conversation{Kind: "opencode", ID: "ses_1", Title: "New session", Cwd: "/work/alpha"})
+		store.Conversation{Kind: "opencode", ID: "ses_1", Title: "New session", Cwd: "/work/alpha", Profile: "personal"})
 	if got[0].UpdatedAt != 1786468293 {
 		t.Errorf("UpdatedAt = %d, want time_updated in seconds", got[0].UpdatedAt)
 	}

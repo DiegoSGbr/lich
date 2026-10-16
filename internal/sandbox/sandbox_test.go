@@ -19,8 +19,8 @@ import (
 func clearHarnessEnv(t *testing.T) {
 	t.Helper()
 	for _, name := range []string{
-		"CLAUDE_CONFIG_DIR", "CODEX_HOME", "OMP_PROFILE", "PI_CODING_AGENT_DIR",
-		"CURSOR_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+		"CLAUDE_CONFIG_DIR", "CLAUDE_CODE_PLUGIN_CACHE_DIR", "CODEX_HOME", "OMP_PROFILE", "PI_CODING_AGENT_DIR",
+		"CURSOR_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "APPDATA",
 	} {
 		t.Setenv(name, "")
 	}
@@ -65,12 +65,11 @@ func TestStateDirsPerProvider(t *testing.T) {
 			filepath.Join(home, ".config", "crush"),
 			filepath.Join(home, ".local", "share", "crush"),
 		}},
-		// Cursor is the one provider here that is not xdg-basedir with no
-		// variable set: ~/.cursor, never ~/.config/cursor. A session confined to
-		// the latter opens at the login prompt. With no XDG_CONFIG_HOME its
-		// config dir and the directory it reads off the home are the same one,
-		// so there is a single entry — the split is asserted below.
-		{providers.Cursor, []string{filepath.Join(home, ".cursor")}},
+		// Cursor's config dir is not xdg-basedir with no variable set: ~/.cursor,
+		// never ~/.config/cursor, and it is the same directory as the one it
+		// reads off the home. Its login is somewhere else again, per OS
+		// (cursorDefaultDirs).
+		{providers.Cursor, cursorDefaultDirs(home)},
 		// Kiro splits the two halves across different roots, and only the first
 		// is xdg-basedir: the login token is in the SQLite store under the data
 		// home, everything else — agents, settings, conversations — under
@@ -124,13 +123,42 @@ func TestStateDirsFollowsHarnessEnvironment(t *testing.T) {
 	// state out of. Binding only the first is a confined session that cannot see
 	// the MCP servers an unconfined one does.
 	t.Setenv("CURSOR_CONFIG_DIR", "")
-	want := []string{filepath.Join(config, "cursor"), filepath.Join(home, ".cursor")}
+	want := cursorXDGDirs(home, config)
 	if got := stateDirs(providers.Cursor, home); !slices.Equal(got, want) {
 		t.Errorf("stateDirs(cursor) under XDG_CONFIG_HOME = %v, want %v", got, want)
 	}
 	t.Setenv("XDG_CONFIG_HOME", "")
-	if got := stateDirs(providers.Cursor, home); !slices.Equal(got, []string{filepath.Join(home, ".cursor")}) {
+	if got := stateDirs(providers.Cursor, home); !slices.Equal(got, cursorDefaultDirs(home)) {
 		t.Errorf("cursor fell back to xdg-basedir instead of ~/.cursor: got %v", got)
+	}
+}
+
+// CLAUDE_CODE_PLUGIN_CACHE_DIR moves Claude Code's plugins directory, and a
+// confined session reads its plugins and writes their cache there: one outside
+// the config dir is bound read-write beside it, one inside is already there.
+func TestClaudeStateFollowsPluginCacheDir(t *testing.T) {
+	clearHarnessEnv(t)
+	home := t.TempDir()
+	config, plugins := filepath.Join(home, "claude"), filepath.Join(home, "plugins")
+	for _, dir := range []string{config, plugins} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("CLAUDE_CONFIG_DIR", config)
+	t.Setenv("CLAUDE_CODE_PLUGIN_CACHE_DIR", plugins)
+	want := []string{config, filepath.Join(home, ".claude.json"), plugins}
+	if got := stateDirs(providers.Claude, home); !slices.Equal(got, want) {
+		t.Errorf("stateDirs(claude) = %v, want %v", got, want)
+	}
+	spec := Describe(providers.Claude, home, filepath.Join(home, "checkout"), "", nil, false)
+	if !slices.Contains(spec.Write, plugins) || slices.Contains(spec.Read, plugins) {
+		t.Errorf("plugins dir not bound read-write: write %v, read %v", spec.Write, spec.Read)
+	}
+
+	t.Setenv("CLAUDE_CODE_PLUGIN_CACHE_DIR", filepath.Join(config, "elsewhere"))
+	if got, want := stateDirs(providers.Claude, home), want[:2]; !slices.Equal(got, want) {
+		t.Errorf("a plugins dir inside the config dir was bound again: %v", got)
 	}
 }
 

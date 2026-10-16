@@ -2,7 +2,11 @@
 
 `cursor-agent` (`internal/providers.Registry`). Cursor keeps its state in two directories. Its config dir is
 `$CURSOR_CONFIG_DIR` ‖ `$XDG_CONFIG_HOME/cursor` ‖ `~/.cursor`, not xdg-basedir, the fallback being the home
-directly, and it holds the credentials and the chats. But `~/.cursor` is resolved off the home with no variable
+directly, and it holds the chats and `cli-config.json`. The credentials are not in it on Linux: `auth.json` is
+`$XDG_CONFIG_HOME/cursor/auth.json` else `~/.config/cursor/auth.json` (2026.10.01, read in the bundle and
+measured against a throwaway home), which is the config dir only when `XDG_CONFIG_HOME` is set; macOS keeps it in
+`~/.cursor/auth.json` (after the Keychain) and Windows in `%APPDATA%\Cursor\auth.json`, read in the same bundle and
+resolved by `providers.CursorAuthDir`. But `~/.cursor` is resolved off the home with no variable
 in the way at all, and that is where `mcp.json`, the per-project transcripts and the CLI state live. The chat
 itself is SQLite at `chats/<md5 of the resolved cwd>/<chatId>/store.db`. The limits these sit under are in
 [`../ceilings.md`](../ceilings.md).
@@ -50,7 +54,16 @@ from an `mcpServers` document its install writes under `~/.cursor`.
 
 The plan gauge names the account a session spends (`internal/quota`, `Plan.Account`): `~/.config/cursor/auth.json`'s
 token is a JWT whose `sub` is an opaque `github|user_…` and whose claims contain no email, so lich reads
-`authInfo.email` from `cli-config.json` beside it.
+`authInfo.email` from `cli-config.json` in the config dir.
+
+## Profiles
+
+Linux only. A profile is a config home of its own (`XDG_CONFIG_HOME` pointed at
+`<lich config dir>/profiles/cursor/<slug>/`) made of links to every entry of yours but `cursor/`, which is the
+profile's: the login, `cli-config.json` and the chats (`internal/xdgprofile`). `mcp.json`, hooks and skills stay
+under `~/.cursor`, every profile's. `cursor-agent login` runs in a terminal card. Resume and the History tab
+look in every profile's chats, and Continue in moves a chat directory between them. The rest is in
+[`../ceilings.md`](../ceilings.md).
 
 ## Sandbox
 

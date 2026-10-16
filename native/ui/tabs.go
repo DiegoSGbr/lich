@@ -113,11 +113,18 @@ const (
 	// height from them.
 	tabsLineHeightSM = unit.Dp(20)
 	tabsLineHeightXS = unit.Dp(16)
+	// tabsGhostPadY makes a ghost trigger 28dp (h-7) with no list padding:
+	// in the dock's header it then keeps the 8dp inset every island's first
+	// control keeps, on the left and the top alike. The web's 27px tab sits
+	// 10 from the left and 6 from the top, which reads as squeezed.
+	tabsGhostPadY = unit.Dp(5)
 )
 
 // tabsGeometries transcribes tabs.tsx and, for the ghost variant, RightDock's
 // TAB_CLASS: h-9 p-[0.1875rem] and px-2 py-1 gap-1.5 text-sm, against
-// h-auto p-0.5 gap-1 and px-2 py-0.5 gap-1 text-xs.
+// p-0.5 gap-1 and px-2 py-0.5 gap-1 text-xs. The ghost list is h-8: its
+// h-auto loses to the list's own group-data-horizontal:h-9, and the h-8
+// Tabs root, a flex column, shrinks it to 32, so its triggers are 27 tall.
 var tabsGeometries = map[TabsVariant]tabsGeometry{
 	TabsVariantDefault: {
 		listHeight: Space(9), listPad: tabsListPad, listRadius: RadiusLG,
@@ -128,8 +135,8 @@ var tabsGeometries = map[TabsVariant]tabsGeometry{
 		padX: Space(2), padY: Space(1), gap: Space(1.5), icon: Space(4), text: TextSM, lineHeight: tabsLineHeightSM,
 	},
 	TabsVariantGhost: {
-		listPad: Space(0.5), listGap: Space(1), listRadius: RadiusLG,
-		padX: Space(2), padY: Space(0.5), gap: Space(1), icon: Space(3.5), text: TextXS, lineHeight: tabsLineHeightXS,
+		listGap: Space(1), listRadius: RadiusLG,
+		padX: Space(2), padY: tabsGhostPadY, gap: Space(1), icon: Space(3.5), text: TextXS, lineHeight: tabsLineHeightXS,
 	},
 }
 
@@ -152,18 +159,23 @@ func (t TabsStyle) Layout(gtx C, panels ...layout.Widget) D {
 func (t TabsStyle) tabsList(gtx C) D {
 	geo := tabsGeometries[t.Variant]
 	vertical := t.Orientation == TabsVertical
-	n := len(t.Triggers)
 	pad, gap := gtx.Dp(geo.listPad), gtx.Dp(geo.listGap)
-	trig := t.tabsTriggerSize(gtx, geo)
+	trigs := t.tabsTriggerSizes(gtx, geo)
 
-	size := image.Pt(2*pad+n*trig.X+(n-1)*gap, 2*pad+trig.Y)
-	step, lead := image.Pt(trig.X+gap, 0), image.Pt(pad, pad)
-	if vertical {
-		size = image.Pt(2*pad+trig.X, 2*pad+n*trig.Y+(n-1)*gap)
-		step = image.Pt(0, trig.Y+gap)
-	} else if geo.listHeight > 0 {
+	// Every trigger shares the cross size, so the list's is the first one's.
+	size := image.Pt(2*pad+trigs[0].X, 2*pad+trigs[0].Y)
+	for _, trig := range trigs[1:] {
+		if vertical {
+			size.Y += gap + trig.Y
+		} else {
+			size.X += gap + trig.X
+		}
+	}
+	lead := image.Pt(pad, pad)
+	if !vertical && geo.listHeight > 0 {
 		size.Y = gtx.Dp(geo.listHeight)
-		lead.Y = pad + (size.Y-2*pad-trig.Y)/2
+		// Rounded half up, as Chromium snaps the trigger's half-pixel offset.
+		lead.Y = pad + (size.Y-2*pad-trigs[0].Y+1)/2
 	}
 	if t.Variant == TabsVariantDefault {
 		gtx.Constraints.Min = size
@@ -171,33 +183,75 @@ func (t TabsStyle) tabsList(gtx C) D {
 		// The triggers sit on the list's bg-muted, not on the page.
 		t.theme = t.theme.On(t.theme.Muted)
 	}
-	for i := range t.Triggers {
-		off := op.Offset(lead.Add(step.Mul(i))).Push(gtx.Ops)
+	for i, trig := range trigs {
+		off := op.Offset(lead).Push(gtx.Ops)
 		t.tabsTrigger(gtx, i, trig, geo)
 		off.Pop()
+		if vertical {
+			lead.Y += trig.Y + gap
+		} else {
+			lead.X += trig.X + gap
+		}
 	}
 	return D{Size: size}
 }
 
-// tabsTriggerSize is one trigger's size. flex-1 in a w-fit list makes every
-// trigger as wide as the widest; a vertical list is w-full over the same.
-func (t TabsStyle) tabsTriggerSize(gtx C, geo tabsGeometry) image.Point {
+// tabsTriggerSizes are the triggers' sizes. flex-1 in a w-fit list makes
+// every trigger as wide as the widest while that fits the width given; a vertical list is w-full over the
+// same. The ghost list's triggers keep their own width: in the dock's
+// w-fit list the browser sizes the list to the sum of its triggers'
+// contents, so flex-1 has no free space to share.
+func (t TabsStyle) tabsTriggerSizes(gtx C, geo tabsGeometry) []image.Point {
 	frame := gtx.Dp(tabsBorder)
-	var w, h int
+	sizes := make([]image.Point, len(t.Triggers))
+	var widest image.Point
 	for i := range t.Triggers {
 		unbounded := gtx
 		unbounded.Constraints = layout.Constraints{Max: image.Pt(unboundedWidth, gtx.Constraints.Max.Y)}
 		macro := op.Record(gtx.Ops)
 		d := t.tabsContent(unbounded, i, geo, color.NRGBA{})
 		macro.Stop()
-		w, h = max(w, d.Size.X), max(h, d.Size.Y)
+		sizes[i] = d.Size.Add(image.Pt(2*(gtx.Dp(geo.padX)+frame), 2*(gtx.Dp(geo.padY)+frame)))
+		widest = image.Pt(max(widest.X, sizes[i].X), max(widest.Y, sizes[i].Y))
 	}
-	size := image.Pt(w+2*(gtx.Dp(geo.padX)+frame), h+2*(gtx.Dp(geo.padY)+frame))
 	if geo.listHeight > 0 && t.Orientation == TabsHorizontal {
 		// h-[calc(100%-1px)] of the list's inner height.
-		size.Y = gtx.Dp(geo.listHeight) - 2*gtx.Dp(geo.listPad) - frame
+		widest.Y = gtx.Dp(geo.listHeight) - 2*gtx.Dp(geo.listPad) - frame
 	}
-	return size
+	for i := range sizes {
+		sizes[i].Y = widest.Y
+	}
+	if t.Variant == TabsVariantGhost {
+		return sizes
+	}
+	inner := gtx.Constraints.Max.X - 2*gtx.Dp(geo.listPad) - (len(sizes)-1)*gtx.Dp(geo.listGap)
+	if t.Orientation == TabsVertical || len(sizes)*widest.X <= inner {
+		for i := range sizes {
+			sizes[i].X = widest.X
+		}
+		return sizes
+	}
+	tabsShareSpare(sizes, inner)
+	return sizes
+}
+
+// tabsShareSpare is flex-1 in a list too narrow for equal triggers: each keeps
+// its content's width and the space left over is split evenly. Content wider
+// than inner still overflows, as it does on the web.
+func tabsShareSpare(sizes []image.Point, inner int) {
+	spare := inner
+	for _, s := range sizes {
+		spare -= s.X
+	}
+	if spare <= 0 {
+		return
+	}
+	for i := range sizes {
+		sizes[i].X += spare / len(sizes)
+		if i < spare%len(sizes) {
+			sizes[i].X++
+		}
+	}
 }
 
 type tabsColors struct{ bg, fg, border color.NRGBA }

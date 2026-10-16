@@ -1,8 +1,8 @@
 # Kiro CLI
 
 `kiro-cli` (`internal/providers.Registry`), spawned as `kiro-cli chat`, since `--model`, `--effort` and `--trust-all-tools`
-are the `chat` subcommand's while `--agent` and `--resume-id` are the root's. `~/.kiro` hangs off the home alone,
-with no environment variable to honour (2.21.0 resolves `$HOME/.kiro`), and holds the agents, the settings and
+are the `chat` subcommand's while `--agent` and `--resume-id` are the root's. `~/.kiro` is `$KIRO_HOME`
+else `$HOME/.kiro` (2.21.0, measured against a throwaway home), and holds the agents, the settings and
 the conversations; the login token is a row in the SQLite store under `$XDG_DATA_HOME/kiro-cli/data.sqlite3`. A
 conversation's metadata is `~/.kiro/sessions/cli/<id>.json` with its turns in the `.jsonl` beside it. The limits
 these sit under are in [`../ceilings.md`](../ceilings.md).
@@ -68,6 +68,15 @@ Kiro CLI carries no claim naming the account, measured on 2026-09-04 (`internal/
 login is a row in `~/.local/share/kiro-cli/data.sqlite3` holding an opaque `aoa…` token, a `github` provider
 label and an AWS profile ARN, nothing a person recognises as their account. Naming it would take a network call
 against an unmeasured route, for a provider that has no gauge to hang the name under.
+
+## Profiles
+
+Linux only. A profile is a data home of its own (`XDG_DATA_HOME` pointed at
+`<lich config dir>/profiles/kiro/<slug>/`) made of links to every entry of yours, `kiro-cli/` included entry by
+entry, except `kiro-cli/data.sqlite3`, which holds the login and is the profile's (`internal/xdgprofile`).
+`~/.kiro` is not moved, so agents, settings and conversations are every profile's, and Continue in only changes
+the profile a session runs in. `kiro-cli login` runs in a terminal card. The rest is in
+[`../ceilings.md`](../ceilings.md).
 
 ## Sandbox
 

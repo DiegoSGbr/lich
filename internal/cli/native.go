@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omartelo/lich/internal/chromium"
 	"github.com/omartelo/lich/internal/restart"
 	"github.com/omartelo/lich/internal/system"
 )
@@ -49,7 +50,7 @@ func (c *client) native(args []string) error {
 		return fmt.Errorf("close the web window: %w", closed)
 	}
 	env := append(os.Environ(), "LICH_PORT="+port, "LICH_TOKEN="+token)
-	if err := c.start(window, env, nil); err != nil {
+	if err := c.startNative(window, env); err != nil {
 		return fmt.Errorf("launch %s: %w", window, err)
 	}
 	fmt.Fprintf(c.stdout, "Opening the native window on lich (port %s).\n", port)
@@ -59,9 +60,26 @@ func (c *client) native(args []string) error {
 // nativeWindow is the native window to launch: the pinned one, else the one
 // beside this lich binary. A missing one is reported before anything starts.
 func (c *client) nativeWindow() (string, error) {
-	if pinned := c.env(nativeEnv); pinned != "" {
+	return NativeExecutable(c.env)
+}
+
+// NativeExecutable is the native window's binary: the one LICH_NATIVE pins,
+// else lich-native beside this lich binary. A missing one is an error that
+// says how to get one.
+func NativeExecutable(env func(string) string) (string, error) {
+	return companion(env, nativeEnv, nativeBinary, "build it from native/ (native/slice.sh)")
+}
+
+// companion is the executable pinned by envName, else binary beside this lich
+// binary; howToBuild finishes the sentence a missing one is reported with.
+func (c *client) companion(envName, binary, howToBuild string) (string, error) {
+	return companion(c.env, envName, binary, howToBuild)
+}
+
+func companion(env func(string) string, envName, binary, howToBuild string) (string, error) {
+	if pinned := env(envName); pinned != "" {
 		if _, err := os.Stat(pinned); err != nil {
-			return "", fmt.Errorf("%s=%s: %w", nativeEnv, pinned, err)
+			return "", fmt.Errorf("%s=%s: %w", envName, pinned, err)
 		}
 		return pinned, nil
 	}
@@ -69,10 +87,9 @@ func (c *client) nativeWindow() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("find the lich binary: %w", err)
 	}
-	beside := filepath.Join(filepath.Dir(exe), nativeBinary)
+	beside := filepath.Join(filepath.Dir(exe), executableName(binary))
 	if _, err := os.Stat(beside); err != nil {
-		return "", fmt.Errorf("no %s beside %s: build it from native/ (native/slice.sh), "+
-			"or point %s at one", nativeBinary, exe, nativeEnv)
+		return "", fmt.Errorf("no %s beside %s: %s, or point %s at one", binary, exe, howToBuild, envName)
 	}
 	return beside, nil
 }
@@ -88,7 +105,7 @@ func (c *client) backend() (string, string, error) {
 	if err != nil {
 		return "", "", fmt.Errorf("find the lich binary: %w", err)
 	}
-	if err := c.start(exe, os.Environ(), []string{"--no-window"}); err != nil {
+	if err := c.start(exe, os.Environ(), []string{chromium.NoWindowArg}); err != nil {
 		return "", "", fmt.Errorf("start lich: %w", err)
 	}
 	return c.awaitBackend(nativeStartWait)
@@ -119,3 +136,21 @@ func (c *client) start(exe string, env, args []string) error {
 	}
 	return restart.StartDetached(exe, env, args)
 }
+
+// startNative launches the native window detached, printing into the native
+// log beside lich's; nil c.launch takes the real one. Nothing here waits on it:
+// this command exits right after.
+func (c *client) startNative(exe string, env []string) error {
+	if c.launch != nil {
+		return c.launch(exe, env, nil)
+	}
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return fmt.Errorf("resolve config directory: %w", err)
+	}
+	_, err = restart.StartNative(exe, env, filepath.Join(dir, "lich"))
+	return err
+}
+
+// executableName is binary's file name on this OS.
+func executableName(binary string) string { return binary + exeExt }

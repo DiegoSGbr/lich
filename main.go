@@ -18,11 +18,14 @@ import (
 	"github.com/omartelo/lich/internal/agentplugin"
 	"github.com/omartelo/lich/internal/appupdate"
 	"github.com/omartelo/lich/internal/chromium"
+	"github.com/omartelo/lich/internal/claudeprofile"
 	"github.com/omartelo/lich/internal/cli"
+	"github.com/omartelo/lich/internal/codexprofile"
 	"github.com/omartelo/lich/internal/drop"
 	"github.com/omartelo/lich/internal/events"
 	"github.com/omartelo/lich/internal/fonts"
 	"github.com/omartelo/lich/internal/logging"
+	"github.com/omartelo/lich/internal/ompprofile"
 	"github.com/omartelo/lich/internal/patchnotes"
 	"github.com/omartelo/lich/internal/project"
 	"github.com/omartelo/lich/internal/providers"
@@ -30,6 +33,7 @@ import (
 	"github.com/omartelo/lich/internal/relay"
 	"github.com/omartelo/lich/internal/restart"
 	"github.com/omartelo/lich/internal/rpc"
+	"github.com/omartelo/lich/internal/shellintegration"
 	"github.com/omartelo/lich/internal/singleton"
 	"github.com/omartelo/lich/internal/spawn"
 	"github.com/omartelo/lich/internal/store"
@@ -37,6 +41,7 @@ import (
 	"github.com/omartelo/lich/internal/terminal"
 	"github.com/omartelo/lich/internal/themes"
 	"github.com/omartelo/lich/internal/tray"
+	"github.com/omartelo/lich/internal/xdgprofile"
 )
 
 // The frontend is embedded into the binary and served over the loopback
@@ -58,6 +63,26 @@ var (
 	//go:embed build/windows/lich.ico
 	trayICO []byte
 )
+
+// trayIcons are the tray's icons; a dev instance's flame is amber, so it reads
+// apart from an installed lich's beside it.
+func trayIcons() tray.Icons {
+	icons := tray.Icons{PNG: trayPNG, ICO: trayICO}
+	if os.Getenv("LICH_DEV") == "" {
+		return icons
+	}
+	devPNG, err := tray.DevPNG(trayPNG)
+	if err != nil {
+		slog.Warn("tray: dev icon", "err", err)
+		return icons
+	}
+	devICO, err := tray.DevICO(trayICO)
+	if err != nil {
+		slog.Warn("tray: dev icon", "err", err)
+		return icons
+	}
+	return tray.Icons{PNG: devPNG, ICO: devICO}
+}
 
 // version is the running build's version, injected at build time via
 // -ldflags "-X main.version=<git tag>" (see Taskfile.yml). Unset in dev builds
@@ -127,11 +152,12 @@ func main() {
 	defer term.FlushHandsOn()
 	coord := newCoordinator(chromiumArgs)
 	window := newWindow(term.Transport(), configDir, chromiumArgs, term.LiveCount, coord.Quit)
-	registerServices(db, term, hub, configDir, logPath, env, launchEnv, window, coord)
+	coord.SetWindowOpen(window.Open)
+	sys := registerServices(db, term, hub, configDir, logPath, env, launchEnv, window, coord)
 
 	term.SetRestart(coord.Do)
 
-	runChromium(term, configDir, coord, window, startWindow(window, noWindow))
+	runChromium(term, configDir, coord, window, startWindow(sys, noWindow))
 }
 
 // windowStart is what a launch does about lich's window: open it, its own or
@@ -143,11 +169,11 @@ type windowStart struct {
 	openRunning func(configDir string, running *singleton.Info)
 }
 
-func startWindow(window *restart.Window, noWindow bool) windowStart {
+func startWindow(sys *system.Service, noWindow bool) windowStart {
 	if noWindow {
 		return windowStart{open: func() {}, openRunning: func(string, *singleton.Info) {}}
 	}
-	return windowStart{open: window.Show, openRunning: showRunning}
+	return windowStart{open: func() { showWindow(sys, "at launch") }, openRunning: showRunning}
 }
 
 // launchArgs are lich's own arguments, or the ones an update on Windows handed
@@ -212,13 +238,14 @@ func resolveEnv() (launchEnv, env []string) {
 // to exist first. It is lifted out of main only for its length; nothing here
 // runs anywhere else.
 func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub,
-	configDir, logPath string, env, launchEnv []string, window *restart.Window, coord *restart.Coordinator) {
+	configDir, logPath string, env, launchEnv []string, window *restart.Window, coord *restart.Coordinator) *system.Service {
 	proj := project.New(project.ZenityPicker{})
 	// gh has one active account per host; a project can name a different one.
 	proj.SetAccounts(db.GHAccountForPath)
 	// Relocating a project is the one flow that can point two rows at the same
 	// directory, so it validates the picked one against the workspace.
 	proj.SetProjects(db.ProjectAt)
+	proj.SetEmit(hub.Emit)
 	// Parking a session records the branch its checkout was on, so the history
 	// search can match a branch the row is showing (store.SetBranchOf), and a
 	// copy of what was said in it, capped, so the same search reaches the
@@ -261,6 +288,14 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 	// through a bind mount when it is confined, and deleting the session's row
 	// takes the copies with it.
 	term.SetDropDir(drop.Dir(configDir))
+	// A shell whose prompt is not marked still works; it only keeps the lines
+	// a resize wraps on screen.
+	shellScripts := shellintegration.Dir(configDir)
+	if err := shellintegration.Install(shellScripts); err != nil {
+		slog.Warn("shell integration unavailable", "err", err)
+	} else {
+		term.SetShellIntegrationDir(shellScripts)
+	}
 	db.SetSessionGone(drops.Purge)
 	// The footer's attach button opens the picker through the drop service, so
 	// the file it copies for a confined session is one a human chose in a dialog
@@ -273,6 +308,46 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 	plugins := agentplugin.New(db)
 	dispatcher.Register("agentplugin", plugins)
 	go plugins.RepairRegistrations()
+	// A profile follows Personal's lich plugin: an install or update there
+	// reaches every Claude Code and Codex profile, and a start brings in the
+	// ones left behind or logged in before they got it.
+	plugins.SetEmit(hub.Emit)
+	go plugins.SyncProfiles()
+	// Every Claude Code profile gets the lich plugin once it is logged in, run as
+	// that profile so its account's plugin policy applies; a profile with a
+	// session running in it is never deleted, and deleting one clears the
+	// settings that named it.
+	profiles := claudeprofile.New(db, hub.Emit)
+	profiles.SetLichPlugin(plugins.InstallInClaudeProfile, agentplugin.PluginKey)
+	profiles.SetSessions(term.ProfileSessions, func(slug string) error {
+		dir, err := claudeprofile.ConfigDir(slug)
+		if err != nil {
+			return err
+		}
+		return errors.Join(quota.ForgetClaudeLogin(dir), db.ForgetClaudeProfile(slug))
+	})
+	dispatcher.Register("claudeprofile", profiles)
+	// Codex profiles have plugin sets of their own too, and get the lich plugin
+	// the same way.
+	codexProfiles := codexprofile.New(db, hub.Emit)
+	codexProfiles.SetLichPlugin(plugins.InstallInCodexProfile, agentplugin.PluginKey)
+	codexProfiles.SetSessions(term.CodexProfileSessions, db.ForgetCodexProfile)
+	dispatcher.Register("codexprofile", codexProfiles)
+	// oh-my-pi's login is a terminal card's, so its service runs no login of its
+	// own and has nothing to report on /events; it lists, creates and deletes.
+	ompProfiles := ompprofile.New(db)
+	ompProfiles.SetSessions(term.OMPProfileSessions, db.ForgetOMPProfile)
+	dispatcher.Register("ompprofile", ompProfiles)
+	// opencode, Cursor CLI and Kiro CLI log in from a terminal card too, and have
+	// profiles only where their logins are under an XDG directory (Linux).
+	for _, provider := range xdgprofile.Providers() {
+		profiles := xdgprofile.New(provider, db)
+		profiles.SetSessions(
+			func(slug string) int { return term.XDGProfileSessions(provider.ID, slug) },
+			func(slug string) error { return db.ForgetXDGProfile(provider.ID, slug) },
+		)
+		dispatcher.Register(provider.ID+"profile", profiles)
+	}
 	dispatcher.Register("appupdate", appupdate.New(version, coord.Install, hub.Emit))
 	dispatcher.Register("patchnotes", patchnotes.New(version, changelog))
 	dispatcher.Register("store", db)
@@ -286,6 +361,13 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 	sys.SetShowWindow(window.Show)
 	sys.SetQuit(coord.Quit)
 	sys.SetCloseWindow(window.Dismiss)
+	sys.SetNativeWindow(system.NativeHooks{
+		Raise:  raiseNative(hub),
+		Launch: launchNative(term, filepath.Join(configDir, "lich")),
+		Close:  func() { hub.Emit(windowCloseEvent, nil) },
+		Locate: func() (string, error) { return cli.NativeExecutable(os.Getenv) },
+	})
+	sys.SetWindowChoice(func() string { return windowChoice(db) })
 	dispatcher.Register("system", sys)
 	// Deleting a session for good takes any prompt parked on it, and the row is
 	// the only copy of what the user wrote. Both channels are used, and neither
@@ -300,6 +382,10 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 			slog.Warn("notify forfeited schedule", "session", lost.Label, "err", err)
 		}
 	})
+	db.SetSessionRenamed(func(id, label string) {
+		hub.Emit(spawn.RenamedEventName, spawn.RenamedEvent{ID: id, Label: label})
+	})
+	db.SetProjectChanged(hub.Emit)
 	providerSvc := providers.New()
 	// One resolution, three readers: the process PATH exec.LookPath resolves a
 	// binary through, what a new session inherits, and the editor lookup. They
@@ -329,8 +415,22 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 		env, read := term.SessionAccount(sessionID)
 		return quota.Account{Env: env, Read: read}
 	})
+	plans.SetEnabled(func(provider string) bool {
+		on, err := db.ProviderEnabled(provider)
+		if err != nil {
+			slog.Error("quota: read provider switch", "provider", provider, "err", err)
+		}
+		return on
+	})
 	term.SetRateLimitReports(plans.ReportClaude)
 	dispatcher.Register("quota", plans)
+	codexProfiles.SetAccount(func(slug string) (string, string) {
+		plan, err := plans.CodexProfilePlan(slug)
+		if err != nil || plan.Status != quota.StatusOK {
+			return "", ""
+		}
+		return plan.Account, plan.Plan
+	})
 	// The relay is the only service whose caller is not the window: the `lich`
 	// CLI running inside a session reaches it over the same listener. It watches
 	// the hooks' state reports too, to notice a target that ends a turn without
@@ -349,7 +449,13 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 	rl.SetPlugins(plugins)
 	// `lich focus` opens a card for someone outside the window, who then needs
 	// the window in front, or open again: what a second launch of lich asks for.
-	rl.SetRaiseWindow(window.ShowSession)
+	rl.SetRaiseWindow(func(sessionID string) {
+		if windowChoice(db) == system.WindowNative {
+			showWindow(sys, "for lich focus")
+			return
+		}
+		window.ShowSession(sessionID)
+	})
 	// The language of the text lich types into sessions is read live from the
 	// settings table, by the relay at every message, by the terminal at
 	// every spawn and by drop at every copy notice.
@@ -376,16 +482,22 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 	// its turn ended, the way a native subagent ends with its result.
 	rl.SetWorkerFinished(spawner.CloseFinishedWorker)
 	dispatcher.Register("spawn", spawner)
-	dispatcher.Register("themes", themes.New(version))
+	dispatcher.Register("themes", themes.New(version, db, hub.Emit))
 	// The tray is what a lich with its window closed shows of itself; it comes
 	// up once the page hands it its words (tray.SetLabels).
-	dispatcher.Register("tray", tray.New(tray.Icons{PNG: trayPNG, ICO: trayICO},
-		window.Show, coord.Quit, term.LiveCount))
+	trayIcon := tray.New(trayIcons(), func() { showWindow(sys, "from the tray") }, coord.Quit, term.LiveCount)
+	trayIcon.SetOtherWindow(func() string { return windowChoice(db) }, func(kind string) {
+		if err := sys.OpenWindow(system.OpenWindowOptions{Kind: kind}); err != nil {
+			slog.Warn("open the other window from the tray", "err", err)
+		}
+	})
+	dispatcher.Register("tray", trayIcon)
 	denyInternal(dispatcher)
 	term.Mount("/rpc/", dispatcher)
 	term.Mount("/drop", http.HandlerFunc(drops.Upload))
 	term.Mount("/blob", http.HandlerFunc(proj.ServeBlob))
 	term.Mount("/events", hub)
+	return sys
 }
 
 // denyInternal hides the methods that exist for Go callers inside this process
@@ -429,7 +541,9 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 //     checks; the relay calls it for a worker that reported back.
 //   - relay.SetPlugins, relay.SetWorkerFinished, relay.SetPromptLanguage, drop.SetPromptLanguage, project.SetAccounts, project.SetProjects,
 //     system.SetShowWindow, system.SetQuit, system.SetCloseWindow,
+//     system.SetNativeWindow, system.SetWindowChoice,
 //     quota.SetSessions, store.SetSessionGone, store.SetScheduleForfeited,
+//     store.SetSessionRenamed, store.SetProjectChanged,
 //     store.SetBranchOf, store.SetTranscriptOf, store.SetConversationsOf,
 //     store.SetCheckoutsOf, terminal.SetDropDir,
 //     terminal.SetRateLimitReports, terminal.SetUsageLimit, terminal.SetWorkerAnswer,
@@ -439,6 +553,19 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 //     SetProjects also disarms the guard that keeps two projects off the same
 //     directory, and SetDropDir points the sandbox's read-only bind wherever
 //     the caller likes.
+//   - store.SetSessionProfile moves a session to another Claude Code profile
+//     without moving its conversation, which only terminal.ContinueIn may do;
+//     store.ForgetClaudeProfile, store.ForgetCodexProfile,
+//     store.ForgetOMPProfile and store.ForgetXDGProfile are the delete's own
+//     cleanup.
+//   - agentplugin.SetEmit is startup wiring like the setters above, and
+//     agentplugin.SyncProfiles is the start's pass over the profiles: called
+//     over /rpc/ it would run a second one racing the first.
+//   - claudeprofile.SetLichPlugin, claudeprofile.SetSessions,
+//     codexprofile.SetLichPlugin, codexprofile.SetSessions,
+//     codexprofile.SetAccount and
+//     ompprofile.SetSessions and the SetSessions of opencodeprofile,
+//     cursorprofile and kiroprofile are startup wiring like the setters above.
 //   - quota.ReportClaude is a session's own reading of its plan, which arrives
 //     over /mod/usage: called here it would put any numbers on the gauge.
 //   - terminal.EnqueueModCommand and terminal.RunModCommand queue a command for
@@ -454,8 +581,12 @@ func denyInternal(d *rpc.Handler) {
 		"system.SetShowWindow",
 		"system.SetQuit",
 		"system.SetCloseWindow",
+		"system.SetNativeWindow",
+		"system.SetWindowChoice",
 		"store.SetSessionGone",
 		"store.SetScheduleForfeited",
+		"store.SetSessionRenamed",
+		"store.SetProjectChanged",
 		"store.SetBranchOf",
 		"store.SetTranscriptOf",
 		"store.SetConversationsOf",
@@ -473,6 +604,8 @@ func denyInternal(d *rpc.Handler) {
 		"relay.RunSchedules",
 		"relay.ParkResume",
 		"agentplugin.RepairRegistrations",
+		"agentplugin.SetEmit",
+		"agentplugin.SyncProfiles",
 		"relay.SetPlugins",
 		"relay.SetWorkerFinished",
 		"relay.SetPromptLanguage",
@@ -494,6 +627,20 @@ func denyInternal(d *rpc.Handler) {
 		"terminal.EnqueueModCommand",
 		"terminal.RunModCommand",
 		"terminal.SubmitPrompt",
+		"store.SetSessionProfile",
+		"store.ForgetClaudeProfile",
+		"store.ForgetCodexProfile",
+		"store.ForgetOMPProfile",
+		"store.ForgetXDGProfile",
+		"claudeprofile.SetLichPlugin",
+		"claudeprofile.SetSessions",
+		"codexprofile.SetLichPlugin",
+		"codexprofile.SetSessions",
+		"codexprofile.SetAccount",
+		"ompprofile.SetSessions",
+		"opencodeprofile.SetSessions",
+		"cursorprofile.SetSessions",
+		"kiroprofile.SetSessions",
 	} {
 		d.Deny(method)
 	}
@@ -744,6 +891,62 @@ func handleBindFailure(configDir string, cause error, openRunning func(string, *
 		port, cause, logging.Path(filepath.Join(configDir, "lich"))),
 		zenity.Title("lich"))
 	os.Exit(1)
+}
+
+// windowRaiseEvent asks the native window on /events to come forward, and
+// windowCloseEvent to close, a web window taking its place.
+const (
+	windowRaiseEvent = "window-raise"
+	windowCloseEvent = "window-close"
+)
+
+// raiseNative brings the native window forward through /events, which only it
+// holds once it attached.
+func raiseNative(hub *events.Hub) func() bool {
+	return func() bool {
+		if !hub.Attached() {
+			return false
+		}
+		hub.Emit(windowRaiseEvent, nil)
+		return true
+	}
+}
+
+// launchNative starts the native window again on this backend, pointed at it
+// the way `lich native` points the first one, logs how it ends and hands
+// that end to exited.
+func launchNative(term *terminal.Service, logDir string) func(string, func(string)) error {
+	return func(executable string, exited func(string)) error {
+		info := term.Transport()
+		env := append(os.Environ(), "LICH_PORT="+strconv.Itoa(info.Port), "LICH_TOKEN="+info.Token)
+		cmd, err := restart.StartNative(executable, env, logDir)
+		if err != nil {
+			return err
+		}
+		go func() {
+			restart.WatchNative(cmd)
+			exited(cmd.ProcessState.String())
+		}()
+		return nil
+	}
+}
+
+// windowChoice is the window lich opens when asked for one; a store that
+// cannot answer opens the web one, which every install has.
+func windowChoice(db *store.Service) string {
+	kind, err := db.GetSetting(system.WindowKindKey, "")
+	if err != nil {
+		slog.Warn("read the window choice, opening the web window", "err", err)
+	}
+	return kind
+}
+
+// showWindow opens the chosen window where nobody waits on the answer but
+// the log: the launch and the tray.
+func showWindow(sys *system.Service, from string) {
+	if err := sys.ShowWindow(system.ShowWindowOptions{}); err != nil {
+		slog.Warn("show the window "+from, "err", err)
+	}
 }
 
 // showRunning asks the running lich for its window: it opens one when the user

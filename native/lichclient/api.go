@@ -14,6 +14,7 @@ type Project struct {
 	Path            string    `json:"path"`
 	NextSeq         int       `json:"nextSeq"`
 	ActiveSessionID string    `json:"activeSessionId"`
+	DefaultProvider string    `json:"defaultProvider"`
 	Sessions        []Session `json:"sessions"`
 }
 
@@ -28,6 +29,15 @@ type Session struct {
 	Pinned bool   `json:"pinned"`
 	Unread bool   `json:"unread"`
 	Color  string `json:"color"`
+	// ProviderSessionID is the provider conversation the session last ran,
+	// "" for none: what a restored card offers to resume.
+	ProviderSessionID string `json:"providerSessionId"`
+	// MCPServers are the servers the session's spawn found registered with
+	// its provider, which divide an MCP tool's name into server and tool.
+	MCPServers []string `json:"mcpServers"`
+	// Profile is the Claude Code profile the session runs in (a slug), "" for
+	// Personal and for every other provider.
+	Profile string `json:"profile"`
 }
 
 // DiffStats mirrors project.DiffStats.
@@ -75,9 +85,9 @@ func (c *Client) Replay(ctx context.Context, id string) ([]byte, error) {
 }
 
 // Start spawns the session's process at cols x rows; a no-op when it already
-// runs.
-func (c *Client) Start(ctx context.Context, id, projectID, cwd, kind string, cols, rows int) error {
-	return c.Call(ctx, "terminal.Start", nil, id, projectID, cwd, kind, "", "", false, false, cols, rows)
+// runs. resume is a provider conversation id to reopen, "" to start fresh.
+func (c *Client) Start(ctx context.Context, id, projectID, cwd, kind, resume string, cols, rows int) error {
+	return c.Call(ctx, "terminal.Start", nil, id, projectID, cwd, kind, resume, "", false, false, cols, rows)
 }
 
 // Resize sets the session's PTY size.
@@ -121,7 +131,8 @@ type RevertLine struct {
 	Text string `json:"text"`
 }
 
-// RevertResult mirrors project.RevertResult, what undoing a revert needs.
+// RevertResult mirrors project.RevertResult, what undoing a revert needs. Both
+// patches are base64, opaque here: handed back to RestoreLines as they came.
 type RevertResult struct {
 	Patch      string `json:"patch"`
 	IndexPatch string `json:"indexPatch"`
@@ -133,4 +144,18 @@ type RevertResult struct {
 func (c *Client) RevertLines(ctx context.Context, path, rel string, lines []RevertLine) (RevertResult, error) {
 	var r RevertResult
 	return r, c.Call(ctx, "project.RevertLines", &r, path, rel, lines)
+}
+
+// GetSetting returns a setting's value, "" when unset. scope is a project id,
+// "" for a global setting.
+func (c *Client) GetSetting(ctx context.Context, key, scope string) (string, error) {
+	var v string
+	return v, c.Call(ctx, "store.GetSetting", &v, key, scope)
+}
+
+// HomeProject is the project rooted at the user's home directory, the one the
+// windows pin as Home. It is not opened by asking.
+func (c *Client) HomeProject(ctx context.Context) (Project, error) {
+	var p Project
+	return p, c.Call(ctx, "project.Home", &p)
 }
