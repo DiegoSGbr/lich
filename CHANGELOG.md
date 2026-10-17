@@ -43,6 +43,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   have none: there they keep the login in the Keychain or in a folder no
   setting can move, so every profile would share one account.
 
+### Changed
+
+- **A lighter status ring in the native window.** The ring around a
+  session card's icon is drawn thinner, to read at the weight the web
+  window gives it.
+
+- **Roomier shortcut keys in the native window.** The key caps in the
+  command palette, the shortcuts overlay and Settings › Hotkeys have more
+  room around their text, which sits centred.
+
+- **Settings in the native window opens on Global.** The gear in the top
+  bar always opens Settings on Global instead of the scope you last left it
+  in; a project's tab still opens its own settings from Project settings….
+
+- **A calmer command palette in the native window.** Each session, project
+  and message takes one line, with its path after the name; a worktree's
+  path shows its last three parts. Sessions waiting on you come first and
+  say so, and the filter tabs lose their pills for an underline. A closed
+  session in History shows its branch and age on the right, and a second
+  line only when a search matched its conversation, with the words marked.
+
 ### Fixed
 
 - **Claude Code stops asking "trust this folder?" where you already
