@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Required checks are labelled.** In the native window, a pull request's
+  Checks tab marks the checks that gate its merge with Required, as GitHub
+  does.
+
 ### Changed
 
 - **lich lives at `lichdotdev/lich`.** The repository moved to the
