@@ -1,13 +1,10 @@
 package fonts
 
 import (
-	"fmt"
-	"os"
 	"strings"
 	"sync"
 
 	"gioui.org/font"
-	"gioui.org/font/opentype"
 )
 
 // Han is the typeface the CJK faces are registered under. No text asks for
@@ -76,9 +73,11 @@ func loadHan(c cjk) ([]font.FontFace, error) {
 		}
 		face, ok := parsed[loc]
 		if !ok {
-			if face, err = parseLocation(loc); err != nil {
+			read, err := ParseFace(loc)
+			if err != nil {
 				return nil, err
 			}
+			face = read.Face
 			parsed[loc] = face
 		}
 		if _, ok := face.Face().NominalGlyph(hanProbes[c]); !ok {
@@ -87,21 +86,6 @@ func loadHan(c cjk) ([]font.FontFace, error) {
 		faces = append(faces, font.FontFace{Font: font.Font{Typeface: Han, Weight: w}, Face: face})
 	}
 	return faces, nil
-}
-
-func parseLocation(loc Location) (font.Face, error) {
-	data, err := os.ReadFile(loc.Path)
-	if err != nil {
-		return nil, err
-	}
-	parsed, err := opentype.ParseCollection(data)
-	if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", loc.Path, err)
-	}
-	if loc.Index < 0 || loc.Index >= len(parsed) {
-		return nil, fmt.Errorf("locate Han: face index %d is not one of the %d in %s", loc.Index, len(parsed), loc.Path)
-	}
-	return parsed[loc.Index].Face, nil
 }
 
 // coverWeights registers, for each interface weight faces lack, the face of
