@@ -13,6 +13,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+	"gioui.org/unit"
 	"gioui.org/widget"
 	"github.com/lichdotdev/lich/native/ui"
 )
@@ -102,6 +103,44 @@ func (s *sidebar) cardFace(gtx C, th *ui.Theme, sv *sessionView, click, pinClick
 	})
 }
 
+// inHand is a session carried over the window, a card out of the sidebar
+// or a pane by its header: a pill with its ring and name just right of the
+// pointer at p, or left of it where the window ends first.
+func (s *sidebar) inHand(gtx C, th *ui.Theme, sv *sessionView, p image.Point) {
+	size := gtx.Constraints.Max
+	on := th.On(th.Popover)
+	m := op.Record(gtx.Ops)
+	cgtx := gtx
+	cgtx.Constraints = layout.Constraints{Max: image.Pt(gtx.Dp(cardInHandWidth), size.Y)}
+	pill := layout.Inset{Left: ui.Space(1), Right: ui.Space(3), Top: ui.Space(1), Bottom: ui.Space(1)}.Layout(cgtx, func(gtx C) D {
+		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx C) D { return s.statusGlyph(gtx, on, sv) }),
+			ui.Gap(1.5),
+			layout.Rigid(on.Text(ui.TextSM, sv.Label).Weight(font.Medium).Layout),
+		)
+	})
+	body := m.Stop()
+	gap := gtx.Dp(cardInHandGap)
+	x := p.X + gap
+	if x+pill.Size.X > size.X {
+		x = p.X - gap - pill.Size.X
+	}
+	at := image.Pt(x, p.Y-pill.Size.Y/2)
+	defer op.Offset(at).Push(gtx.Ops).Pop()
+	shape := clip.UniformRRect(image.Rectangle{Max: pill.Size}, pill.Size.Y/2)
+	paint.FillShape(gtx.Ops, th.Popover, shape.Op(gtx.Ops))
+	paint.FillShape(gtx.Ops, th.Ring, clip.Stroke{Path: shape.Path(gtx.Ops), Width: float32(gtx.Dp(1))}.Op())
+	body.Add(gtx.Ops)
+}
+
+// The pill a carried session becomes sits cardInHandGap right of the
+// pointer, clear of the cursor, or as far left of it where the window ends
+// first, its name cut short past cardInHandWidth.
+var (
+	cardInHandGap   = unit.Dp(14)
+	cardInHandWidth = unit.Dp(240)
+)
+
 func (s *sidebar) renaming(id string) bool {
 	rename := s.renames[id]
 	return rename != nil && rename.Active()
@@ -121,13 +160,45 @@ func (s *sidebar) cardBody(gtx C, th *ui.Theme, sv *sessionView, prChip *widget.
 	if rung, ok := statusRung(th, sv); ok {
 		rows = append(rows, ui.VGap(2), layout.Rigid(rung))
 	}
-	rows = append(rows, ui.VGap(2), layout.Rigid(th.Text(ui.TextXS, path).Muted().Mono().LayoutTail))
+	rows = append(rows, ui.VGap(2), layout.Rigid(func(gtx C) D { return pathRow(gtx, th, sv.layout, path) }))
 	if sv.git.Branch != "" || sv.profileName != "" {
 		rows = append(rows, ui.VGap(2), layout.Rigid(func(gtx C) D { return s.branchRow(gtx, th, sv, prChip) }))
 	}
 	return layout.Inset{Top: ui.Space(2), Bottom: ui.Space(2), Left: ui.Space(2.5), Right: ui.Space(2.5)}.Layout(gtx, func(gtx C) D {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
 	})
+}
+
+// pathRow is the card's path, after the chip of the layout the session sits
+// in: clicking the card shows it there.
+func pathRow(gtx C, th *ui.Theme, layoutName, path string) D {
+	text := th.Text(ui.TextXS, path).Muted().Mono().LayoutTail
+	if layoutName == "" {
+		return text(gtx)
+	}
+	return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx C) D { return layoutChip(gtx, th, layoutName) }),
+		ui.Gap(1.5),
+		layout.Flexed(1, text),
+	)
+}
+
+// layoutChip is profileChip's outline around the layout glyph and name.
+func layoutChip(gtx C, th *ui.Theme, name string) D {
+	macro := op.Record(gtx.Ops)
+	gtx.Constraints.Min = image.Point{}
+	gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(profileChipMaxW))
+	d := layout.Inset{Left: ui.Space(1), Right: ui.Space(1.5), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx C) D {
+		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx C) D { return icTabLayout.Layout(gtx, 11, th.MutedForeground) }),
+			ui.Gap(1),
+			layout.Rigid(th.Text(profileChipSize, name).Muted().Layout),
+		)
+	})
+	call := macro.Stop()
+	insetBorder(gtx, d.Size, gtx.Dp(ui.RadiusSM), th.Over(th.Border))
+	call.Add(gtx.Ops)
+	return d
 }
 
 // titleRow is the card's first line: the status ring around the provider

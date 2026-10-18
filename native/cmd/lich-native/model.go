@@ -108,6 +108,11 @@ type model struct {
 	dropped func()
 	// closed is the closed projects, which the menu and the palette read.
 	closed *closedProjects
+
+	// layouts are the window's split layouts; shownLayout is the one on
+	// screen, "" for a project's session alone.
+	layouts     layoutTabs
+	shownLayout string
 }
 
 // sessionCwd is a session-cwd payload: where the session's shell is, or the
@@ -166,7 +171,14 @@ func (m *model) reload(ctx context.Context) error {
 	if p := m.shownProject(); p != nil && !slices.ContainsFunc(p.Sessions, func(s lichclient.Session) bool { return s.ID == m.active }) {
 		m.active = p.ActiveSessionID
 	}
+	pruned := m.layouts.prune(m.liveLocked)
+	if pruned {
+		m.refocusLayoutLocked()
+	}
 	m.mu.Unlock()
+	if pruned {
+		m.saveLayouts()
+	}
 	m.invalidate()
 	return nil
 }
@@ -214,6 +226,7 @@ func (m *model) setActiveProject(id string) bool {
 	}
 	m.activeProject, m.home = id, id == m.homeID
 	m.active = m.projects[i].ActiveSessionID
+	m.shownLayout = ""
 	return true
 }
 
@@ -509,6 +522,8 @@ type sessionView struct {
 	// continueIn are the other logins its conversation could move to.
 	profileName string
 	continueIn  []continueTarget
+	// layout is the name of the layout the session sits in, "" for none.
+	layout string
 }
 
 // viewOf is what s's card shows at now. Callers hold m.mu.
@@ -523,6 +538,7 @@ func (m *model) viewOf(p lichclient.Project, s lichclient.Session, now time.Time
 		base: m.base[shown], pr: m.prs[shown].pr,
 		relay: m.relay[s.ID], tool: tool, reason: m.status.reason(s.ID),
 		profileName: m.profileNameOf(s.Kind, s.Profile), continueIn: m.continueTargets(s.Kind, s.Profile),
+		layout: m.layoutNameOfLocked(s.ID),
 	}
 }
 
@@ -557,6 +573,7 @@ func (m *model) activeSession() (sessionView, bool) {
 // (project-events.tsx).
 func (m *model) setActive(ctx context.Context, id string) {
 	m.mu.Lock()
+	refocused := m.routeLocked(id)
 	left := m.active
 	m.active = id
 	if p := m.shownProject(); p != nil {
@@ -565,6 +582,9 @@ func (m *model) setActive(ctx context.Context, id string) {
 	readLeft := left != id && m.status.markSeen(left)
 	readNew := m.focused && m.status.markSeen(id)
 	m.mu.Unlock()
+	if refocused {
+		m.saveLayouts()
+	}
 	if readLeft {
 		m.markRead(ctx, left)
 	}
@@ -596,6 +616,16 @@ func (m *model) closeSession(id string) (projectID, active string, ok bool) {
 		return "", "", false
 	}
 	p.Sessions = slices.Delete(p.Sessions, i, i+1)
+	if left, took := m.layouts.take(id); took {
+		m.saveLayoutsLocked()
+		if m.active == id && m.refocusLayoutLocked() {
+			return p.ID, m.active, true
+		}
+		if lp, _ := m.sessionAt(left); m.active == id && lp != nil {
+			m.active, m.activeProject = left, lp.ID
+			return lp.ID, left, true
+		}
+	}
 	if m.active == id {
 		m.active = ""
 		switch {
