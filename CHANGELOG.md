@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The native window opens again on Windows and macOS, where it closed right
+  away looking for fontconfig to draw the code and diff views.
+- Emoji in the native window's terminal are drawn in color on Windows, where
+  they came out as plain outlines.
 - The update command offered to a macOS install now taps `lichdotdev/tap` before upgrading. An install from the old `omartelo/tap` failed with "Cask 'lichdotdev/tap/lich' is unavailable", since Homebrew does not follow a moved tap on its own; tap it once with `brew tap lichdotdev/tap` to upgrade from an older lich.
 - In the native window, "Unfold long pastes" now unfolds Claude Code and Kiro CLI pastes: the clipboard, a batch of review comments, the prompt a pull request or issue opens a session with, and dropped or attached file paths.
 
