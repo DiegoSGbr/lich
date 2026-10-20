@@ -32,31 +32,31 @@ func TestBlobWorkTree(t *testing.T) {
 	}
 }
 
-// The review's two sides: HEAD for a working-tree diff, a tree oid for a turn.
-// Each reads its own revision while the working tree has moved on.
+// The review's sides: HEAD for a working-tree diff, or a tree oid. Each reads
+// its own revision while the working tree has moved on.
 func TestBlobAtRevision(t *testing.T) {
 	t.Parallel()
 	repo, git := initRepo(t)
-	write(t, repo, "doc.pdf", "%PDF-old\x00")
-	git("add", "doc.pdf")
-	git("commit", "-m", "pdf")
+	write(t, repo, "logo.png", "png-old\x00")
+	git("add", "logo.png")
+	git("commit", "-m", "logo")
 	tree := strings.TrimSpace(git("rev-parse", "HEAD^{tree}"))
-	write(t, repo, "doc.pdf", "%PDF-new\x00")
+	write(t, repo, "logo.png", "png-new\x00")
 
 	svc := New(nil)
 	for _, ref := range []string{"HEAD", tree} {
-		blob, err := svc.Blob(repo, "doc.pdf", ref)
+		blob, err := svc.Blob(repo, "logo.png", ref)
 		if err != nil {
 			t.Fatalf("Blob at %s: %v", ref, err)
 		}
-		if string(blob.Data) != "%PDF-old\x00" || blob.ContentType != "application/pdf" {
-			t.Errorf("at %s: %q as %q, want the committed PDF", ref, blob.Data, blob.ContentType)
+		if string(blob.Data) != "png-old\x00" || blob.ContentType != "image/png" {
+			t.Errorf("at %s: %q as %q, want the committed image", ref, blob.Data, blob.ContentType)
 		}
 	}
 }
 
 // An added file has no old side and a deleted one no new side; both must read
-// as absent, which the page draws as no column at all.
+// as absent, which the window reads as a side with nothing to show.
 func TestBlobMissingSideIsNotExist(t *testing.T) {
 	t.Parallel()
 	repo, _ := initRepo(t)
@@ -85,6 +85,7 @@ func TestBlobRefusals(t *testing.T) {
 		{"option-shaped revision", "assets/x.png", "--output=x", errBlobRequest},
 		{"text file", "notes.txt", "", errPreviewUnsupported},
 		{"svg stays a text diff", "icon.svg", "", errPreviewUnsupported},
+		{"a format the window does not decode", "doc.pdf", "", errPreviewUnsupported},
 	}
 	svc := New(nil)
 	for _, tt := range tests {
@@ -159,26 +160,12 @@ func TestServeBlob(t *testing.T) {
 		t.Errorf("body = %q, want the file", rec.Body.Bytes())
 	}
 	for key, want := range map[string]string{
-		"Content-Type":           "image/png",
-		"X-Content-Type-Options": "nosniff",
-		"Cache-Control":          "no-store",
+		"Content-Type":  "image/png",
+		"Cache-Control": "no-store",
 	} {
 		if got := rec.Header().Get(key); got != want {
 			t.Errorf("%s = %q, want %q", key, got, want)
 		}
-	}
-}
-
-// Chromium's PDF viewer fetches a large document in ranges.
-func TestServeBlobHonoursRange(t *testing.T) {
-	t.Parallel()
-	repo, _ := initRepo(t)
-	write(t, repo, "doc.pdf", "%PDF-1.4\x00rest")
-
-	rec := serveBlob(t, http.MethodGet, url.Values{"path": {repo}, "rel": {"doc.pdf"}},
-		http.Header{"Range": {"bytes=0-3"}})
-	if rec.Code != http.StatusPartialContent || rec.Body.String() != "%PDF" {
-		t.Errorf("range: %d %q, want 206 %q", rec.Code, rec.Body, "%PDF")
 	}
 }
 
@@ -210,7 +197,7 @@ func TestServeBlobStatuses(t *testing.T) {
 	}
 }
 
-// The page prints these bodies verbatim, so their words are the contract.
+// The window prints these bodies verbatim, so their words are the contract.
 func TestServeBlobRefusalWording(t *testing.T) {
 	t.Parallel()
 	repo, _ := initRepo(t)

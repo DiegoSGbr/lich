@@ -1,8 +1,8 @@
 package main
 
 // An image read through /blob and drawn on the checkerboard with its
-// dimensions, format and size under it: BinaryPreview.tsx's ImageView, for
-// the Code tab's preview and a binary file's card in the Review.
+// dimensions, format and size under it, for the
+// Code tab's preview and a binary file's card in the Review.
 
 import (
 	"bytes"
@@ -56,9 +56,8 @@ const (
 	blobPDF
 )
 
-// imageExtensions are the formats internal/project.previewTypes serves that
-// this binary decodes; AVIF and ICO, which Chromium draws, fall to the state
-// with no preview.
+// imageExtensions are the formats this binary decodes, the same ones
+// internal/project.previewTypes serves.
 var imageExtensions = map[string]bool{".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true, ".bmp": true}
 
 func previewKindOf(rel string) blobKind {
@@ -124,8 +123,7 @@ const (
 	blobBytesPerMB = 1024 * 1024
 )
 
-// formatBlobSize is preview.ts formatBlobSize: KB below a megabyte, one
-// decimal either way.
+// formatBlobSize formats a size: KB below a megabyte, one decimal either way.
 func formatBlobSize(n int) string {
 	if n < blobBytesPerMB {
 		return fmt.Sprintf("%.1f KB", float64(n)/blobBytesPerKB)
@@ -145,7 +143,7 @@ func newBlobView(invalidate func()) *blobView {
 }
 
 // want reads rel at ref in checkout; version tells a new state of the file
-// from the one held, as the web keys a side by its blob ids.
+// from the one held.
 func (v *blobView) want(client *lichclient.Client, checkout, rel, ref, version string) {
 	key := strings.Join([]string{checkout, rel, ref, version}, "\x00")
 	v.read.want(key, checkout, func(ctx context.Context) (*previewImage, error) {

@@ -20,11 +20,8 @@ import (
 	"github.com/lichdotdev/lich/native/ui"
 )
 
-// The Appearance settings beyond the theme. The web keeps zoom, the terminal
-// text size and font, and the spend ceiling in its own localStorage
-// (providers/settings.tsx), out of this window's reach, so these keys are the
-// native window's, named after the web's storage keys; only the close action
-// is the web's own workspace setting.
+// The Appearance settings beyond the theme, as backend settings. Renaming a key
+// would orphan what is already stored under it.
 const (
 	zoomKey             = "lich.appearance.zoom"
 	terminalFontSizeKey = "lich.terminal.fontSize"
@@ -33,11 +30,10 @@ const (
 	editorFontKey       = "lich.editor.font"
 	uiFontKey           = "lich.appearance.font"
 	costBudgetKey       = "lich.footer.costBudget"
-	closeActionKey      = "window.closeAction" // close-request.ts CLOSE_ACTION_SETTING_KEY
-	windowKindKey       = "window.kind"        // system.WindowKindKey
+	closeActionKey      = "window.closeAction"
 )
 
-// providers/settings.tsx's limits.
+// Bounds and steps for the zoom and the font sizes.
 const (
 	zoomMin             = 0.5
 	zoomMax             = 2
@@ -52,7 +48,7 @@ const (
 	defaultEditorSize   = 14
 )
 
-// close-request.ts CLOSE_ACTIONS.
+// The values the close action setting takes.
 const (
 	closeAsk        = "ask"
 	closeBackground = "background"
@@ -71,10 +67,9 @@ type appearancePrefs struct {
 	uiFont         string
 	budget         float64 // 0 is no ceiling
 	closeAction    string
-	windowKind     string
 }
 
-// clampZoom is settings.tsx clampZoom: bounded, snapped to one decimal.
+// clampZoom bounds a zoom and snaps it to one decimal.
 func clampZoom(v float64) float64 {
 	return math.Round(math.Min(zoomMax, math.Max(zoomMin, v))*10) / 10
 }
@@ -96,8 +91,8 @@ func (p appearancePrefs) terminalFamily() string { return systemOr(p.font, fonts
 
 func (p appearancePrefs) codeFamily() string { return systemOr(p.editorFont, fonts.SystemMono) }
 
-// clampCostBudget is settings.tsx clampCostBudget: cents, never negative,
-// and none for what is not a number.
+// clampCostBudget keeps a budget in cents, never negative, and none for what is
+// not a number.
 func clampCostBudget(v float64) float64 {
 	if math.IsNaN(v) || math.IsInf(v, 0) {
 		return 0
@@ -105,8 +100,8 @@ func clampCostBudget(v float64) float64 {
 	return math.Round(math.Max(0, v)*100) / 100
 }
 
-// closeActionOf is close-request.ts closeActionOf: nothing stored, or a value
-// from a newer lich, asks.
+// closeActionOf reads the stored close action: nothing stored, or a value from
+// a newer lich, asks.
 func closeActionOf(stored string) string {
 	switch stored {
 	case closeBackground, closeQuit:
@@ -115,11 +110,11 @@ func closeActionOf(stored string) string {
 	return closeAsk
 }
 
-// closeQuits is close-request.ts closeOutcome: with no session running, or
-// quit as the kept answer, closing quits; otherwise the user is asked.
+// closeQuits reports whether closing quits: with no session running, or quit as
+// the kept answer, it does; otherwise the user is asked.
 func closeQuits(action string, live int) bool { return live == 0 || action == closeQuit }
 
-// parseNumber is parseNumberPref: what does not parse is the fallback.
+// parseNumber parses raw; what does not parse is the fallback.
 func parseNumber(raw string, fallback float64) float64 {
 	v, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
@@ -131,7 +126,7 @@ func parseNumber(raw string, fallback float64) float64 {
 // loadAppearancePrefs reads the stored values.
 func loadAppearancePrefs(ctx context.Context, c *lichclient.Client) (appearancePrefs, error) {
 	raw := map[string]string{}
-	for _, key := range []string{zoomKey, terminalFontSizeKey, terminalFontKey, editorFontSizeKey, editorFontKey, uiFontKey, costBudgetKey, closeActionKey, windowKindKey} {
+	for _, key := range []string{zoomKey, terminalFontSizeKey, terminalFontKey, editorFontSizeKey, editorFontKey, uiFontKey, costBudgetKey, closeActionKey} {
 		v, err := c.GetSetting(ctx, key, "")
 		if err != nil {
 			return appearancePrefs{}, err
@@ -147,7 +142,6 @@ func loadAppearancePrefs(ctx context.Context, c *lichclient.Client) (appearanceP
 		uiFont:         raw[uiFontKey],
 		budget:         clampCostBudget(parseNumber(raw[costBudgetKey], 0)),
 		closeAction:    closeActionOf(raw[closeActionKey]),
-		windowKind:     windowKindOf(raw[windowKindKey]),
 	}
 	return p, nil
 }

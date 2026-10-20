@@ -1,6 +1,6 @@
 // Package events pushes app events (session status, titles, touched —
 // anything the backend pushes to the UI) to the local WebSocket
-// client on /events (see docs/chromium-shell.md). While no client is
+// client on /events (see docs/native-window.md). While no client is
 // connected events are dropped — the window owns the connection, so nobody
 // is listening anyway. It is also the delivery channel terminal I/O falls
 // back to when the dedicated /ws transport is down.
@@ -86,9 +86,7 @@ func (h *Hub) drop(conn *websocket.Conn) {
 // connection replaces the previous one. The read loop only watches for close.
 // Token auth is applied by the transport mount, like every mounted handler.
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		OriginPatterns: []string{"*"},
-	})
+	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		slog.Warn("events: accept", "err", err)
 		return
