@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/lichdotdev/lich/internal/agentplugin"
 	"github.com/lichdotdev/lich/internal/appupdate"
@@ -96,8 +97,7 @@ func main() {
 		os.Exit(code)
 	}
 
-	args, handedErr := launchArgs()
-	noWindow := slices.Contains(args, restart.NoWindowArg)
+	noWindow := slices.Contains(os.Args[1:], restart.NoWindowArg)
 
 	configDir, err := os.UserConfigDir()
 	if err != nil {
@@ -119,9 +119,6 @@ func main() {
 		logPath = ""
 	} else {
 		defer closer.Close()
-	}
-	if handedErr != nil {
-		slog.Warn("relaunch arguments unreadable, opening without them", "err", handedErr)
 	}
 
 	launchEnv, env := resolveEnv()
@@ -150,7 +147,7 @@ func main() {
 
 	term.SetRestart(coord.Do)
 
-	run(term, configDir, coord, startWindow(sys, noWindow), func() { hub.Emit(windowCloseEvent, nil) })
+	run(term, configDir, coord, startWindow(sys, noWindow), closeWindow(hub))
 }
 
 // windowStart is what a launch does about lich's window: open it, its own or
@@ -167,21 +164,6 @@ func startWindow(sys *system.Service, noWindow bool) windowStart {
 		return windowStart{open: func() {}, openRunning: func(string, *singleton.Info) {}}
 	}
 	return windowStart{open: func() { showWindow(sys, "at launch") }, openRunning: showRunning}
-}
-
-// launchArgs are lich's own arguments, or the ones an update on Windows handed
-// the lich it launched again (restart.ArgsEnv). The variable is dropped once
-// read: the next update would otherwise carry a stale copy beside its own.
-func launchArgs() ([]string, error) {
-	args, err := restart.LaunchArgs(os.Args[1:], os.Getenv)
-	if unsetErr := os.Unsetenv(restart.ArgsEnv); unsetErr != nil {
-		slog.Error("unset "+restart.ArgsEnv, "err", unsetErr)
-		os.Exit(1)
-	}
-	if err != nil {
-		return os.Args[1:], err
-	}
-	return args, nil
 }
 
 // resolveEnv returns the environment lich was launched in and the one its
@@ -636,8 +618,8 @@ func run(term *terminal.Service, configDir string, coord *restart.Coordinator, s
 
 // serve opens the window and returns when lich is told to quit (`lich quit`,
 // a restart, SIGINT or SIGTERM), so the caller's defers still run. The native
-// window is told to close only when nothing takes lich's place: across a
-// restart it moves onto the successor instead.
+// window is told to close unless it moves onto a successor, which only a
+// restart in place has: an update on Windows closes it too.
 func serve(coord *restart.Coordinator, open, closeNative func()) {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
@@ -652,7 +634,7 @@ func serve(coord *restart.Coordinator, open, closeNative func()) {
 	open()
 	<-stop
 	slog.Info("quitting")
-	if !coord.Relaunching() {
+	if !coord.WindowMovesToSuccessor() {
 		closeNative()
 	}
 }
@@ -741,6 +723,26 @@ const (
 	windowRaiseEvent = "window-raise"
 	windowCloseEvent = "window-close"
 )
+
+// windowLeaveWait bounds waiting for the native window to end once told to
+// close. It ends at once (os.Exit on the event); the bound is for a window
+// that never reads it, which must not keep lich from quitting.
+const windowLeaveWait = 5 * time.Second
+
+// closeWindow tells the native window to close and waits for its process to
+// end, so a Windows update that runs once lich has exited finds lich-native.exe
+// free to replace.
+func closeWindow(hub *events.Hub) func() {
+	return func() {
+		gone := hub.Gone()
+		hub.Emit(windowCloseEvent, nil)
+		select {
+		case <-gone:
+		case <-time.After(windowLeaveWait):
+			slog.Warn("the window did not close", "waited", windowLeaveWait)
+		}
+	}
+}
 
 // raiseNative brings the native window forward through /events, which only it
 // holds once it attached.
