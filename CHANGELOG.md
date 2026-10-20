@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- F11 puts the window in full screen and back, without the minimize, maximize and close buttons while it is. The chord can be changed in Settings › Hotkeys.
+
 ### Changed
 
 - A pull request that conflicts with its base no longer lists the conflicting files under its title. The "Conflicts with" status counts them, and clicking it opens a panel over the screen that names each one.
