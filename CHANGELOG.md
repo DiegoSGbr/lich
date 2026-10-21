@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Pulls screen shows a changed image in a pull request's Files tab, before and after side by side, as the Review tab does, where it used to say only "Binary file". An edited Markdown file there has the preview button too, where only an added one had it. lich reads the file from your clone when it holds the commit and from GitHub otherwise.
 - `lich mcp` answers MCP clients on protocol revision 2026-07-28, which name the version on each request instead of opening with `initialize`, and serves their `server/discover`. Clients that open with `initialize` are answered exactly as before.
 
+### Changed
+
+- A merge on the Pulls screen tells the session that opened the merged branch's session too, wherever that session runs, as it already told the sessions in the merged checkout. A session that hands work out learns its pull request merged without you saying so.
+
 ### Fixed
 
 - Resolve conflicts, Fix CI errors and a worktree started from an issue send their message to a new Claude Code session as soon as it is at its prompt, where it could sit unsent for up to a minute, until you pressed Enter. lich read the terminal's own answers to Claude Code's startup questions as you typing at that prompt, and held the message back for you.
