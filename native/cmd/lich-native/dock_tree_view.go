@@ -37,7 +37,7 @@ var (
 // tree built from the last listing and filter, kept until either moves.
 type treeRows struct {
 	list   widget.List
-	clicks map[string]*widget.Clickable
+	clicks map[string]*treeClickable
 
 	// The tree scrolls sideways once a row is wider than the column: widest
 	// is the widest row the last frame laid out, offsetX how far it scrolled.
@@ -54,16 +54,38 @@ type treeRows struct {
 	stats     map[string]lineDelta
 }
 
-func (t *treeRows) click(path string) *widget.Clickable {
+// treeClickable is a row's clickable and the node it was last drawn for,
+// which clicked answers with.
+type treeClickable struct {
+	click widget.Clickable
+	node  *treeNode
+}
+
+func (t *treeRows) click(node *treeNode) *widget.Clickable {
 	if t.clicks == nil {
-		t.clicks = map[string]*widget.Clickable{}
+		t.clicks = map[string]*treeClickable{}
 	}
-	c, ok := t.clicks[path]
+	c, ok := t.clicks[node.path]
 	if !ok {
-		c = new(widget.Clickable)
-		t.clicks[path] = c
+		c = new(treeClickable)
+		t.clicks[node.path] = c
 	}
-	return c
+	c.node = node
+	return &c.click
+}
+
+// clicked is every row clicked since the last frame. Callers act on it
+// before they read which rows show: a click handled after the rows were read
+// draws the frame it arrived in from the old tree, and nothing redraws until
+// the next event.
+func (t *treeRows) clicked(gtx C) []*treeNode {
+	var nodes []*treeNode
+	for _, c := range t.clicks {
+		for c.click.Clicked(gtx) {
+			nodes = append(nodes, c.node)
+		}
+	}
+	return nodes
 }
 
 // build is the tree for data narrowed by query, rebuilt only when either
@@ -90,8 +112,8 @@ func (c *codeTab) treeBody(gtx C, th *ui.Theme) D {
 	query := c.query.Text()
 	filtering := strings.TrimSpace(query) != ""
 	c.rows.build(data, query)
+	c.treeClicks(gtx)
 	rows := visibleRows(c.rows.tree, func(path string) bool { return filtering || c.toggled[path] })
-	c.treeClicks(gtx, rows)
 	note := treeFootnote(data.listing.Cut, data.listing.Hidden)
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Flexed(1, func(gtx C) D {
@@ -115,16 +137,13 @@ func (c *codeTab) treeBody(gtx C, th *ui.Theme) D {
 }
 
 // treeClicks folds a folder or opens a file, before the rows are drawn.
-func (c *codeTab) treeClicks(gtx C, rows []treeRow) {
-	for _, r := range rows {
-		if !c.rows.click(r.node.path).Clicked(gtx) {
+func (c *codeTab) treeClicks(gtx C) {
+	for _, node := range c.rows.clicked(gtx) {
+		if node.dir {
+			c.toggled[node.path] = !c.toggled[node.path]
 			continue
 		}
-		if r.node.dir {
-			c.toggled[r.node.path] = !c.toggled[r.node.path]
-			continue
-		}
-		c.open(r.node.path, 0)
+		c.open(node.path, 0)
 	}
 }
 
@@ -210,9 +229,11 @@ const treeUnbounded = 1 << 20
 // row is one TreeRow: a file muted until hovered or current (selected), a
 // folder in font-medium foreground, each with its +/- at the right.
 func (t *treeRows) row(gtx C, th *ui.Theme, r treeRow, selected string) D {
-	click := t.click(r.node.path)
-	lit := click.Hovered() || (!r.node.dir && r.node.path == selected)
+	click := t.click(r.node)
 	return click.Layout(gtx, func(gtx C) D {
+		// Read inside Layout, which takes the pointer events first: read
+		// before it, the hover lags one event behind.
+		lit := click.Hovered() || (!r.node.dir && r.node.path == selected)
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		return layout.Background{}.Layout(gtx,
 			func(gtx C) D {

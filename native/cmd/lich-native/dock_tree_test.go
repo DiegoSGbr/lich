@@ -166,3 +166,33 @@ func TestTreeRowsStopShortOfTheVerticalBar(t *testing.T) {
 		t.Errorf("scrolled to the end at %dpx, want %dpx: the last %dpx of the widest row hide under the vertical bar", rows.offsetX, want, bar)
 	}
 }
+
+func BenchmarkBuildTree(b *testing.B) {
+	for _, size := range []int{1_000, 10_000, 50_000} {
+		for _, shape := range []string{"wide", "distributed", "deep"} {
+			b.Run(fmt.Sprintf("%d/%s", size, shape), func(b *testing.B) {
+				paths := benchmarkTreePaths(size, shape)
+				b.ReportAllocs()
+				b.ResetTimer()
+				for range b.N {
+					buildTree(paths)
+				}
+			})
+		}
+	}
+}
+
+func benchmarkTreePaths(size int, shape string) []string {
+	paths := make([]string, size)
+	for i := range size {
+		switch shape {
+		case "wide":
+			paths[i] = fmt.Sprintf("file-%05d.go", i)
+		case "deep":
+			paths[i] = fmt.Sprintf("root/%s/file-%05d.go", strings.Repeat("level/", 12), i)
+		default:
+			paths[i] = fmt.Sprintf("group-%03d/sub-%03d/file-%05d.go", i%100, i%1_000, i)
+		}
+	}
+	return paths
+}
