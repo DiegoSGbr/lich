@@ -214,7 +214,9 @@ func (s *settingsScreen) layout(gtx C, th *ui.Theme, projects []settingsProject)
 	s.scope = resolveScope(s.scope, projects)
 	if s.close.Clicked(gtx) {
 		s.open = false
+		s.invalidate() // the window read open before laying Settings out
 	}
+	s.navClicks(gtx)
 	if s.revealing != nil {
 		s.choose(gtx, *s.revealing)
 		s.revealing = nil
@@ -244,6 +246,7 @@ func (s *settingsScreen) island(gtx C, th *ui.Theme, bg color.NRGBA, w func(gtx 
 // paneLayout is the open section: the project pill in a project's scope, the
 // title, the description, and the rows, the × in the top-right corner.
 func (s *settingsScreen) paneLayout(gtx C, th *ui.Theme, values scopedValues) D {
+	s.providerPaneClicks(gtx)
 	rows := s.paneRows(sectionByID(s.section), th, values)
 	d := layout.Inset{Left: settingsPanePadX, Top: settingsPanePadY, Bottom: settingsPanePadY}.Layout(gtx, func(gtx C) D {
 		return paneScroll(th, &s.pane).Layout(gtx, len(rows), func(gtx C, i int) D {
