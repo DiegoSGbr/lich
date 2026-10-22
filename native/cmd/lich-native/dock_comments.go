@@ -9,6 +9,7 @@ package main
 //	comments := new(commentStore)                 // one per window
 //	comments.add(target, path, lines, text)       // target is the checkout path
 //	comments.list(target)                         // what the strip shows
+//	comments.beginEdit(target, id)                // a row's pencil; the window's commentEditDialog opens on it
 //
 //	var c commentComposer                         // one per surface
 //	c.open(path, lines)                           // "Comment for the session" chosen on lines "12-30"
@@ -43,6 +44,7 @@ import (
 
 var (
 	icBatchRemove = icons.Lucide("x")
+	icBatchEdit   = icons.Lucide("pencil")
 	icBatchSend   = icons.Lucide("send")
 )
 
@@ -59,6 +61,14 @@ type reviewComment struct {
 type commentStore struct {
 	byTarget map[string][]reviewComment
 	next     int
+	// editing is the comment the window's commentEditDialog is open on.
+	editing commentRef
+}
+
+// commentRef names one comment of one checkout's batch; id 0 is none.
+type commentRef struct {
+	target string
+	id     int
 }
 
 // add appends a comment; blank text is not a comment and is dropped.
@@ -81,7 +91,32 @@ func (s *commentStore) remove(target string, id int) {
 	s.byTarget[target] = slices.DeleteFunc(s.byTarget[target], func(c reviewComment) bool { return c.id == id })
 }
 
+// edit rewords a comment in place, keeping where it points.
+func (s *commentStore) edit(target string, id int, text string) {
+	for i, c := range s.byTarget[target] {
+		if c.id == id {
+			s.byTarget[target][i].txt = strings.TrimSpace(text)
+		}
+	}
+}
+
 func (s *commentStore) clear(target string) { delete(s.byTarget, target) }
+
+func (s *commentStore) beginEdit(target string, id int) { s.editing = commentRef{target, id} }
+
+func (s *commentStore) endEdit() { s.editing = commentRef{} }
+
+func (s *commentStore) isEditing() bool { return s.editing.id != 0 }
+
+// edited is the comment being edited, if it is still in its batch.
+func (s *commentStore) edited() (reviewComment, bool) {
+	for _, c := range s.byTarget[s.editing.target] {
+		if c.id == s.editing.id {
+			return c, true
+		}
+	}
+	return reviewComment{}, false
+}
 
 // list is target's batch in the order it was written. The slice is the
 // store's: read it, don't keep it across a change.
@@ -263,10 +298,12 @@ func (c *commentComposer) box(th *ui.Theme) layout.Widget {
 
 // commentBatch is the strip at the foot of a review panel: the comments so
 // far, a note about the whole change, and the one action that hands them all
-// to the session as one prompt.
+// to the session as one prompt. A comment's pencil opens the window's
+// commentEditDialog on it.
 type commentBatch struct {
 	list        widget.List
 	removes     map[int]*widget.Clickable
+	edits       map[int]*widget.Clickable
 	note        widget.Editor
 	clear, send widget.Clickable
 	// sending is the batch on its way to the session, still in the store:
@@ -314,6 +351,9 @@ func (b *commentBatch) layout(gtx C, th *ui.Theme, store *commentStore, target s
 // update runs the strip's clicks against the store before it is drawn.
 func (b *commentBatch) update(gtx C, store *commentStore, target string, submit func(string, func(error)) bool, notify func(ui.Toast)) {
 	b.note.SingleLine, b.note.Submit = true, true
+	if b.removes == nil {
+		b.removes, b.edits = map[int]*widget.Clickable{}, map[int]*widget.Clickable{}
+	}
 	for {
 		ev, ok := b.note.Update(gtx)
 		if !ok {
@@ -328,6 +368,12 @@ func (b *commentBatch) update(gtx C, store *commentStore, target string, submit 
 		if c.Clicked(gtx) {
 			store.remove(target, id)
 			delete(b.removes, id)
+			delete(b.edits, id)
+		}
+	}
+	for id, c := range b.edits {
+		if c.Clicked(gtx) {
+			store.beginEdit(target, id)
 		}
 	}
 	if b.clear.Clicked(gtx) {
@@ -384,18 +430,6 @@ func (b *commentBatch) drop(store *commentStore, target string) {
 	b.note.SetText("")
 }
 
-func (b *commentBatch) remove(id int) *widget.Clickable {
-	if b.removes == nil {
-		b.removes = map[int]*widget.Clickable{}
-	}
-	c, ok := b.removes[id]
-	if !ok {
-		c = new(widget.Clickable)
-		b.removes[id] = c
-	}
-	return c
-}
-
 func (b *commentBatch) rows(gtx C, th *ui.Theme, comments []reviewComment) D {
 	b.list.Axis = layout.Vertical
 	return th.ScrollArea(&b.list).Layout(gtx, len(comments), func(gtx C, i int) D {
@@ -403,10 +437,13 @@ func (b *commentBatch) rows(gtx C, th *ui.Theme, comments []reviewComment) D {
 	})
 }
 
-// row is one comment: where (mono, muted), what (truncated), and its ×.
+// row is one comment: where (mono, muted), what (truncated), its pencil and
+// its ×.
 func (b *commentBatch) row(gtx C, th *ui.Theme, c reviewComment) D {
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
-	remove := th.Button(b.remove(c.id), "")
+	edit := th.Button(clickableAt(b.edits, c.id), "")
+	edit.Icon, edit.Variant, edit.Size = icBatchEdit, ui.VariantGhost, ui.SizeIconXS
+	remove := th.Button(clickableAt(b.removes, c.id), "")
 	remove.Icon, remove.Variant, remove.Size = icBatchRemove, ui.VariantGhost, ui.SizeIconXS
 	return layout.Inset{Left: ui.Space(1.5), Right: ui.Space(1.5), Top: ui.Space(1), Bottom: ui.Space(1)}.Layout(gtx, func(gtx C) D {
 		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
@@ -423,6 +460,7 @@ func (b *commentBatch) row(gtx C, th *ui.Theme, c reviewComment) D {
 				return l.Layout(gtx)
 			}),
 			ui.Gap(2),
+			layout.Rigid(edit.Layout),
 			layout.Rigid(remove.Layout),
 		)
 	})

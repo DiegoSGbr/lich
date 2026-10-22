@@ -101,3 +101,33 @@ func TestTakenBatchDropsOnlyWhatWasSent(t *testing.T) {
 		t.Fatalf("batch after the send was taken = %+v, want only the later comment", got)
 	}
 }
+
+func TestCommentBatchEditsOneInPlace(t *testing.T) {
+	var s commentStore
+	s.add("/repo", "a.go", "1", "first")
+	s.add("/repo", "b.go", "2", "second")
+	s.edit("/repo", s.list("/repo")[0].id, "  first, reworded  ")
+	got := s.list("/repo")
+	if len(got) != 2 || got[0].txt != "first, reworded" || got[0].path != "a.go" || got[0].lines != "1" || got[1].txt != "second" {
+		t.Fatalf("after edit = %+v, want the first reworded and trimmed, in place, the second untouched", got)
+	}
+}
+
+func TestCommentEditFollowsTheCommentItWasOpenedOn(t *testing.T) {
+	var s commentStore
+	s.add("/repo", "a.go", "1", "first")
+	s.add("/repo", "b.go", "2", "second")
+	second := s.list("/repo")[1].id
+	s.beginEdit("/repo", second)
+	if c, ok := s.edited(); !ok || c.txt != "second" || !s.isEditing() {
+		t.Fatalf("edited() = %+v, %v; want the second comment", c, ok)
+	}
+	s.remove("/repo", second)
+	if _, ok := s.edited(); ok {
+		t.Fatal("edited() still finds a removed comment")
+	}
+	s.endEdit()
+	if s.isEditing() {
+		t.Fatal("still editing after endEdit")
+	}
+}
