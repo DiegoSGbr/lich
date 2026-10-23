@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - On Linux, stepping the terminal font size and opening a card for the first time hitch less. Every terminal looked its font up again through fontconfig each time, four lookups of about 10ms apiece inside one frame; lich now remembers the answer for the rest of its run.
 - Stepping the terminal font size no longer reloads the font of every open terminal: each one keeps the font it has and only draws it at the new size.
 - A session printing a lot of output costs the backend less. Each byte on its way to the window was copied about seven times into memory the garbage collector then had to reclaim; it is now copied once.
+- A block comment that opens above a collapsed stretch of a diff, in Review and Pulls, no longer colors the code after that stretch as a comment. Its closing `*/` fell in the hidden lines, so every hunk below showed as comment until some later `*/`, and only expanding the stretch fixed it. The lines of a comment cut by a collapsed stretch, above it, can still show as code until it is expanded.
 
 ## [0.78.0] - 2026-10-22
 
