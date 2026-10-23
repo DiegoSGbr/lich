@@ -20,8 +20,8 @@ import (
 	"gioui.org/widget"
 
 	"github.com/lichdotdev/godemirror"
+	"github.com/lichdotdev/lich/native/backend"
 	"github.com/lichdotdev/lich/native/i18n"
-	"github.com/lichdotdev/lich/native/lichclient"
 	"github.com/lichdotdev/lich/native/ui"
 )
 
@@ -35,12 +35,7 @@ const (
 	browseByText = "text"
 )
 
-// fileListing mirrors internal/project.FileListing.
-type fileListing struct {
-	Files  []string `json:"files"`
-	Cut    bool     `json:"cut"`
-	Hidden []string `json:"hidden"`
-}
+type fileListing = backend.FileListing
 
 // treeData is one read of the checkout: its files and each changed file's
 // counts.
@@ -50,7 +45,7 @@ type treeData struct {
 }
 
 type codeTab struct {
-	client   *lichclient.Client
+	client   *backend.Client
 	comments *commentStore
 	notify   func(ui.Toast)
 
@@ -76,7 +71,7 @@ type codeTab struct {
 	batch   commentBatch
 }
 
-func newCodeTab(client *lichclient.Client, invalidate func(), family string, size unit.Sp, comments *commentStore, notify func(ui.Toast)) (*codeTab, error) {
+func newCodeTab(client *backend.Client, invalidate func(), family string, size unit.Sp, comments *commentStore, notify func(ui.Toast)) (*codeTab, error) {
 	view, err := newCodeView(family, size)
 	if err != nil {
 		return nil, err
@@ -165,9 +160,9 @@ func (c *codeTab) fetchTree(gtx C, in dockInput) {
 	c.tree.want(key, path, func(ctx context.Context) (*treeData, error) { return readTree(ctx, c.client, path) })
 }
 
-func readTree(ctx context.Context, client *lichclient.Client, path string) (*treeData, error) {
-	var l fileListing
-	if err := client.Call(ctx, "project.Tree", &l, path); err != nil {
+func readTree(ctx context.Context, client *backend.Client, path string) (*treeData, error) {
+	l, err := client.Tree(ctx, path)
+	if err != nil {
 		return nil, err
 	}
 	// The diff only feeds the rows' +/- badges: a checkout with nothing to

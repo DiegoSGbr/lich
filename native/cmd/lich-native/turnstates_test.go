@@ -10,11 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lichdotdev/lich/native/lichclient"
+	"github.com/lichdotdev/lich/api"
+	"github.com/lichdotdev/lich/native/backend"
 )
 
-func turnState(id, state string) lichclient.TurnState {
-	return lichclient.TurnState{ID: id, State: state, Since: t0.UnixMilli()}
+func turnState(id, state string) backend.TurnState {
+	return backend.TurnState{ID: id, State: state, Since: t0.UnixMilli()}
 }
 
 func TestHydrationSeedsWhatTheWindowMissed(t *testing.T) {
@@ -24,7 +25,7 @@ func TestHydrationSeedsWhatTheWindowMissed(t *testing.T) {
 	waiting := turnState("s2", "waiting")
 	waiting.Reason = "permission"
 
-	s.hydrate([]lichclient.TurnState{busy, waiting, turnState("s3", "idle"), turnState("s4", "interrupted")})
+	s.hydrate([]backend.TurnState{busy, waiting, turnState("s3", "idle"), turnState("s4", "interrupted")})
 
 	if got := s.status("s1"); got != statusBusy {
 		t.Errorf("s1 = %q, want busy", got)
@@ -54,7 +55,7 @@ func TestHydrationLeavesFinishedTurnsToTheDatabase(t *testing.T) {
 	s := newStatusStore()
 	s.restoreUnread([]string{"unread"})
 
-	s.hydrate([]lichclient.TurnState{turnState("unread", "done"), turnState("read", "done")})
+	s.hydrate([]backend.TurnState{turnState("unread", "done"), turnState("read", "done")})
 
 	if !s.unread("unread") {
 		t.Error("the unread turn lost its mark")
@@ -70,7 +71,7 @@ func TestHydrationOutranksTheRestoredUnreadMark(t *testing.T) {
 	s := newStatusStore()
 	s.restoreUnread([]string{"s1"})
 
-	s.hydrate([]lichclient.TurnState{turnState("s1", "busy")})
+	s.hydrate([]backend.TurnState{turnState("s1", "busy")})
 
 	if got := s.status("s1"); got != statusBusy {
 		t.Errorf("status = %q, want busy", got)
@@ -83,7 +84,7 @@ func TestHydrationNeverOverwritesAnEventTheStreamDelivered(t *testing.T) {
 	s := newStatusStore()
 	replay(t, s, []step{{0, statusEvent{ID: "s1", State: "busy", Tool: "Edit"}}, {1, statusEvent{ID: "s1", State: "done"}}})
 
-	s.hydrate([]lichclient.TurnState{{ID: "s1", State: "busy", Tool: "Bash", Since: t0.UnixMilli()}})
+	s.hydrate([]backend.TurnState{{ID: "s1", State: "busy", Tool: "Bash", Since: t0.UnixMilli()}})
 
 	if got := s.status("s1"); got != statusDone {
 		t.Errorf("status = %q, want done: the snapshot was older than the event", got)
@@ -95,7 +96,7 @@ func TestHydrationNeverOverwritesAnEventTheStreamDelivered(t *testing.T) {
 
 func TestHydrationRunsOnceBeforeTheEventsItIsOlderThan(t *testing.T) {
 	s := newStatusStore()
-	s.hydrate([]lichclient.TurnState{turnState("s1", "busy")})
+	s.hydrate([]backend.TurnState{turnState("s1", "busy")})
 
 	replay(t, s, []step{{5, statusEvent{ID: "s1", State: "done"}}})
 
@@ -134,7 +135,7 @@ func TestUsageHydrationSeedsAndYieldsToTheStream(t *testing.T) {
 	}
 }
 
-func fakeTurnStates(t *testing.T, states []lichclient.TurnState) *lichclient.Client {
+func fakeTurnStates(t *testing.T, states []backend.TurnState) *backend.Client {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/rpc/terminal.TurnStates" {
@@ -145,13 +146,17 @@ func fakeTurnStates(t *testing.T, states []lichclient.TurnState) *lichclient.Cli
 	t.Cleanup(srv.Close)
 	u, _ := url.Parse(srv.URL)
 	port, _ := strconv.Atoi(u.Port())
-	return lichclient.New(lichclient.Runtime{Port: port, Token: "tok"})
+	return backend.New(backend.Runtime{Port: port, Token: "tok"})
 }
 
 func TestModelHydratesStatusAndUsageThenFollowsNewerEvents(t *testing.T) {
-	busy := lichclient.TurnState{ID: "s1", State: "busy", Tool: "Bash", Since: time.Now().UnixMilli(),
-		Usage: json.RawMessage(opusReport), Cwd: "/elsewhere"}
-	m := newTestModel(fakeTurnStates(t, []lichclient.TurnState{busy}))
+	var usage api.SessionUsage
+	if err := json.Unmarshal([]byte(opusReport), &usage); err != nil {
+		t.Fatal(err)
+	}
+	busy := backend.TurnState{ID: "s1", State: "busy", Tool: "Bash", Since: time.Now().UnixMilli(),
+		Usage: &usage, Cwd: "/elsewhere"}
+	m := newTestModel(fakeTurnStates(t, []backend.TurnState{busy}))
 	toasts := 0
 	m.notify = func(statusReport) { toasts++ }
 
@@ -175,7 +180,7 @@ func TestModelHydratesStatusAndUsageThenFollowsNewerEvents(t *testing.T) {
 		t.Errorf("hydration notified %d times: nothing happened, the window only learned of it", toasts)
 	}
 
-	send(m, statusEventName, statusEvent{ID: "s1", State: "done"})
+	send(m, api.SessionStatusEvent.Name, statusEvent{ID: "s1", State: "done"})
 	m.mu.Lock()
 	status = m.status.status("s1")
 	m.mu.Unlock()
@@ -195,7 +200,7 @@ func statusOf(m *model, id string) (status string, hasTool bool) {
 // publishes only the exit.
 func TestExitEndsTheTurnTheProcessDiedIn(t *testing.T) {
 	m := newTestModel(nil)
-	send(m, statusEventName, statusEvent{ID: "s1", State: "busy", Tool: "Bash"})
+	send(m, api.SessionStatusEvent.Name, statusEvent{ID: "s1", State: "busy", Tool: "Bash"})
 	if status, _ := statusOf(m, "s1"); status != statusBusy {
 		t.Fatalf("status = %q, want busy before the exit", status)
 	}
@@ -210,9 +215,9 @@ func TestExitEndsTheTurnTheProcessDiedIn(t *testing.T) {
 
 func TestExitKeepsAFinishedTurnUnreadAndOtherSessionsBusy(t *testing.T) {
 	m := newTestModel(nil)
-	m.projects[0].Sessions = append(m.projects[0].Sessions, lichclient.Session{ID: "s2"})
-	send(m, statusEventName, statusEvent{ID: "s1", State: "done"})
-	send(m, statusEventName, statusEvent{ID: "s2", State: "busy"})
+	m.projects[0].Sessions = append(m.projects[0].Sessions, backend.Session{ID: "s2"})
+	send(m, api.SessionStatusEvent.Name, statusEvent{ID: "s1", State: "done"})
+	send(m, api.SessionStatusEvent.Name, statusEvent{ID: "s2", State: "busy"})
 
 	send(m, "terminal:exit:s1", map[string]any{})
 

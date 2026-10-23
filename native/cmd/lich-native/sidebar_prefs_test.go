@@ -12,7 +12,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lichdotdev/lich/native/lichclient"
+	"github.com/lichdotdev/lich/api"
+	"github.com/lichdotdev/lich/native/backend"
 )
 
 // sidebarBackend is a backend holding settings by key@scope and answering
@@ -21,12 +22,12 @@ import (
 type sidebarBackend struct {
 	mu       sync.Mutex
 	settings map[string]string
-	detected []lichclient.DetectedProvider
-	themes   []lichclient.Theme
+	detected []backend.DetectedProvider
+	themes   []backend.Theme
 	calls    []string
 }
 
-func newSidebarBackend(t *testing.T) (*sidebarBackend, *lichclient.Client) {
+func newSidebarBackend(t *testing.T) (*sidebarBackend, *backend.Client) {
 	t.Helper()
 	f := &sidebarBackend{settings: map[string]string{}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -38,22 +39,20 @@ func newSidebarBackend(t *testing.T) (*sidebarBackend, *lichclient.Client) {
 	t.Cleanup(srv.Close)
 	u, _ := url.Parse(srv.URL)
 	port, _ := strconv.Atoi(u.Port())
-	return f, lichclient.New(lichclient.Runtime{Port: port, Token: "tok"})
+	return f, backend.New(backend.Runtime{Port: port, Token: "tok"})
 }
 
 func (f *sidebarBackend) answer(method string, args []json.RawMessage) any {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	str := func(i int) string {
-		var s string
-		_ = json.Unmarshal(args[i], &s)
-		return s
-	}
 	switch method {
-	case "store.GetSetting":
-		return f.settings[str(0)+"@"+str(1)]
-	case "store.SetSetting":
-		f.settings[str(0)+"@"+str(1)] = str(2)
+	case "store.GetSetting", "store.SetSetting":
+		var opts api.SetSettingOptions
+		_ = json.Unmarshal(args[0], &opts)
+		if method == "store.GetSetting" {
+			return f.settings[opts.Key+"@"+opts.ProjectID]
+		}
+		f.settings[opts.Key+"@"+opts.ProjectID] = opts.Value
 		return nil
 	case "providers.Detect":
 		return f.detected
@@ -64,7 +63,7 @@ func (f *sidebarBackend) answer(method string, args []json.RawMessage) any {
 		if theme == "" {
 			theme = themeSystem
 		}
-		return lichclient.ThemeSelection{Theme: theme, FollowSystem: f.settings["appearance.followSystem@"] == "true"}
+		return backend.ThemeSelection{Theme: theme, FollowSystem: f.settings["appearance.followSystem@"] == "true"}
 	case "themes.Select":
 		var opts struct {
 			ID string `json:"id"`
@@ -73,9 +72,13 @@ func (f *sidebarBackend) answer(method string, args []json.RawMessage) any {
 		f.settings["appearance.theme@"] = opts.ID
 		return nil
 	case "patchnotes.Current":
-		return lichclient.PatchNotes{Version: "1.0.0", Groups: []lichclient.PatchNotesGroup{{Label: "Added", Items: []string{str(0)}}}}
+		var opts api.PatchNotesOptions
+		_ = json.Unmarshal(args[0], &opts)
+		return backend.PatchNotes{Version: "1.0.0", Groups: []backend.PatchNotesGroup{{Label: "Added", Items: []string{opts.Locale}}}}
 	case "themes.SetFollowSystem":
-		f.settings["appearance.followSystem@"] = string(args[0])
+		var opts api.FollowSystemOptions
+		_ = json.Unmarshal(args[0], &opts)
+		f.settings["appearance.followSystem@"] = strconv.FormatBool(opts.On)
 		return nil
 	}
 	raw := make([]string, len(args))

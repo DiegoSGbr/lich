@@ -15,29 +15,13 @@ import (
 
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
+
+	"github.com/lichdotdev/lich/api"
 )
 
-// ChangedEvent is the event a profile's update emits once it is written: its
-// name, color or image changed.
-const ChangedEvent = "profile-changed"
+type Changed = api.ProfileChanged
 
-// Changed is ChangedEvent's payload. Provider is the Spec's.
-type Changed struct {
-	Provider string  `json:"provider"`
-	Profile  Profile `json:"profile"`
-}
-
-// Update is a change to how a profile is shown. A field left nil keeps what the
-// profile has; Name keeps it when empty.
-type Update struct {
-	Name string `json:"name,omitempty"`
-	// Color is a card color's name; "" goes back to the color the window
-	// derives from the slug. The window draws a name it does not know the same
-	// way, so it is stored as given.
-	Color *string `json:"color,omitempty"`
-	// Image is a file to make the profile's image from; "" removes the image.
-	Image *string `json:"image,omitempty"`
-}
+type Update = api.ProfileUpdate
 
 const (
 	// avatarEdge is the side of the square a profile image is stored at: the

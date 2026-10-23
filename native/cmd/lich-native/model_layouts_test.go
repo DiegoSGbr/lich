@@ -12,7 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lichdotdev/lich/native/lichclient"
+	"github.com/lichdotdev/lich/api"
+	"github.com/lichdotdev/lich/native/backend"
 )
 
 // layoutsBackend answers every call with null and keeps the last value
@@ -43,14 +44,12 @@ func newLayoutsModel(t *testing.T) (*model, *layoutsBackend) {
 	t.Helper()
 	b := new(layoutsBackend)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var args []json.RawMessage
+		var args []api.SetSettingOptions
 		body, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(body, &args)
-		if r.URL.Path == "/rpc/store.SetSetting" && len(args) == 3 && string(args[0]) == strconv.Quote(layoutsKey) {
-			var v string
-			_ = json.Unmarshal(args[2], &v)
+		if r.URL.Path == "/rpc/store.SetSetting" && len(args) == 1 && args[0].Key == layoutsKey {
 			b.mu.Lock()
-			b.stored, b.saves = v, b.saves+1
+			b.stored, b.saves = args[0].Value, b.saves+1
 			b.mu.Unlock()
 		}
 		_ = json.NewEncoder(w).Encode(nil)
@@ -58,10 +57,10 @@ func newLayoutsModel(t *testing.T) (*model, *layoutsBackend) {
 	t.Cleanup(srv.Close)
 	u, _ := url.Parse(srv.URL)
 	port, _ := strconv.Atoi(u.Port())
-	m := newModel(lichclient.New(lichclient.Runtime{Port: port, Token: "tok"}), func() {})
-	m.projects = []lichclient.Project{
-		{ID: "lich", Name: "lich", Path: "/dev/lich", ActiveSessionID: "orch", Sessions: []lichclient.Session{{ID: "orch", Label: "orchestrator"}, {ID: "notes", Label: "notes"}}},
-		{ID: "plugin", Name: "lich-plugin", Path: "/dev/plugin", ActiveSessionID: "wa", Sessions: []lichclient.Session{{ID: "wa", Label: "worker-a"}, {ID: "wb", Label: "worker-b"}}},
+	m := newModel(backend.New(backend.Runtime{Port: port, Token: "tok"}), func() {})
+	m.projects = []backend.Project{
+		{ID: "lich", Name: "lich", Path: "/dev/lich", ActiveSessionID: "orch", Sessions: []backend.Session{{ID: "orch", Label: "orchestrator"}, {ID: "notes", Label: "notes"}}},
+		{ID: "plugin", Name: "lich-plugin", Path: "/dev/plugin", ActiveSessionID: "wa", Sessions: []backend.Session{{ID: "wa", Label: "worker-a"}, {ID: "wb", Label: "worker-b"}}},
 	}
 	m.activeProject, m.active = "lich", "orch"
 	return m, b

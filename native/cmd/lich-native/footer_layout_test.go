@@ -13,7 +13,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lichdotdev/lich/native/lichclient"
+	"github.com/lichdotdev/lich/api"
+	"github.com/lichdotdev/lich/native/backend"
 )
 
 // fakeSettings serves store.GetSetting and store.SetSetting from an in-memory
@@ -24,10 +25,10 @@ type fakeSettings struct {
 	failing bool
 }
 
-func (f *fakeSettings) client(t *testing.T) *lichclient.Client {
+func (f *fakeSettings) client(t *testing.T) *backend.Client {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var args []string
+		var args []api.SetSettingOptions
 		body, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(body, &args)
 		f.mu.Lock()
@@ -38,9 +39,9 @@ func (f *fakeSettings) client(t *testing.T) *lichclient.Client {
 		}
 		switch r.URL.Path {
 		case "/rpc/store.GetSetting":
-			_ = json.NewEncoder(w).Encode(f.values[args[1]+"/"+args[0]])
+			_ = json.NewEncoder(w).Encode(f.values[args[0].ProjectID+"/"+args[0].Key])
 		case "/rpc/store.SetSetting":
-			f.values[args[1]+"/"+args[0]] = args[2]
+			f.values[args[0].ProjectID+"/"+args[0].Key] = args[0].Value
 			_ = json.NewEncoder(w).Encode(nil)
 		default:
 			t.Errorf("unexpected call %s", r.URL.Path)
@@ -49,7 +50,7 @@ func (f *fakeSettings) client(t *testing.T) *lichclient.Client {
 	t.Cleanup(srv.Close)
 	u, _ := url.Parse(srv.URL)
 	port, _ := strconv.Atoi(u.Port())
-	return lichclient.New(lichclient.Runtime{Port: port, Token: "tok"})
+	return backend.New(backend.Runtime{Port: port, Token: "tok"})
 }
 
 func (f *fakeSettings) get(key string) string {

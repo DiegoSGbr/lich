@@ -6,7 +6,8 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/lichdotdev/lich/native/lichclient"
+	"github.com/lichdotdev/lich/api"
+	"github.com/lichdotdev/lich/native/backend"
 )
 
 // costMisses are the named absences of a cost figure this build has a
@@ -67,31 +68,32 @@ func (f *footerUsage) get(id string) (sessionUsage, bool) {
 // session-status events that void the prior provider's report. It reports
 // whether ev was one of the three; session-agent and session-status are not
 // consumed, so the caller still hands them to the card stores.
-func (f *footerUsage) apply(ev lichclient.Event) (bool, error) {
-	var e struct {
-		ID    string  `json:"id"`
-		Agent *string `json:"agent"`
-		State string  `json:"state"`
-	}
-	if ev.Name == "session-usage" {
+func (f *footerUsage) apply(ev backend.Event) (bool, error) {
+	var id string
+	switch ev.Name {
+	case api.SessionUsageEvent.Name:
 		return true, f.applyUsage(ev.Data)
-	}
-	if ev.Name != "session-agent" && ev.Name != statusEventName {
+	case api.SessionAgentEvent.Name:
+		// Every spawn announces its agent, "" included, so any agent report
+		// means the prior provider's numbers no longer describe this session.
+		e, err := backend.Decode(ev, api.SessionAgentEvent)
+		if err != nil {
+			return true, err
+		}
+		id = e.ID
+	case api.SessionStatusEvent.Name:
+		e, err := backend.Decode(ev, api.SessionStatusEvent)
+		if err != nil || e.State != "idle" {
+			return true, err
+		}
+		id = e.ID
+	default:
 		return false, nil
 	}
-	if err := json.Unmarshal(ev.Data, &e); err != nil {
-		return true, err
-	}
-	// Every spawn announces its agent, "" included, so any agent report means
-	// the prior provider's numbers no longer describe this session.
-	agentChanged := ev.Name == "session-agent" && e.Agent != nil
-	providerLeft := ev.Name == statusEventName && e.State == "idle"
-	if agentChanged || providerLeft {
-		f.mu.Lock()
-		delete(f.usage, e.ID)
-		f.heard[e.ID] = true
-		f.mu.Unlock()
-	}
+	f.mu.Lock()
+	delete(f.usage, id)
+	f.heard[id] = true
+	f.mu.Unlock()
 	return true, nil
 }
 

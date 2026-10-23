@@ -11,7 +11,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/lichdotdev/lich/native/lichclient"
+	"github.com/lichdotdev/lich/api"
+	"github.com/lichdotdev/lich/native/backend"
 )
 
 const (
@@ -22,10 +23,10 @@ const (
 // fakeDiff serves project.Diff, answering branch "b:<path>" with one file per
 // path it is asked about, and failing for notGit; a path has no base status
 // and no pull request.
-func fakeDiff(t *testing.T, notGit string) *lichclient.Client {
+func fakeDiff(t *testing.T, notGit string) *backend.Client {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var args []string
+		var args []api.PathOptions
 		body, _ := io.ReadAll(r.Body)
 		if r.URL.Path == "/rpc/project.BaseStatus" || r.URL.Path == "/rpc/project.PullRequest" {
 			_ = json.NewEncoder(w).Encode(nil)
@@ -34,22 +35,22 @@ func fakeDiff(t *testing.T, notGit string) *lichclient.Client {
 		if err := json.Unmarshal(body, &args); err != nil || r.URL.Path != "/rpc/project.Diff" {
 			t.Errorf("unexpected call %s %s", r.URL.Path, body)
 		}
-		if args[0] == notGit {
+		if args[0].Path == notGit {
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "not a git repository"})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(lichclient.DiffStats{Files: 1, Added: 3, Deleted: 2, Branch: "b:" + args[0]})
+		_ = json.NewEncoder(w).Encode(backend.DiffStats{Files: 1, Added: 3, Deleted: 2, Branch: "b:" + args[0].Path})
 	}))
 	t.Cleanup(srv.Close)
 	u, _ := url.Parse(srv.URL)
 	port, _ := strconv.Atoi(u.Port())
-	return lichclient.New(lichclient.Runtime{Port: port, Token: "tok"})
+	return backend.New(backend.Runtime{Port: port, Token: "tok"})
 }
 
-func newTestModel(client *lichclient.Client) *model {
+func newTestModel(client *backend.Client) *model {
 	m := newModel(client, func() {})
-	m.projects = []lichclient.Project{{ID: "p", Path: checkout, Sessions: []lichclient.Session{{ID: "s1", Label: "Shell 1"}}}}
+	m.projects = []backend.Project{{ID: "p", Path: checkout, Sessions: []backend.Session{{ID: "s1", Label: "Shell 1"}}}}
 	return m
 }
 
@@ -64,8 +65,8 @@ func cardOf(t *testing.T, m *model) sessionView {
 
 func send(m *model, name string, data any) {
 	raw, _ := json.Marshal(data)
-	events := make(chan lichclient.Event, 1)
-	events <- lichclient.Event{Name: name, Data: raw}
+	events := make(chan backend.Event, 1)
+	events <- backend.Event{Name: name, Data: raw}
 	close(events)
 	m.follow(context.Background(), events)
 }
@@ -128,7 +129,7 @@ func TestCloseSessionActivatesNeighbor(t *testing.T) {
 		return out
 	}
 	m := newModel(nil, func() {})
-	m.projects = []lichclient.Project{{ID: "p", Sessions: []lichclient.Session{{ID: "a"}, {ID: "b"}, {ID: "c"}}}}
+	m.projects = []backend.Project{{ID: "p", Sessions: []backend.Session{{ID: "a"}, {ID: "b"}, {ID: "c"}}}}
 
 	m.active = "b"
 	if p, active, ok := m.closeSession("b"); !ok || p != "p" || active != "c" {
@@ -151,7 +152,7 @@ func TestCloseSessionActivatesNeighbor(t *testing.T) {
 
 func TestFollowMarksTheWindowLostWhenTheStreamEnds(t *testing.T) {
 	m := newModel(nil, func() {})
-	events := make(chan lichclient.Event)
+	events := make(chan backend.Event)
 	close(events)
 	m.follow(context.Background(), events)
 	if !m.connectionLost() {
@@ -163,7 +164,7 @@ func TestFollowStaysQuietWhenTheWindowCloses(t *testing.T) {
 	m := newModel(nil, func() {})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	events := make(chan lichclient.Event)
+	events := make(chan backend.Event)
 	close(events)
 	m.follow(ctx, events)
 	if m.connectionLost() {
@@ -174,7 +175,7 @@ func TestFollowStaysQuietWhenTheWindowCloses(t *testing.T) {
 func TestGroupNamesAWorktreeWithASlashByItsWholeName(t *testing.T) {
 	const root = "/home/me/.local/share/lich/worktrees/p"
 	m := newModel(nil, func() {})
-	m.projects = []lichclient.Project{{ID: "p", Path: checkout, Sessions: []lichclient.Session{
+	m.projects = []backend.Project{{ID: "p", Path: checkout, Sessions: []backend.Session{
 		{ID: "a"}, {ID: "b", Path: root + "/feat/x"}, {ID: "c", Path: root + "/fix/x"},
 	}}}
 	var names []string
@@ -208,11 +209,11 @@ func TestCheckoutLabel(t *testing.T) {
 }
 
 // fakeHome is the home directory's project fakeState answers project.Home with.
-var fakeHome = lichclient.Project{ID: "home", Name: "me", Path: "/home/me"}
+var fakeHome = backend.Project{ID: "home", Name: "me", Path: "/home/me"}
 
 // fakeState serves store.LoadState with *projects and store.GetSetting with
 // lastScreen, and opens fakeHome into *projects when the window asks for it.
-func fakeState(t *testing.T, projects *[]lichclient.Project, lastScreen string) *lichclient.Client {
+func fakeState(t *testing.T, projects *[]backend.Project, lastScreen string) *backend.Client {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -226,10 +227,10 @@ func fakeState(t *testing.T, projects *[]lichclient.Project, lastScreen string) 
 			*projects = append(*projects, fakeHome)
 			_ = json.NewEncoder(w).Encode(nil)
 		case "/rpc/store.AddSession":
-			var args []any
+			var args []api.AddSessionOptions
 			_ = json.NewDecoder(r.Body).Decode(&args)
 			last := &(*projects)[len(*projects)-1]
-			last.Sessions = append(last.Sessions, lichclient.Session{ID: args[1].(string), Kind: "shell"})
+			last.Sessions = append(last.Sessions, backend.Session{ID: args[0].SessionID, Kind: "shell"})
 			_ = json.NewEncoder(w).Encode(nil)
 		default:
 			t.Errorf("unexpected call %s", r.URL.Path)
@@ -238,13 +239,13 @@ func fakeState(t *testing.T, projects *[]lichclient.Project, lastScreen string) 
 	t.Cleanup(srv.Close)
 	u, _ := url.Parse(srv.URL)
 	port, _ := strconv.Atoi(u.Port())
-	return lichclient.New(lichclient.Runtime{Port: port, Token: "tok"})
+	return backend.New(backend.Runtime{Port: port, Token: "tok"})
 }
 
-func twoProjects() []lichclient.Project {
-	return []lichclient.Project{
-		{ID: "a", Path: checkout, ActiveSessionID: "a2", Sessions: []lichclient.Session{{ID: "a1"}, {ID: "a2"}}},
-		{ID: "b", Path: elsewhere, ActiveSessionID: "b1", Sessions: []lichclient.Session{{ID: "b1"}}},
+func twoProjects() []backend.Project {
+	return []backend.Project{
+		{ID: "a", Path: checkout, ActiveSessionID: "a2", Sessions: []backend.Session{{ID: "a1"}, {ID: "a2"}}},
+		{ID: "b", Path: elsewhere, ActiveSessionID: "b1", Sessions: []backend.Session{{ID: "b1"}}},
 	}
 }
 
@@ -272,7 +273,7 @@ func TestLaunchOpensTheProjectTheLastScreenWasOn(t *testing.T) {
 }
 
 func TestReloadKeepsTheActiveProjectAndAdoptsAnOpenedOne(t *testing.T) {
-	var ps []lichclient.Project
+	var ps []backend.Project
 	m := newModel(fakeState(t, &ps, ""), func() {})
 	if err := m.reload(context.Background()); err != nil {
 		t.Fatal(err)
@@ -337,7 +338,7 @@ func TestCloseSessionFindsItInAnyProject(t *testing.T) {
 // path; such a session belongs to the root block, beside the ones stored
 // with no path.
 func TestSessionStoredAtTheProjectDirSharesTheRootBlock(t *testing.T) {
-	ps := []lichclient.Project{{ID: "p", Path: checkout, Sessions: []lichclient.Session{
+	ps := []backend.Project{{ID: "p", Path: checkout, Sessions: []backend.Session{
 		{ID: "old", Path: checkout}, {ID: "new"},
 	}}}
 	m := newModel(fakeState(t, &ps, "/projects/p"), func() {})
@@ -354,16 +355,16 @@ func TestASessionMovingProfileMakesItsQuotaReadAgain(t *testing.T) {
 	r := newQuotaRig()
 	m := newModel(nil, func() {})
 	m.quota = r.q
-	personal := quotaPlan(lichclient.QuotaWindow{Label: "Session", Percent: 10})
-	r.set([]lichclient.QuotaPlan{personal}, nil)
+	personal := quotaPlan(backend.QuotaWindow{Label: "Session", Percent: 10})
+	r.set([]backend.QuotaPlan{personal}, nil)
 	defer r.q.watch("s1")()
 	waitChanged(t, r.changed)
 
 	work := personal
 	work.Account = "me@work.example"
-	r.set([]lichclient.QuotaPlan{work}, nil)
-	events := make(chan lichclient.Event, 1)
-	events <- lichclient.Event{Name: lichclient.SessionProfileEvent, Data: []byte(`{"id":"s1","profile":"work"}`)}
+	r.set([]backend.QuotaPlan{work}, nil)
+	events := make(chan backend.Event, 1)
+	events <- backend.Event{Name: api.SessionProfileEvent.Name, Data: []byte(`{"id":"s1","profile":"work"}`)}
 	close(events)
 	m.follow(context.Background(), events)
 	waitChanged(t, r.changed)

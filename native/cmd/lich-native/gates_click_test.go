@@ -23,7 +23,8 @@ import (
 	"gioui.org/widget"
 	"github.com/coder/websocket"
 
-	"github.com/lichdotdev/lich/native/lichclient"
+	"github.com/lichdotdev/lich/api"
+	"github.com/lichdotdev/lich/native/backend"
 	"github.com/lichdotdev/lich/native/ui"
 )
 
@@ -32,7 +33,7 @@ import (
 // a window can attach to it and lose it again.
 type gateBackend struct {
 	calls  chan string
-	state  []lichclient.Project
+	state  []backend.Project
 	answer map[string]any
 	srv    *httptest.Server
 
@@ -51,7 +52,7 @@ type gateBackend struct {
 func newGateBackend(t *testing.T) *gateBackend {
 	t.Helper()
 	b := &gateBackend{calls: make(chan string, 64), answer: map[string]any{}, dropEvents: make(chan struct{}),
-		state: []lichclient.Project{{ID: "p", Name: "repo", Path: "/repo"}}}
+		state: []backend.Project{{ID: "p", Name: "repo", Path: "/repo"}}}
 	b.srv = httptest.NewServer(http.HandlerFunc(b.serve))
 	t.Cleanup(b.srv.Close)
 	return b
@@ -209,12 +210,12 @@ func TestGitMissingNotNowClosesTheDialog(t *testing.T) {
 
 func TestGitMissingCheckAgainRereadsThePathThenVerifies(t *testing.T) {
 	u, b := newGateWindow(t)
-	b.answer["providers.Verify"] = lichclient.BinaryCheck{Path: "/usr/bin/git", Status: lichclient.CheckOK}
+	b.answer["providers.Verify"] = backend.BinaryCheck{Path: "/usr/bin/git", Status: backend.CheckOK}
 	d := gitDialog(u)
 	d.open()
 	d.press(t, &u.gitMissing.again)
 	b.await(t, "providers.RefreshPath")
-	if args := b.await(t, "providers.Verify"); args != `["git"]` {
+	if args := b.await(t, "providers.Verify"); args != `[{"bin":"git"}]` {
 		t.Errorf("verified %s, want git", args)
 	}
 	for u.gitMissing.checking.Load() {
@@ -230,7 +231,7 @@ func TestGitMissingInstallOpensTheDownloadPage(t *testing.T) {
 	d := gitDialog(u)
 	d.open()
 	d.press(t, &u.gitMissing.install)
-	if args := b.await(t, "system.OpenExternal"); args != `["`+vcsGitURL+`"]` {
+	if args := b.await(t, "system.OpenExternal"); args != `[{"url":"`+vcsGitURL+`"}]` {
 		t.Errorf("opened %s, want %s", args, vcsGitURL)
 	}
 	if u.gitMissing.missing.Load() {
@@ -240,7 +241,7 @@ func TestGitMissingInstallOpensTheDownloadPage(t *testing.T) {
 
 func pluginDialog(u *window) *dialogDriver {
 	u.plugin.started = true
-	u.plugin.offer = []lichclient.PluginStatus{{Provider: "claude", Name: "Claude Code"}, {Provider: "codex", Name: "Codex"}}
+	u.plugin.offer = []backend.PluginStatus{{Provider: "claude", Name: "Claude Code"}, {Provider: "codex", Name: "Codex"}}
 	return &dialogDriver{now: time.Unix(0, 0), draw: func(gtx C) { u.layoutPluginGate(gtx, u.theme) }}
 }
 
@@ -255,7 +256,7 @@ func TestPluginGateDontAskRemembersAndCloses(t *testing.T) {
 	d := pluginDialog(u)
 	d.open()
 	d.press(t, &u.plugin.dontAsk)
-	if args := b.await(t, "store.SetSetting"); args != `["`+pluginInstallDismissedKey+`","","1"]` {
+	if args := b.await(t, "store.SetSetting"); args != `[{"key":"`+pluginInstallDismissedKey+`","projectId":"","value":"1"}]` {
 		t.Errorf("wrote %s, want the install dismissed", args)
 	}
 	if pluginOffered(u) {
@@ -283,7 +284,7 @@ func TestPluginGateInstallInstallsEveryTickedCLI(t *testing.T) {
 	d := pluginDialog(u)
 	d.open()
 	d.press(t, &u.plugin.install)
-	for _, want := range []string{`["claude"]`, `["codex"]`} {
+	for _, want := range []string{`[{"provider":"claude"}]`, `[{"provider":"codex"}]`} {
 		if args := b.await(t, "agentplugin.Install"); args != want {
 			t.Errorf("installed %s, want %s", args, want)
 		}
@@ -295,42 +296,42 @@ func TestPluginGateInstallInstallsEveryTickedCLI(t *testing.T) {
 
 func TestUpdateToastLaterRemembersTheRelease(t *testing.T) {
 	u, b := newGateWindow(t)
-	toast := u.appUpdateToast(lichclient.AppUpdateStatus{UpdateAvailable: true, LatestVersion: "1.4.0", ReleaseURL: "https://r"})
+	toast := u.appUpdateToast(backend.AppUpdateStatus{UpdateAvailable: true, LatestVersion: "1.4.0", ReleaseURL: "https://r"})
 	toast.Cancel.OnClick()
-	if args := b.await(t, "store.SetSetting"); args != `["`+appUpdateDismissedKey+`","","1.4.0"]` {
+	if args := b.await(t, "store.SetSetting"); args != `[{"key":"`+appUpdateDismissedKey+`","projectId":"","value":"1.4.0"}]` {
 		t.Errorf("wrote %s, want 1.4.0 dismissed", args)
 	}
 }
 
 func TestUpdateToastViewReleaseOpensItsPage(t *testing.T) {
 	u, b := newGateWindow(t)
-	toast := u.appUpdateToast(lichclient.AppUpdateStatus{LatestVersion: "1.4.0", ReleaseURL: "https://r", InstallCommand: "yay -S lich"})
+	toast := u.appUpdateToast(backend.AppUpdateStatus{LatestVersion: "1.4.0", ReleaseURL: "https://r", InstallCommand: "yay -S lich"})
 	toast.Secondary.OnClick()
-	if args := b.await(t, "system.OpenExternal"); args != `["https://r"]` {
+	if args := b.await(t, "system.OpenExternal"); args != `[{"url":"https://r"}]` {
 		t.Errorf("opened %s, want the release page", args)
 	}
 }
 
 func TestUpdateToastInstallTypesTheCommandIntoANewShell(t *testing.T) {
 	u, b := newGateWindow(t)
-	toast := u.appUpdateToast(lichclient.AppUpdateStatus{LatestVersion: "1.4.0", ReleaseURL: "https://r", InstallCommand: "yay -S lich"})
+	toast := u.appUpdateToast(backend.AppUpdateStatus{LatestVersion: "1.4.0", ReleaseURL: "https://r", InstallCommand: "yay -S lich"})
 	toast.Action.OnClick()
 	args := b.await(t, "store.AddSessionInFolder")
-	var call []any
-	if err := json.Unmarshal([]byte(args), &call); err != nil || call[0] != "p" || call[3] != "shell" {
+	var call []api.AddSessionInFolderOptions
+	if err := json.Unmarshal([]byte(args), &call); err != nil || call[0].ProjectID != "p" || call[0].Kind != "shell" {
 		t.Fatalf("added %s, want a shell in the project in view", args)
 	}
 	b.await(t, "store.SetActiveSession")
 	u.terms.mu.Lock()
 	defer u.terms.mu.Unlock()
-	if typed := u.terms.typeahead[call[1].(string)]; typed != "yay -S lich" {
+	if typed := u.terms.typeahead[call[0].SessionID]; typed != "yay -S lich" {
 		t.Errorf("queued %q for the shell, want the install command", typed)
 	}
 }
 
 func TestUpdateToastUpdateAndInstallRunsTheInstaller(t *testing.T) {
 	u, b := newGateWindow(t)
-	toast := u.appUpdateToast(lichclient.AppUpdateStatus{LatestVersion: "1.4.0", CanSelfApply: true})
+	toast := u.appUpdateToast(backend.AppUpdateStatus{LatestVersion: "1.4.0", CanSelfApply: true})
 	toast.Action.OnClick()
 	b.await(t, "appupdate.Apply")
 }
@@ -338,13 +339,13 @@ func TestUpdateToastUpdateAndInstallRunsTheInstaller(t *testing.T) {
 func TestPluginUpdateToastButtons(t *testing.T) {
 	u, b := newGateWindow(t)
 	toast := u.pluginUpdateToast(pluginGateAction{kind: pluginActionUpdate, version: "0.9.0",
-		providers: []lichclient.PluginStatus{{Provider: "claude"}}})
+		providers: []backend.PluginStatus{{Provider: "claude"}}})
 	toast.Action.OnClick()
-	if args := b.await(t, "agentplugin.Update"); args != `["claude"]` {
+	if args := b.await(t, "agentplugin.Update"); args != `[{"provider":"claude"}]` {
 		t.Errorf("updated %s, want claude", args)
 	}
 	toast.Cancel.OnClick()
-	if args := b.await(t, "store.SetSetting"); args != `["`+pluginUpdateDismissedKey+`","","0.9.0"]` {
+	if args := b.await(t, "store.SetSetting"); args != `[{"key":"`+pluginUpdateDismissedKey+`","projectId":"","value":"0.9.0"}]` {
 		t.Errorf("wrote %s, want 0.9.0 dismissed", args)
 	}
 }
@@ -365,7 +366,7 @@ func TestPluginGateUntickedCLIIsLeftOut(t *testing.T) {
 	d.open()
 	d.press(t, u.plugin.rows["claude"])
 	d.press(t, &u.plugin.install)
-	if args := b.await(t, "agentplugin.Install"); args != `["codex"]` {
+	if args := b.await(t, "agentplugin.Install"); args != `[{"provider":"codex"}]` {
 		t.Errorf("installed %s, want only the CLI still ticked", args)
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lichdotdev/lich/api"
 	"github.com/lichdotdev/lich/internal/ghrelease"
 	"github.com/lichdotdev/lich/internal/semver"
 )
@@ -73,7 +74,7 @@ const (
 type Service struct {
 	mu      sync.Mutex
 	install func(string) error
-	// emit publishes Apply's progress to the app's event hub (ProgressEventName);
+	// emit publishes Apply's progress to the app's event hub (api.AppUpdateProgressEvent);
 	// nil leaves the update working and silent.
 	emit func(name string, data any)
 
@@ -120,17 +121,7 @@ func New(version string, install func(string) error, emit func(name string, data
 	}
 }
 
-// Status is lich's install/update state, reported to the window.
-type Status struct {
-	CurrentVersion  string `json:"currentVersion"`
-	LatestVersion   string `json:"latestVersion"`
-	UpdateAvailable bool   `json:"updateAvailable"`
-	CanSelfApply    bool   `json:"canSelfApply"`
-	ReleaseURL      string `json:"releaseUrl"`
-	// InstallCommand is the shell command the UI pastes (never auto-runs) to
-	// update a package-manager-owned install; empty on the self-apply platforms.
-	InstallCommand string `json:"installCommand"`
-}
+type Status = api.AppUpdateStatus
 
 // Status reports whether a newer release exists and whether this install can
 // update itself through the installer. A failed network lookup leaves everything empty and

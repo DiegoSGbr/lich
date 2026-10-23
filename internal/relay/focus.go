@@ -1,22 +1,13 @@
 package relay
 
-// FocusEventName asks the window to open a session's card, the way a click on
-// it does. Global like the other session events: the card it names may live in
-// a project whose tab is not the one on screen.
-const FocusEventName = "session-focus"
+import (
+	"github.com/lichdotdev/lich/api"
+	"github.com/lichdotdev/lich/internal/events"
+)
 
-// FocusEvent is the payload of FocusEventName.
-type FocusEvent struct {
-	ID string `json:"id"`
-}
+type FocusEvent = api.SessionFocus
 
-// Focused says which session's card was brought up, so a caller that named it
-// loosely can tell the person which one it was.
-type Focused struct {
-	ID      string `json:"id"`
-	Label   string `json:"label"`
-	Project string `json:"project"`
-}
+type Focused = api.FocusedSession
 
 // SetRaiseWindow wires how the relay brings lich's window to the front, or
 // opens one on the session's card when none is open. Nil (a test that does not
@@ -25,12 +16,7 @@ func (s *Service) SetRaiseWindow(raise func(sessionID string)) {
 	s.raiseWindow = raise
 }
 
-// FocusOptions is one Focus call, an object for the reason SendOptions is one.
-type FocusOptions struct {
-	From    string `json:"from"`
-	Target  string `json:"target"`
-	Project string `json:"project"`
-}
+type FocusOptions = api.FocusSessionOptions
 
 // Focus opens the card of the session Target names and brings the window to
 // the front, for an editor that just pointed the person at that session.
@@ -42,7 +28,7 @@ func (s *Service) Focus(opts FocusOptions) (Focused, error) {
 		return Focused{}, err
 	}
 	if s.events != nil {
-		s.events.Emit(FocusEventName, FocusEvent{ID: dest.ID})
+		events.Send(s.events.Emit, api.SessionFocusEvent, FocusEvent{ID: dest.ID})
 	}
 	if s.raiseWindow != nil {
 		s.raiseWindow(dest.ID)

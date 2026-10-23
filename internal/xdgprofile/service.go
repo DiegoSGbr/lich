@@ -10,9 +10,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lichdotdev/lich/api"
 	"github.com/lichdotdev/lich/internal/profilestore"
 	"github.com/lichdotdev/lich/internal/providers"
 	"github.com/lichdotdev/lich/internal/winexec"
+
+	"github.com/lichdotdev/lich/internal/events"
 )
 
 const (
@@ -56,15 +59,7 @@ func (s *Service) SetSessions(inUse func(slug string) int, forget func(slug stri
 	s.inUse, s.forget = inUse, forget
 }
 
-// Info is a profile as the Settings screen shows it.
-type Info struct {
-	Profile
-	LoggedIn bool   `json:"loggedIn"`
-	Email    string `json:"email,omitempty"`
-	// StatusError is why the status call gave no answer, in its own words;
-	// LoggedIn is then false for want of one.
-	StatusError string `json:"statusError,omitempty"`
-}
+type Info = api.ProfileInfo
 
 // Profiles lists every profile with its login. The statuses are asked for at
 // once, one CLI each.
@@ -104,7 +99,7 @@ func (s *Service) UpdateProfile(slug string, u profilestore.Update) (Profile, er
 	if err != nil {
 		return p, err
 	}
-	s.emit(profilestore.ChangedEvent, profilestore.Changed{Provider: s.provider.ID, Profile: p})
+	events.Send(s.emit, api.ProfileChangedEvent, profilestore.Changed{Provider: s.provider.ID, Profile: p})
 	return p, nil
 }
 

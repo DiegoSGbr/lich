@@ -15,6 +15,7 @@ import (
 
 	"github.com/lichdotdev/lich/internal/project"
 	"github.com/lichdotdev/lich/internal/relay"
+	"github.com/lichdotdev/lich/internal/routes"
 	"github.com/lichdotdev/lich/internal/rpc"
 	"github.com/lichdotdev/lich/internal/spawn"
 	"github.com/lichdotdev/lich/internal/store"
@@ -93,7 +94,7 @@ func wiredLich(t *testing.T) (func(string) string, *wiredTerminal) {
 	dispatcher := rpc.New()
 	// No events sink: these tests are about the wire between the CLI and the
 	// dispatcher, and the window is not on this side of it.
-	dispatcher.Register("relay", relay.New(wiredSessions{}, term, nil))
+	routes.Relay(dispatcher, relay.New(wiredSessions{}, term, nil))
 
 	server := httptest.NewServer(dispatcher)
 	t.Cleanup(server.Close)
@@ -454,7 +455,7 @@ func wiredSpawn(t *testing.T, git *spawnGit) (func(string) string, *spawnStore, 
 	rows := &spawnStore{}
 	term := &spawnTerminal{}
 	dispatcher := rpc.New()
-	dispatcher.Register("spawn", spawn.New(rows, git, term, nil))
+	routes.Spawn(dispatcher, spawn.New(rows, git, term, nil))
 
 	server := httptest.NewServer(dispatcher)
 	t.Cleanup(server.Close)
@@ -770,7 +771,7 @@ func TestOpenAcrossVersions(t *testing.T) {
 			method, _, _ := strings.Cut(name, " ")
 			term := &spawnTerminal{}
 			dispatcher := rpc.New()
-			dispatcher.Register("spawn", spawn.New(&spawnStore{}, &spawnGit{}, term, nil))
+			routes.Spawn(dispatcher, spawn.New(&spawnStore{}, &spawnGit{}, term, nil))
 
 			recorder := httptest.NewRecorder()
 			dispatcher.ServeHTTP(recorder, httptest.NewRequest("POST", "/rpc/"+method, strings.NewReader(body)))
@@ -865,7 +866,7 @@ func TestSpawnCallsAcrossVersions(t *testing.T) {
 		t.Run(tc.method, func(t *testing.T) {
 			rows, term := &spawnStore{}, &spawnTerminal{}
 			dispatcher := rpc.New()
-			dispatcher.Register("spawn", spawn.New(rows, &spawnGit{}, term, nil))
+			routes.Spawn(dispatcher, spawn.New(rows, &spawnGit{}, term, nil))
 
 			answer := postRaw(t, dispatcher, tc.method, tc.body)
 			if !tc.landed(rows, term, answer) {
@@ -883,7 +884,7 @@ func TestSendsAcrossVersions(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			term := &wiredTerminal{}
 			dispatcher := rpc.New()
-			dispatcher.Register("relay", relay.New(wiredSessions{}, term, nil))
+			routes.Relay(dispatcher, relay.New(wiredSessions{}, term, nil))
 
 			postRaw(t, dispatcher, method,
 				`[{"from":"s1","target":"docs","prompt":"run the tests","waitSeconds":1,"optionFromTheFuture":true}]`)
@@ -919,7 +920,7 @@ func TestRelayCallsAcrossVersions(t *testing.T) {
 		t.Run(tc.method, func(t *testing.T) {
 			term := &wiredTerminal{}
 			dispatcher := rpc.New()
-			dispatcher.Register("relay", relay.New(wiredSessions{}, term, nil))
+			routes.Relay(dispatcher, relay.New(wiredSessions{}, term, nil))
 
 			if answer := postRaw(t, dispatcher, tc.method, tc.body); !tc.landed(term, answer) {
 				t.Errorf("the call did not land: typed %q, answer %q", term.message(), answer)
@@ -934,7 +935,7 @@ func TestRelayCallsAcrossVersions(t *testing.T) {
 func TestErrandAcrossVersions(t *testing.T) {
 	t.Parallel()
 	dispatcher := rpc.New()
-	dispatcher.Register("relay", relay.New(wiredSessions{}, &wiredTerminal{}, nil))
+	routes.Relay(dispatcher, relay.New(wiredSessions{}, &wiredTerminal{}, nil))
 
 	var sent relay.Result
 	answer := postRaw(t, dispatcher, "relay.Send", `[{"from":"s1","target":"docs","prompt":"run the tests","waitSeconds":1}]`)

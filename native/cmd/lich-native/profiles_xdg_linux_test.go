@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/lichdotdev/lich/native/lichclient"
+	"github.com/lichdotdev/lich/native/backend"
 	"github.com/lichdotdev/lich/native/ui"
 )
 
@@ -51,7 +51,7 @@ func TestAnXDGProfileLogsInFromATerminal(t *testing.T) {
 	eventually(t, "the terminal card was opened and the dialog closed", func() bool {
 		return !ps.flow.view().open && len(ran) == 1
 	})
-	want := []string{`kiroprofile.CreateProfile["Work"]`, `kiroprofile.LoginCommand["work"]`}
+	want := []string{`kiroprofile.CreateProfile[{"name":"Work"}]`, `kiroprofile.LoginCommand[{"slug":"work"}]`}
 	if got := b.log(); !slices.Equal(got, want) {
 		t.Errorf("calls = %v, want %v", got, want)
 	}
@@ -62,7 +62,7 @@ func TestAnXDGProfileLogsInFromATerminal(t *testing.T) {
 // database that holds the login, offers none.
 func TestContinueInIsOfferedWhereTheConversationCanMove(t *testing.T) {
 	m := newModel(nil, func() {})
-	logged := []lichclient.Profile{{Slug: personalProfile, Name: "Personal", LoggedIn: true}, {Slug: "work", Name: "Work", LoggedIn: true}}
+	logged := []backend.Profile{{Slug: personalProfile, Name: "Personal", LoggedIn: true}, {Slug: "work", Name: "Work", LoggedIn: true}}
 	for _, kind := range []string{opencodeKind, cursorKind, kiroKind} {
 		m.xdgProfiles[kind].list = logged
 	}

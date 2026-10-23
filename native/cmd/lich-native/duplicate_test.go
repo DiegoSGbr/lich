@@ -3,14 +3,15 @@ package main
 import (
 	"testing"
 
-	"github.com/lichdotdev/lich/native/lichclient"
+	"github.com/lichdotdev/lich/api"
+	"github.com/lichdotdev/lich/native/backend"
 )
 
 func duplicateModel() *model {
 	m := newModel(nil, func() {})
-	m.projects = []lichclient.Project{
-		{ID: "p", Sessions: []lichclient.Session{{ID: "resumer", Label: "Claude 4"}}},
-		{ID: "q", Sessions: []lichclient.Session{{ID: "holder", Label: "auth-refactor"}}},
+	m.projects = []backend.Project{
+		{ID: "p", Sessions: []backend.Session{{ID: "resumer", Label: "Claude 4"}}},
+		{ID: "q", Sessions: []backend.Session{{ID: "holder", Label: "auth-refactor"}}},
 	}
 	return m
 }
@@ -19,7 +20,7 @@ func TestDuplicateEventRaisesTheWarningNamingBothCards(t *testing.T) {
 	m := duplicateModel()
 	var heard []sessionDuplicate
 	m.duplicate = func(d sessionDuplicate) { heard = append(heard, d) }
-	send(m, duplicateEventName, sessionDuplicate{ID: "resumer", HeldBy: "holder"})
+	send(m, api.SessionDuplicateEvent.Name, sessionDuplicate{ID: "resumer", HeldBy: "holder"})
 	if len(heard) != 1 {
 		t.Fatalf("heard %v, want the one duplicate report", heard)
 	}

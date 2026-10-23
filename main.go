@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lichdotdev/lich/api"
 	"github.com/lichdotdev/lich/internal/agentplugin"
 	"github.com/lichdotdev/lich/internal/appupdate"
 	"github.com/lichdotdev/lich/internal/claudeprofile"
@@ -29,6 +30,7 @@ import (
 	"github.com/lichdotdev/lich/internal/quota"
 	"github.com/lichdotdev/lich/internal/relay"
 	"github.com/lichdotdev/lich/internal/restart"
+	"github.com/lichdotdev/lich/internal/routes"
 	"github.com/lichdotdev/lich/internal/rpc"
 	"github.com/lichdotdev/lich/internal/shellintegration"
 	"github.com/lichdotdev/lich/internal/singleton"
@@ -262,11 +264,11 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 	// the file it copies for a confined session is one a human chose in a dialog
 	// (drop.Attach says why that matters).
 	drops.SetPicker(proj.PickFile)
-	dispatcher.Register("terminal", term)
-	dispatcher.Register("drop", drops)
-	dispatcher.Register("project", proj)
+	routes.Terminal(dispatcher, term)
+	routes.Drop(dispatcher, drops)
+	routes.Project(dispatcher, proj)
 	plugins := agentplugin.New(db)
-	dispatcher.Register("agentplugin", plugins)
+	routes.AgentPlugin(dispatcher, plugins)
 	go plugins.RepairRegistrations()
 	// A profile follows Personal's lich plugin: an install or update there
 	// reaches every Claude Code and Codex profile, and a start brings in the
@@ -286,18 +288,23 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 		}
 		return errors.Join(quota.ForgetClaudeLogin(dir), db.ForgetClaudeProfile(slug))
 	})
-	dispatcher.Register("claudeprofile", profiles)
+	routes.Profiles(dispatcher, api.ClaudeProfiles, profiles)
+	routes.ProfileLogin(dispatcher, api.ClaudeProfileLogin, profiles)
+	routes.ProfilePluginCalls(dispatcher, api.ClaudeProfilePlugins, profiles)
+	routes.ClaudeLoginCode(dispatcher, profiles.LoginCode)
 	// Codex profiles have plugin sets of their own too, and get the lich plugin
 	// the same way.
 	codexProfiles := codexprofile.New(db, hub.Emit)
 	codexProfiles.SetLichPlugin(plugins.InstallInCodexProfile, agentplugin.PluginKey)
 	codexProfiles.SetSessions(term.CodexProfileSessions, db.ForgetCodexProfile)
-	dispatcher.Register("codexprofile", codexProfiles)
+	routes.Profiles(dispatcher, api.CodexProfiles, codexProfiles)
+	routes.ProfileLogin(dispatcher, api.CodexProfileLogin, codexProfiles)
+	routes.ProfilePluginCalls(dispatcher, api.CodexProfilePlugins, codexProfiles)
 	// oh-my-pi's login is a terminal card's, so its service runs no login of its
 	// own; on /events it reports only a profile's update.
 	ompProfiles := ompprofile.New(db, hub.Emit)
 	ompProfiles.SetSessions(term.OMPProfileSessions, db.ForgetOMPProfile)
-	dispatcher.Register("ompprofile", ompProfiles)
+	routes.Profiles(dispatcher, api.OMPProfiles, ompProfiles)
 	// opencode, Cursor CLI and Kiro CLI log in from a terminal card too, and have
 	// profiles only where a variable moves their logins (xdgprofile.Providers).
 	for _, provider := range xdgprofile.Providers() {
@@ -306,11 +313,11 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 			func(slug string) int { return term.XDGProfileSessions(provider.ID, slug) },
 			func(slug string) error { return db.ForgetXDGProfile(provider.ID, slug) },
 		)
-		dispatcher.Register(provider.ID+"profile", profiles)
+		routes.Profiles(dispatcher, api.XDGProfiles[provider.ID], profiles)
 	}
-	dispatcher.Register("appupdate", appupdate.New(version, coord.Install, hub.Emit))
-	dispatcher.Register("patchnotes", patchnotes.New(version, changelog, changelogTranslations))
-	dispatcher.Register("store", db)
+	routes.AppUpdate(dispatcher, appupdate.New(version, coord.Install, hub.Emit))
+	routes.PatchNotes(dispatcher, patchnotes.New(version, changelog, changelogTranslations))
+	routes.Store(dispatcher, db)
 	// Read before run writes this run's runtime file over the previous
 	// run's: a file still there is the only trace a bad exit leaves, and the
 	// restored workspace looks exactly like one closed on purpose.
@@ -325,7 +332,7 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 		Locate: func() (string, error) { return restart.NativeExecutable(os.Getenv) },
 		Failed: windowFailed(configDir, term.LiveCount, coord.Quit),
 	})
-	dispatcher.Register("system", sys)
+	routes.System(dispatcher, sys)
 	// Deleting a session for good takes any prompt parked on it, and the row is
 	// the only copy of what the user wrote. Both channels are used, and neither
 	// is the other's fallback: the toast is what the user reading the card sees,
@@ -333,14 +340,14 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 	// window for — an agent closing a session while a restart reopens the window, where
 	// an event with no client connected is dropped.
 	db.SetScheduleForfeited(func(lost store.ForfeitedSchedule) {
-		hub.Emit(store.ScheduleForfeitEventName, lost)
+		events.Send(hub.Emit, api.ScheduleForfeitedEvent, api.ScheduleForfeited(lost))
 		summary, detail := lost.Notice()
 		if err := sys.Notify(summary, detail); err != nil {
 			slog.Warn("notify forfeited schedule", "session", lost.Label, "err", err)
 		}
 	})
 	db.SetSessionRenamed(func(id, label string) {
-		hub.Emit(spawn.RenamedEventName, spawn.RenamedEvent{ID: id, Label: label})
+		events.Send(hub.Emit, api.SessionTitleEvent, spawn.RenamedEvent{ID: id, Label: label})
 	})
 	db.SetProjectChanged(hub.Emit)
 	providerSvc := providers.New()
@@ -363,7 +370,7 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 	// with one configured agent and nothing on PATH reads as bare, and every
 	// implicit new session opens a terminal instead.
 	providerSvc.SetConfiguredBin(func(id string) string { return db.ProviderBin(id, "") })
-	dispatcher.Register("providers", providerSvc)
+	routes.Providers(dispatcher, providerSvc)
 	// The quota reading is per session, not per machine: a session spawned from
 	// a binary the user configured can spend another account entirely, and the
 	// terminal is what knows the environment that binary set up.
@@ -380,7 +387,7 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 		return on
 	})
 	term.SetRateLimitReports(plans.ReportClaude)
-	dispatcher.Register("quota", plans)
+	routes.Quota(dispatcher, plans)
 	codexProfiles.SetAccount(func(slug string) (string, string) {
 		plan, err := plans.CodexProfilePlan(slug)
 		if err != nil || plan.Status != quota.StatusOK {
@@ -426,171 +433,24 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 	// terminal watches its open turns for one.
 	term.SetUsageLimit(rl.ParkResume)
 	go term.RunLimitWatch()
-	dispatcher.Register("relay", rl)
+	routes.Relay(dispatcher, rl)
 	// Its caller is not the window either: opening a session for an agent starts
 	// the PTY here rather than waiting for someone to click the card.
 	spawner := spawn.New(db, proj, term, hub)
 	// A subagent worker in its caller's checkout closes once it reported and
 	// its turn ended, the way a native subagent ends with its result.
 	rl.SetWorkerFinished(spawner.CloseFinishedWorker)
-	dispatcher.Register("spawn", spawner)
-	dispatcher.Register("themes", themes.New(version, db, hub.Emit))
+	routes.Spawn(dispatcher, spawner)
+	routes.Themes(dispatcher, themes.New(version, db, hub.Emit))
 	// The tray is what a lich with its window closed shows of itself; it comes
 	// up once the window hands it its words (tray.SetLabels).
 	trayIcon := tray.New(trayIcons(), func() { showWindow(sys, "from the tray") }, coord.Quit, term.LiveCount)
-	dispatcher.Register("tray", trayIcon)
-	denyInternal(dispatcher)
+	routes.Tray(dispatcher, trayIcon)
 	term.Mount("/rpc/", dispatcher)
 	term.Mount("/drop", http.HandlerFunc(drops.Upload))
 	term.Mount("/blob", http.HandlerFunc(proj.ServeBlob))
 	term.Mount("/events", hub)
 	return sys
-}
-
-// denyInternal hides the methods that exist for Go callers inside this process
-// but must never answer an RPC POST. Registration exposes every exported method
-// of a service (internal/rpc), so each of these is one /rpc/ path away from the
-// window:
-//
-//   - store.Close ends the database the whole app is still using.
-//   - drop.Upload and drop.Save take the dropped file's bytes as the request
-//     body, so the upload is its own endpoint — the RPC envelope is a JSON
-//     argument array with a 1MB bound.
-//   - relay.Observe is the hooks' session-state stream, which arrives over
-//     /hook: forging a SessionEnd here closes another session's errands.
-//   - relay.WorkerAnswered is a worker's answer, which arrives over
-//     /mod/answer: called here it answers another session's errand.
-//     relay.WorkerUnanswered arrives the same way and ends one unanswered.
-//   - relay.SessionClosed is what the terminal tells the relay as it closes a
-//     session: called here it ends a running worker's errand, in silence when
-//     the closer named is the worker's caller. relay.SessionExited is what it
-//     tells the relay as it reaps a process that ended on its own: called here
-//     it erases a live session's reported state.
-//   - terminal.CloseBy is a close on behalf of a session, which `lich close`
-//     reaches through spawn.Close: called here with the worker's caller as the
-//     closer, it ends that caller's errand without telling it. The window
-//     closes with terminal.Close.
-//   - drop.Purge deletes every copy dropped into a session, by id: the window
-//     closes sessions through the store, which is what reports one gone.
-//   - drop.SetPicker is startup wiring like the ones below, and nilling it
-//     would leave the footer's attach button with no dialog to open.
-//   - terminal.SessionAccount hands back the environment of the process a
-//     session runs, credentials and all, so the quota reader can tell which
-//     account that session spends.
-//   - agentplugin.RepairRegistrations rewrites provider config files and
-//     shells out to their CLIs; it is a launch step, not something a window asks.
-//   - relay.RunSchedules is the scheduled-prompt loop, started once at launch
-//     and never returning: called over /rpc/ it holds that request open for the
-//     life of the process and starts a second loop racing the first for every
-//     due prompt. terminal.RunLimitWatch is the same kind of loop, for the
-//     Codex turns a usage limit ended.
-//   - relay.ParkResume parks a prompt that types itself at a session; the
-//     terminal calls it for a turn a usage limit ended, with the reset it read.
-//   - spawn.CloseFinishedWorker closes a session with none of spawn.Close's
-//     checks; the relay calls it for a worker that reported back.
-//   - relay.SetPlugins, relay.SetWorkerFinished, relay.SetPromptLanguage, drop.SetPromptLanguage, project.SetAccounts, project.SetProjects,
-//     system.SetQuit, system.SetNativeWindow,
-//     quota.SetSessions, store.SetSessionGone, store.SetScheduleForfeited,
-//     store.SetSessionRenamed, store.SetProjectChanged,
-//     store.SetBranchOf, store.SetTranscriptOf, store.SetConversationsOf,
-//     store.SetCheckoutsOf, terminal.SetDropDir,
-//     terminal.SetRateLimitReports, terminal.SetUsageLimit, terminal.SetWorkerAnswer,
-//     terminal.SetWorkerUnanswered, terminal.SetStartReports, terminal.SetPromptLanguage, terminal.SetSessionClosed and terminal.SetSessionExited are startup wiring. Called with [null] they silently
-//     nil what they wired (encoding/json leaves a func or pointer alone on
-//     null), and the write races the readers already serving — nilling
-//     SetProjects also disarms the guard that keeps two projects off the same
-//     directory, and SetDropDir points the sandbox's read-only bind wherever
-//     the caller likes.
-//   - store.SetSessionProfile moves a session to another Claude Code profile
-//     without moving its conversation, which only terminal.ContinueIn may do;
-//     store.ForgetClaudeProfile, store.ForgetCodexProfile,
-//     store.ForgetOMPProfile and store.ForgetXDGProfile are the delete's own
-//     cleanup.
-//   - agentplugin.SetEmit is startup wiring like the setters above, and
-//     agentplugin.SyncProfiles is the start's pass over the profiles: called
-//     over /rpc/ it would run a second one racing the first.
-//   - claudeprofile.SetLichPlugin, claudeprofile.SetSessions,
-//     codexprofile.SetLichPlugin, codexprofile.SetSessions,
-//     codexprofile.SetAccount and
-//     ompprofile.SetSessions and the SetSessions of opencodeprofile,
-//     cursorprofile and kiroprofile are startup wiring like the setters above.
-//   - quota.ReportClaude is a session's own reading of its plan, which arrives
-//     over /mod/usage: called here it would put any numbers on the gauge.
-//   - terminal.EnqueueModCommand and terminal.RunModCommand queue a command for
-//     a session's mod with none of spawn.Control's checks (Claude Code only,
-//     never the caller's own session); `lich control` and control_session
-//     reach them through spawn.Control, `lich ask` and ask_session through
-//     spawn.Ask.
-//   - terminal.SubmitPrompt queues a prompt for a session's mod with none of the
-//     relay's ticket accounting; the relay is its one caller.
-func denyInternal(d *rpc.Handler) {
-	for _, method := range []string{
-		"store.Close",
-		"system.SetQuit",
-		"system.SetNativeWindow",
-		"store.SetSessionGone",
-		"store.SetScheduleForfeited",
-		"store.SetSessionRenamed",
-		"store.SetProjectChanged",
-		"store.SetBranchOf",
-		"store.SetTranscriptOf",
-		"store.SetConversationsOf",
-		"store.SetCheckoutsOf",
-		"drop.Upload",
-		"drop.Save",
-		"drop.Purge",
-		"drop.SetPicker",
-		"drop.SetPromptLanguage",
-		"relay.Observe",
-		"relay.WorkerAnswered",
-		"relay.WorkerUnanswered",
-		"relay.SessionClosed",
-		"relay.SessionExited",
-		"terminal.CloseBy",
-		"relay.RunSchedules",
-		"relay.ParkResume",
-		"agentplugin.RepairRegistrations",
-		"agentplugin.SetEmit",
-		"agentplugin.SyncProfiles",
-		"relay.SetPlugins",
-		"relay.SetWorkerFinished",
-		"relay.SetPromptLanguage",
-		"spawn.CloseFinishedWorker",
-		"project.SetAccounts",
-		"project.SetProjects",
-		"quota.SetSessions",
-		"quota.ReportClaude",
-		"terminal.SessionAccount",
-		"terminal.SetDropDir",
-		"terminal.SetRateLimitReports",
-		"terminal.SetUsageLimit",
-		"terminal.RunLimitWatch",
-		"terminal.SetWorkerAnswer",
-		"terminal.SetWorkerUnanswered",
-		"terminal.SetSessionClosed",
-		"terminal.SetSessionExited",
-		"terminal.SetStartReports",
-		"terminal.SetPromptLanguage",
-		"terminal.EnqueueModCommand",
-		"terminal.RunModCommand",
-		"terminal.SubmitPrompt",
-		"store.SetSessionProfile",
-		"store.ForgetClaudeProfile",
-		"store.ForgetCodexProfile",
-		"store.ForgetOMPProfile",
-		"store.ForgetXDGProfile",
-		"claudeprofile.SetLichPlugin",
-		"claudeprofile.SetSessions",
-		"codexprofile.SetLichPlugin",
-		"codexprofile.SetSessions",
-		"codexprofile.SetAccount",
-		"ompprofile.SetSessions",
-		"opencodeprofile.SetSessions",
-		"cursorprofile.SetSessions",
-		"kiroprofile.SetSessions",
-	} {
-		d.Deny(method)
-	}
 }
 
 // run serves the loopback listener, opens the window on it (the native one,
@@ -716,13 +576,6 @@ func handleBindFailure(configDir string, cause error, openRunning func(string, *
 	os.Exit(1)
 }
 
-// windowRaiseEvent asks the native window on /events to come forward, and
-// windowCloseEvent to close, lich quitting.
-const (
-	windowRaiseEvent = "window-raise"
-	windowCloseEvent = "window-close"
-)
-
 // windowLeaveWait bounds waiting for the native window to end once told to
 // close. It ends at once (os.Exit on the event); the bound is for a window
 // that never reads it, which must not keep lich from quitting.
@@ -734,7 +587,7 @@ const windowLeaveWait = 5 * time.Second
 func closeWindow(hub *events.Hub) func() {
 	return func() {
 		gone := hub.Gone()
-		hub.Emit(windowCloseEvent, nil)
+		events.Send(hub.Emit, api.WindowCloseEvent, api.None{})
 		select {
 		case <-gone:
 		case <-time.After(windowLeaveWait):
@@ -750,7 +603,7 @@ func raiseNative(hub *events.Hub) func() bool {
 		if !hub.Attached() {
 			return false
 		}
-		hub.Emit(windowRaiseEvent, nil)
+		events.Send(hub.Emit, api.WindowRaiseEvent, api.None{})
 		return true
 	}
 }

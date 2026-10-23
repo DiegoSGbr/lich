@@ -10,7 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lichdotdev/lich/native/lichclient"
+	"github.com/lichdotdev/lich/api"
+	"github.com/lichdotdev/lich/native/backend"
 )
 
 // gitPoll is how often each shown path's branch and changes are re-read. The
@@ -26,11 +27,11 @@ var projectScreen = regexp.MustCompile(`^/projects/([^/]+)(?:/.*)?$`)
 // model is the backend state the window draws, fed by LoadState, the /events
 // stream and a git poll. Every method is safe from any goroutine.
 type model struct {
-	client     *lichclient.Client
+	client     *backend.Client
 	invalidate func()
 
 	mu       sync.Mutex
-	projects []lichclient.Project // open projects, in the user's order
+	projects []backend.Project // open projects, in the user's order
 	// pendingOrder is a tab drag the backend has not confirmed: the strip
 	// shows it, the store's order does not hold it. projects-reordered
 	// settles it, a refused reorder drops it.
@@ -38,15 +39,15 @@ type model struct {
 	status        *statusStore
 	usage         *footerUsage
 	quota         *planQuota
-	cwd           map[string]sessionCwd             // session id -> last session-cwd report
-	agent         map[string]string                 // session id -> provider CLI live in its PTY
-	sandbox       map[string]sandboxEvent           // session id -> how its spawn was confined
-	relay         map[string]sessionRelay           // session id -> request open with another
-	git           map[string]lichclient.DiffStats   // shown path -> its branch and changes
-	base          map[string]*lichclient.BaseStatus // shown path -> where it stands against its base
-	prs           map[string]prLookup               // shown path -> its open pull request
-	activeProject string                            // project id on screen
-	home          bool                              // Home is on screen instead
+	cwd           map[string]sessionCwd          // session id -> last session-cwd report
+	agent         map[string]string              // session id -> provider CLI live in its PTY
+	sandbox       map[string]sandboxEvent        // session id -> how its spawn was confined
+	relay         map[string]sessionRelay        // session id -> request open with another
+	git           map[string]backend.DiffStats   // shown path -> its branch and changes
+	base          map[string]*backend.BaseStatus // shown path -> where it stands against its base
+	prs           map[string]prLookup            // shown path -> its open pull request
+	activeProject string                         // project id on screen
+	home          bool                           // Home is on screen instead
 	// homeID is the project rooted at the home directory, which Home shows:
 	// pinned out of the strip and never closed.
 	homeID    string
@@ -69,7 +70,7 @@ type model struct {
 	seen func(id string)
 	// loginProgress takes each step of a profile login, of the provider kind
 	// names.
-	loginProgress func(kind string, step lichclient.ProfileLogin)
+	loginProgress func(kind string, step backend.ProfileLogin)
 	// diffTouched hears the checkout of a session that likely changed files,
 	// for the Review tab's diff, which is read apart from the git store.
 	diffTouched func(checkout string)
@@ -85,22 +86,22 @@ type model struct {
 	projectClosed func(closedProject)
 	// pluginProfiles hears a pass that put Personal's lich plugin into the
 	// other profiles of a provider.
-	pluginProfiles func(lichclient.PluginProfiles)
+	pluginProfiles func(backend.PluginProfiles)
 	// prChanged hears a pull request write land (PRChangedEvent).
 	prChanged func()
 	// themeSelection hears the stored theme selection change
 	// (ThemeSelectionEvent).
-	themeSelection func(lichclient.ThemeSelection)
+	themeSelection func(backend.ThemeSelection)
 	// exited hears a session's process end.
 	exited func(id string, e sessionExit)
 	// duplicate hears a session report a conversation another open card
-	// runs (duplicateEventName).
+	// runs (api.SessionDuplicateEvent).
 	duplicate func(sessionDuplicate)
 	// pluginIncompatible hears a session report from a lich plugin outside
 	// the range this lich speaks (PluginIncompatibleEvent).
 	pluginIncompatible func()
 	// appUpdateProgress hears a step of an update being applied.
-	appUpdateProgress func(lichclient.AppUpdateProgress)
+	appUpdateProgress func(backend.AppUpdateProgress)
 	// closed is the closed projects, which the menu and the palette read.
 	closed *closedProjects
 
@@ -110,19 +111,13 @@ type model struct {
 	shownLayout string
 }
 
-// sessionCwd is a session-cwd payload: where the session's shell is, or the
-// host (tmux, ssh, ...) it went into that the backend cannot see through.
-type sessionCwd struct {
-	ID   string `json:"id"`
-	Cwd  string `json:"cwd"`
-	Host string `json:"host"`
-}
+type sessionCwd = api.SessionCwd
 
-func newModel(client *lichclient.Client, invalidate func()) *model {
+func newModel(client *backend.Client, invalidate func()) *model {
 	quota := newPlanQuota(quotaReader(client), invalidate)
 	return &model{client: client, invalidate: invalidate, status: newStatusStore(), usage: newFooterUsage(), quota: quota, cwd: map[string]sessionCwd{},
-		agent: map[string]string{}, sandbox: map[string]sandboxEvent{}, relay: map[string]sessionRelay{}, git: map[string]lichclient.DiffStats{},
-		base: map[string]*lichclient.BaseStatus{}, prs: map[string]prLookup{}, folds: map[string]bool{},
+		agent: map[string]string{}, sandbox: map[string]sandboxEvent{}, relay: map[string]sessionRelay{}, git: map[string]backend.DiffStats{},
+		base: map[string]*backend.BaseStatus{}, prs: map[string]prLookup{}, folds: map[string]bool{},
 		profiles:      newProfileBook(claudeProfileProvider, client, invalidate, quota),
 		codexProfiles: newProfileBook(codexProfileProvider, client, invalidate, quota),
 		ompProfiles:   newProfileBook(ompProfileProvider, client, invalidate, quota),
@@ -163,7 +158,7 @@ func (m *model) reload(ctx context.Context) error {
 		m.launched = true
 		m.activeProject, m.home = launch, launch == "" || launch == m.homeID
 	}
-	if p := m.shownProject(); p != nil && !slices.ContainsFunc(p.Sessions, func(s lichclient.Session) bool { return s.ID == m.active }) {
+	if p := m.shownProject(); p != nil && !slices.ContainsFunc(p.Sessions, func(s backend.Session) bool { return s.ID == m.active }) {
 		m.active = p.ActiveSessionID
 	}
 	pruned := m.layouts.prune(m.liveLocked)
@@ -184,13 +179,13 @@ func (m *model) reload(ctx context.Context) error {
 // launchProject is the project the window opens on: the one the last screen
 // was on while it is still open, else "" for Home, where anything else lands
 // too, Home and a closed project included.
-func (m *model) launchProject(ctx context.Context, ps []lichclient.Project) (string, error) {
+func (m *model) launchProject(ctx context.Context, ps []backend.Project) (string, error) {
 	saved, err := m.client.GetSetting(ctx, lastScreenKey, "")
 	if err != nil {
 		return "", err
 	}
 	if match := projectScreen.FindStringSubmatch(saved); match != nil {
-		if slices.ContainsFunc(ps, func(p lichclient.Project) bool { return p.ID == match[1] }) {
+		if slices.ContainsFunc(ps, func(p backend.Project) bool { return p.ID == match[1] }) {
 			return match[1], nil
 		}
 	}
@@ -199,11 +194,11 @@ func (m *model) launchProject(ctx context.Context, ps []lichclient.Project) (str
 
 // shownProject is the active project, else the first when the active one is
 // not open; nil on Home. Callers hold m.mu.
-func (m *model) shownProject() *lichclient.Project {
+func (m *model) shownProject() *backend.Project {
 	if m.home {
 		return m.projectByID(m.homeID)
 	}
-	if i := slices.IndexFunc(m.projects, func(p lichclient.Project) bool { return p.ID == m.activeProject }); i >= 0 {
+	if i := slices.IndexFunc(m.projects, func(p backend.Project) bool { return p.ID == m.activeProject }); i >= 0 {
 		return &m.projects[i]
 	}
 	if len(m.projects) == 0 {
@@ -217,7 +212,7 @@ func (m *model) shownProject() *lichclient.Project {
 func (m *model) setActiveProject(id string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	i := slices.IndexFunc(m.projects, func(p lichclient.Project) bool { return p.ID == id })
+	i := slices.IndexFunc(m.projects, func(p backend.Project) bool { return p.ID == id })
 	if i < 0 {
 		return false
 	}
@@ -247,10 +242,16 @@ func (m *model) hydrateTurnStates(ctx context.Context) error {
 	}
 	m.mu.Unlock()
 	for _, ts := range states {
-		if len(ts.Usage) == 0 {
+		if ts.Usage == nil {
 			continue
 		}
-		if err := m.usage.seed(ts.Usage); err != nil {
+		// seed reads the session-usage event's own bytes, the one decoding the
+		// /events stream goes through too.
+		raw, err := json.Marshal(ts.Usage)
+		if err == nil {
+			err = m.usage.seed(raw)
+		}
+		if err != nil {
 			log.Printf("terminal.TurnStates: usage of %s: %v", ts.ID, err)
 		}
 	}
@@ -261,14 +262,14 @@ func (m *model) hydrateTurnStates(ctx context.Context) error {
 // follow applies /events until ctx ends. The backend replays nothing beyond
 // what hydrateTurnStates read. When the stream ends first, the backend dropped this window: /events
 // serves one client and a newer one replaces it, or lich is gone.
-func (m *model) follow(ctx context.Context, events <-chan lichclient.Event) {
+func (m *model) follow(ctx context.Context, events <-chan backend.Event) {
 	for ev := range events {
-		if id, exited := strings.CutPrefix(ev.Name, exitEventPrefix); exited {
+		if id, exited := api.TerminalExitEvents.ID(ev.Name); exited {
 			m.mu.Lock()
 			m.status.exited(id)
 			m.mu.Unlock()
 			if m.exited != nil {
-				m.exited(id, readSessionExit(ev.Data))
+				m.exited(id, readSessionExit(ev))
 			}
 			m.invalidate()
 			continue
@@ -280,113 +281,95 @@ func (m *model) follow(ctx context.Context, events <-chan lichclient.Event) {
 		}
 		m.quota.apply(ev)
 		switch ev.Name {
-		case "session-usage":
+		case api.SessionUsageEvent.Name:
 			// Taken by the usage store above; only the redraw is left.
-		case statusEventName:
+		case api.SessionStatusEvent.Name:
 			if err := m.applyStatus(ctx, ev); err != nil {
 				log.Printf("%s: %v", ev.Name, err)
 			}
-		case "session-cwd":
-			var c sessionCwd
-			if json.Unmarshal(ev.Data, &c) == nil {
+		case api.SessionCwdEvent.Name:
+			if c, err := backend.Decode(ev, api.SessionCwdEvent); err == nil {
 				m.mu.Lock()
 				m.cwd[c.ID] = c
 				m.mu.Unlock()
 			}
-		case "session-title":
-			var s struct {
-				ID    string `json:"id"`
-				Label string `json:"label"`
-			}
-			if json.Unmarshal(ev.Data, &s) == nil {
+		case api.SessionTitleEvent.Name:
+			if s, err := backend.Decode(ev, api.SessionTitleEvent); err == nil {
 				m.rename(s.ID, s.Label)
 			}
-		case lichclient.SessionConversationEvent:
-			var c lichclient.ConversationReported
-			if json.Unmarshal(ev.Data, &c) == nil {
+		case api.SessionConversationEvent.Name:
+			if c, err := backend.Decode(ev, api.SessionConversationEvent); err == nil {
 				m.setConversation(c.ID, c.ProviderSessionID)
 			}
-		case lichclient.SessionProfileEvent:
-			var moved lichclient.ProfileMoved
-			if json.Unmarshal(ev.Data, &moved) == nil {
+		case api.SessionProfileEvent.Name:
+			if moved, err := backend.Decode(ev, api.SessionProfileEvent); err == nil {
 				m.setProfile(moved.ID, moved.Profile)
 			}
-		case lichclient.ProfileChangedEvent:
-			var c lichclient.ProfileChanged
-			if json.Unmarshal(ev.Data, &c) == nil {
+		case api.ProfileChangedEvent.Name:
+			if c, err := backend.Decode(ev, api.ProfileChangedEvent); err == nil {
 				m.profileChanged(c)
 			}
-		case lichclient.ClaudeProfileLoginEvent, lichclient.CodexProfileLoginEvent:
-			var step lichclient.ProfileLogin
+		case api.ClaudeProfileLoginEvent.Name, api.CodexProfileLoginEvent.Name:
+			var step backend.ProfileLogin
 			if json.Unmarshal(ev.Data, &step) == nil {
 				m.loginStep(ctx, loginEventKind(ev.Name), step)
 			}
-		case lichclient.PluginProfilesEvent:
-			var pass lichclient.PluginProfiles
-			if json.Unmarshal(ev.Data, &pass) == nil && m.pluginProfiles != nil {
+		case api.PluginProfilesEvent.Name:
+			if pass, err := backend.Decode(ev, api.PluginProfilesEvent); err == nil && m.pluginProfiles != nil {
 				m.pluginProfiles(pass)
 			}
-		case lichclient.ThemeSelectionEvent:
-			var sel lichclient.ThemeSelection
-			if json.Unmarshal(ev.Data, &sel) == nil && m.themeSelection != nil {
+		case api.ThemeSelectionEvent.Name:
+			if sel, err := backend.Decode(ev, api.ThemeSelectionEvent); err == nil && m.themeSelection != nil {
 				m.themeSelection(sel)
 			}
-		case lichclient.PRChangedEvent:
+		case api.PullRequestChangedEvent.Name:
 			if m.prChanged != nil {
 				m.prChanged()
 			}
-		case lichclient.AppUpdateProgressEvent:
-			var p lichclient.AppUpdateProgress
-			if json.Unmarshal(ev.Data, &p) == nil && m.appUpdateProgress != nil {
+		case api.AppUpdateProgressEvent.Name:
+			if p, err := backend.Decode(ev, api.AppUpdateProgressEvent); err == nil && m.appUpdateProgress != nil {
 				m.appUpdateProgress(p)
 			}
-		case duplicateEventName:
-			var d sessionDuplicate
-			if json.Unmarshal(ev.Data, &d) == nil && m.duplicate != nil {
+		case api.SessionDuplicateEvent.Name:
+			if d, err := backend.Decode(ev, api.SessionDuplicateEvent); err == nil && m.duplicate != nil {
 				m.duplicate(d)
 			}
-		case lichclient.PluginIncompatibleEvent:
+		case api.PluginIncompatibleEvent.Name:
 			if m.pluginIncompatible != nil {
 				m.pluginIncompatible()
 			}
-		case touchedEventName:
-			m.sessionTouched(ctx, ev.Data)
-		case focusEventName:
-			m.sessionFocus(ev.Data)
-		case raiseEventName:
+		case api.SessionTouchedEvent.Name:
+			m.sessionTouched(ctx, ev)
+		case api.SessionFocusEvent.Name:
+			m.sessionFocus(ev)
+		case api.WindowRaiseEvent.Name:
 			if m.raise != nil {
 				m.raise()
 			}
-		case closeEventName:
+		case api.WindowCloseEvent.Name:
 			log.Print("lich asked this window to close")
 			if m.leave != nil {
 				m.leave()
 			}
-		case "project-closed":
-			var gone struct {
-				ID string `json:"id"`
-			}
-			if json.Unmarshal(ev.Data, &gone) == nil {
+		case api.ProjectClosedEvent.Name:
+			if gone, err := backend.Decode(ev, api.ProjectClosedEvent); err == nil {
 				m.closed.stale()
 				if out, ok := m.closeProject(gone.ID); ok && m.projectClosed != nil {
 					m.projectClosed(out)
 				}
 			}
-		case "projects-reordered":
-			var order struct {
-				IDs []string `json:"ids"`
-			}
-			if json.Unmarshal(ev.Data, &order) == nil {
+		case api.ProjectsReorderedEvent.Name:
+			if order, err := backend.Decode(ev, api.ProjectsReorderedEvent); err == nil {
 				m.applyOrder(order.IDs)
 			}
-		case "project-added", "project-opened":
+		case api.ProjectAddedEvent.Name, api.ProjectOpenedEvent.Name:
 			m.closed.stale()
 			if err := m.reload(ctx); err != nil {
 				log.Printf("reload after %s: %v", ev.Name, err)
 			} else if err := m.loadFolds(ctx); err != nil {
 				log.Printf("load folds after %s: %v", ev.Name, err)
 			}
-		case "session-opened", "session-closed", "sessions-filed", "sessions-colored":
+		case api.SessionOpenedEvent.Name, api.SessionClosedEvent.Name, api.SessionsFiledEvent.Name, api.SessionsColoredEvent.Name:
 			if err := m.reload(ctx); err != nil {
 				log.Printf("reload after %s: %v", ev.Name, err)
 			} else if err := m.loadFolds(ctx); err != nil {
@@ -477,7 +460,7 @@ func (m *model) shownPaths() []string {
 		add(m.shownPath(*p, s))
 	}
 	// The footer reads the project's own checkout while no card is active.
-	if !slices.ContainsFunc(p.Sessions, func(s lichclient.Session) bool { return s.ID == m.active }) {
+	if !slices.ContainsFunc(p.Sessions, func(s backend.Session) bool { return s.ID == m.active }) {
 		add(p.Path)
 	}
 	return paths
@@ -485,14 +468,14 @@ func (m *model) shownPaths() []string {
 
 // shownPath is where the card says a session is: its live cwd, else its
 // checkout. Callers hold m.mu.
-func (m *model) shownPath(p lichclient.Project, s lichclient.Session) string {
+func (m *model) shownPath(p backend.Project, s backend.Session) string {
 	if c := m.cwd[s.ID]; c.Cwd != "" {
 		return c.Cwd
 	}
 	return sessionPath(p, s)
 }
 
-func sessionPath(p lichclient.Project, s lichclient.Session) string {
+func sessionPath(p backend.Project, s backend.Session) string {
 	if s.Path != "" {
 		return s.Path
 	}
@@ -503,7 +486,7 @@ func sessionPath(p lichclient.Project, s lichclient.Session) string {
 // checkout it was spawned in, which groups it; shown is where its shell is now,
 // and git describes shown.
 type sessionView struct {
-	lichclient.Session
+	backend.Session
 	projectID string
 	path      string
 	shown     string
@@ -517,9 +500,9 @@ type sessionView struct {
 	relay     sessionRelay // Direction "" for none
 	tool      sessionTool  // Name "" outside a tool call
 	reason    string       // what a waiting session is blocked on, "" for unsaid
-	git       lichclient.DiffStats
-	base      *lichclient.BaseStatus  // nil without a base to stand against
-	pr        *lichclient.PullRequest // open PR of the shown path's branch, nil for none
+	git       backend.DiffStats
+	base      *backend.BaseStatus  // nil without a base to stand against
+	pr        *backend.PullRequest // open PR of the shown path's branch, nil for none
 	// profileName is the profile the session runs in, "" for Personal;
 	// continueIn are the other logins its conversation could move to.
 	profileName string
@@ -532,7 +515,7 @@ type sessionView struct {
 }
 
 // viewOf is what s's card shows at now. Callers hold m.mu.
-func (m *model) viewOf(p lichclient.Project, s lichclient.Session, now time.Time) sessionView {
+func (m *model) viewOf(p backend.Project, s backend.Session, now time.Time) sessionView {
 	shown := m.shownPath(p, s)
 	age, aged := m.status.age(s.ID, now)
 	tool, _ := m.status.tool(s.ID)
@@ -550,7 +533,7 @@ func (m *model) viewOf(p lichclient.Project, s lichclient.Session, now time.Time
 
 // gitStatus is path's last branch and changes, false while git has not
 // answered for it or it is not a checkout.
-func (m *model) gitStatus(path string) (lichclient.DiffStats, bool) {
+func (m *model) gitStatus(path string) (backend.DiffStats, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	g, ok := m.git[path]
@@ -586,7 +569,7 @@ func (m *model) activeSession() (sessionView, bool) {
 	if p == nil {
 		return sessionView{}, false
 	}
-	i := slices.IndexFunc(p.Sessions, func(s lichclient.Session) bool { return s.ID == m.active })
+	i := slices.IndexFunc(p.Sessions, func(s backend.Session) bool { return s.ID == m.active })
 	if i < 0 {
 		return sessionView{}, false
 	}
@@ -621,12 +604,12 @@ func (m *model) setActive(ctx context.Context, id string) {
 }
 
 // project returns the active project.
-func (m *model) project() (lichclient.Project, bool) {
+func (m *model) project() (backend.Project, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	p := m.shownProject()
 	if p == nil {
-		return lichclient.Project{}, false
+		return backend.Project{}, false
 	}
 	return *p, true
 }
@@ -668,9 +651,9 @@ func (m *model) closeSession(id string) (projectID, active string, ok bool) {
 
 // sessionAt finds the project holding a session and its slot there. Callers
 // hold m.mu.
-func (m *model) sessionAt(id string) (*lichclient.Project, int) {
+func (m *model) sessionAt(id string) (*backend.Project, int) {
 	for pi := range m.projects {
-		if i := slices.IndexFunc(m.projects[pi].Sessions, func(s lichclient.Session) bool { return s.ID == id }); i >= 0 {
+		if i := slices.IndexFunc(m.projects[pi].Sessions, func(s backend.Session) bool { return s.ID == id }); i >= 0 {
 			return &m.projects[pi], i
 		}
 	}
@@ -708,7 +691,7 @@ func baseName(path string) string {
 
 // unreadSessions is every session the workspace database says came back with
 // a finished turn nobody read.
-func unreadSessions(ps []lichclient.Project) []string {
+func unreadSessions(ps []backend.Project) []string {
 	var ids []string
 	for _, p := range ps {
 		for _, s := range p.Sessions {
@@ -732,7 +715,7 @@ func checkoutPath(dir, projectPath string) string {
 // normalizeCheckouts stores a session in the project's own directory with no
 // path, as checkoutPath does at creation. Native builds before that fix
 // wrote the project's path instead, which split the root block in two.
-func normalizeCheckouts(ps []lichclient.Project) {
+func normalizeCheckouts(ps []backend.Project) {
 	for pi := range ps {
 		for si := range ps[pi].Sessions {
 			s := &ps[pi].Sessions[si]

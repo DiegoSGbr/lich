@@ -5,8 +5,11 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/lichdotdev/lich/api"
 	"github.com/lichdotdev/lich/internal/relay"
 	"github.com/lichdotdev/lich/internal/store"
+
+	"github.com/lichdotdev/lich/internal/events"
 )
 
 // What a caller may do with the checkout a session was the last one in. The
@@ -20,37 +23,9 @@ const (
 	RemoveWorktree = "remove"
 )
 
-// Closed is what a caller is told about the session it closed.
-type Closed struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"projectId"`
-	Project   string `json:"project"`
-	Label     string `json:"label"`
-	// Worktree is the checkout the session lived in, empty for a session in the
-	// project's own directory.
-	Worktree string `json:"worktree"`
-	// Kept is the answer given to the worktree question: the checkout was left on
-	// disk rather than removed. Meaningless unless the close had that question to
-	// answer — a session sharing its checkout, or living in the project's own
-	// directory, reports false while leaving everything where it was.
-	//
-	// Nothing here reports the park, because every close but a removal parks and
-	// a field that is true on all of them tells a caller nothing.
-	Kept bool `json:"kept"`
-	// Removed is whether the checkout was deleted.
-	Removed bool `json:"removed"`
-}
+type Closed = api.ClosedSession
 
-// CloseOptions is one Close call, an object for the reason OpenOptions is one:
-// an option a newer lich adds is dropped by an older backend, and one an older
-// lich does not send is its zero value.
-type CloseOptions struct {
-	From     string `json:"from"`
-	Target   string `json:"target"`
-	Project  string `json:"project"`
-	Worktree string `json:"worktree"`
-	Force    bool   `json:"force"`
-}
+type CloseOptions = api.CloseSessionOptions
 
 // Close closes a session, and settles what happens to the checkout it was the
 // last one in.
@@ -238,7 +213,7 @@ func (s *Service) finish(found located, active, closerID string) {
 		slog.Warn("spawn: close the session's terminal", "session", found.session.ID, "err", err)
 	}
 	if s.events != nil {
-		s.events.Emit(ClosedEventName, ClosedEvent{
+		events.Send(s.events.Emit, api.SessionClosedEvent, ClosedEvent{
 			ID: found.session.ID, ProjectID: found.project.ID, ActiveID: active,
 		})
 	}

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lichdotdev/lich/api"
 	"github.com/lichdotdev/lich/internal/prompt"
 	"github.com/lichdotdev/lich/internal/relay"
 	"github.com/lichdotdev/lich/internal/spawn"
@@ -480,8 +481,8 @@ var mcpTools = append([]mcpTool{
 		Schema:   schema(map[string]any{}),
 		ReadOnly: true,
 		Run: func(ctx context.Context, c *client, _ mcpArgs) (string, error) {
-			var peers []relay.Peer
-			if err := c.call(ctx, "relay.Peers", []any{relay.PeersOptions{From: c.sessionID()}}, shortCall, &peers); err != nil {
+			peers, err := callMethod(ctx, c, api.RelayPeers, relay.PeersOptions{From: c.sessionID()}, shortCall)
+			if err != nil {
 				return "", err
 			}
 			if len(peers) == 0 {
@@ -521,13 +522,12 @@ var mcpTools = append([]mcpTool{
 		}, "session", "prompt"),
 		Run: func(ctx context.Context, c *client, args mcpArgs) (string, error) {
 			method := sendMethod(args.flag("private"))
-			var result relay.Result
 			timeout := args.seconds("timeout_seconds")
-			call := []any{relay.SendOptions{
+			result, err := callMethod(ctx, c, method, relay.SendOptions{
 				From: c.sessionID(), Target: args.text("session"), Project: args.text("project"),
 				Prompt: args.text("prompt"), WaitSeconds: timeout,
-			}}
-			if err := c.call(ctx, method, call, waitBudget(timeout), &result); err != nil {
+			}, waitBudget(timeout))
+			if err != nil {
 				return "", err
 			}
 			return mcpOutcome(c.lang(), result), nil
@@ -561,9 +561,8 @@ var mcpTools = append([]mcpTool{
 					return "", fmt.Errorf("no_wait collects everything that is ready and takes no ticket: " +
 						"drop the ticket to look without waiting, or drop no_wait to wait on it")
 				}
-				var result relay.Result
-				call := []any{relay.WaitOptions{Ticket: ticket, WaitSeconds: timeout}}
-				if err := c.call(ctx, "relay.Wait", call, waitBudget(timeout), &result); err != nil {
+				result, err := callMethod(ctx, c, api.RelayWait, relay.WaitOptions{Ticket: ticket, WaitSeconds: timeout}, waitBudget(timeout))
+				if err != nil {
 					return "", err
 				}
 				return mcpOutcome(c.lang(), result), nil
@@ -634,13 +633,12 @@ var mcpTools = append([]mcpTool{
 				return "", fmt.Errorf("private applies to the task handed over with prompt: add a prompt, or drop private")
 			}
 			method := sendMethod(args.flag("private"))
-			var opened spawn.Session
-			call := []any{spawn.OpenOptions{
+			opened, err := callMethod(ctx, c, api.SpawnOpen, spawn.OpenOptions{
 				From: c.sessionID(), Project: args.text("project"), Kind: args.text("kind"),
 				Worktree: args.text("worktree"), Base: args.text("base"), Model: args.text("model"),
 				Effort: args.text("effort"), Folder: args.text("folder"), Ultracode: args.flag("ultracode"),
-			}}
-			if err := c.call(ctx, "spawn.Open", call, openCall, &opened); err != nil {
+			}, openCall)
+			if err != nil {
 				return "", err
 			}
 			if prompt == "" {
@@ -672,12 +670,11 @@ var mcpTools = append([]mcpTool{
 				"Remove a checkout that still has uncommitted work. Ask the user first."),
 		}, "session"),
 		Run: func(ctx context.Context, c *client, args mcpArgs) (string, error) {
-			var closed spawn.Closed
-			call := []any{spawn.CloseOptions{
+			closed, err := callMethod(ctx, c, api.SpawnClose, spawn.CloseOptions{
 				From: c.sessionID(), Target: args.text("session"), Project: args.text("project"),
 				Worktree: args.text("worktree"), Force: args.flag("force"),
-			}}
-			if err := c.call(ctx, "spawn.Close", call, openCall, &closed); err != nil {
+			}, openCall)
+			if err != nil {
 				return "", err
 			}
 			return closedText(c.lang(), closed), nil
@@ -701,12 +698,11 @@ var mcpTools = append([]mcpTool{
 					"exists in more than one."),
 		}, "label"),
 		Run: func(ctx context.Context, c *client, args mcpArgs) (string, error) {
-			var renamed spawn.Renamed
-			call := []any{spawn.RenameOptions{
+			renamed, err := callMethod(ctx, c, api.SpawnRename, spawn.RenameOptions{
 				From: c.sessionID(), Target: args.text("session"), Project: args.text("project"),
 				Label: args.text("label"),
-			}}
-			if err := c.call(ctx, "spawn.Rename", call, shortCall, &renamed); err != nil {
+			}, shortCall)
+			if err != nil {
 				return "", err
 			}
 			return renamedText(renamed), nil
@@ -724,9 +720,9 @@ var mcpTools = append([]mcpTool{
 		}),
 		ReadOnly: true,
 		Run: func(ctx context.Context, c *client, args mcpArgs) (string, error) {
-			var checkouts []spawn.Checkout
-			call := []any{spawn.WorktreesOptions{From: c.sessionID(), Project: args.text("project")}}
-			if err := c.call(ctx, "spawn.Worktrees", call, shortCall, &checkouts); err != nil {
+			opts := spawn.WorktreesOptions{From: c.sessionID(), Project: args.text("project")}
+			checkouts, err := callMethod(ctx, c, api.SpawnWorktrees, opts, shortCall)
+			if err != nil {
 				return "", err
 			}
 			out, err := json.Marshal(asList(checkouts))
@@ -751,8 +747,8 @@ var mcpTools = append([]mcpTool{
 			"answer": property("string", "Your answer, in full — nothing else is sent back."),
 		}, "answer"),
 		Run: func(ctx context.Context, c *client, args mcpArgs) (string, error) {
-			call := []any{relay.ReplyOptions{From: c.sessionID(), Ticket: args.text("ticket"), Answer: args.text("answer")}}
-			if err := c.call(ctx, "relay.Reply", call, shortCall, nil); err != nil {
+			opts := relay.ReplyOptions{From: c.sessionID(), Ticket: args.text("ticket"), Answer: args.text("answer")}
+			if _, err := callMethod(ctx, c, api.RelayReply, opts, shortCall); err != nil {
 				return "", err
 			}
 			return "Answer sent.", nil
@@ -768,7 +764,7 @@ var mcpTools = append([]mcpTool{
 // failed call. The session exists either way, and a failed call would read as if
 // nothing had happened — leaving an agent that opens three workers convinced it
 // has none.
-func (c *client) handOver(ctx context.Context, opened spawn.Session, task, method string) string {
+func (c *client) handOver(ctx context.Context, opened spawn.Session, task string, method sendCall) string {
 	result, err := c.deliver(ctx, opened, task, method)
 	if err != nil {
 		return handOverFailure(c.lang(), err, method)
@@ -778,7 +774,7 @@ func (c *client) handOver(ctx context.Context, opened spawn.Session, task, metho
 
 // handOverFailure words a first task that did not reach a session that is open
 // all the same, naming the call that sends it again.
-func handOverFailure(lang prompt.Lang, err error, method string) string {
+func handOverFailure(lang prompt.Lang, err error, method sendCall) string {
 	text := prompt.For(lang)
 	send := "send_to_session"
 	if method == relaySendPrivate {

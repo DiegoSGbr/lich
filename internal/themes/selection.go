@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+
+	"github.com/lichdotdev/lich/api"
+	"github.com/lichdotdev/lich/internal/events"
 )
 
 // The settings the windows read the selection from, global ones. A theme
@@ -15,16 +18,7 @@ const (
 	SystemID = "system"
 )
 
-// SelectionEventName is pushed on /events with a Selection once a change to
-// it is stored.
-const SelectionEventName = "theme-selection"
-
-// Selection is the theme the user chose and whether the window draws that
-// theme's pair while the OS asks for the pair's scheme.
-type Selection struct {
-	Theme        string `json:"theme"`
-	FollowSystem bool   `json:"followSystem"`
-}
+type Selection = api.ThemeSelection
 
 // Settings is where the selection is stored: the store's global settings.
 type Settings interface {
@@ -48,10 +42,7 @@ func (s *Service) Selection() (Selection, error) {
 	return Selection{Theme: theme, FollowSystem: follow == "true"}, nil
 }
 
-// SelectOptions names the theme Select stores.
-type SelectOptions struct {
-	ID string `json:"id"`
-}
+type SelectOptions = api.SelectThemeOptions
 
 // Select stores opts.ID, System or a theme List returns, as the selection.
 func (s *Service) Select(opts SelectOptions) error {
@@ -82,6 +73,6 @@ func (s *Service) store(key, value string) error {
 	if err != nil {
 		return err
 	}
-	s.emit(SelectionEventName, selection)
+	events.Send(s.emit, api.ThemeSelectionEvent, selection)
 	return nil
 }

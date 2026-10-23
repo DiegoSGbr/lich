@@ -5,43 +5,15 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/lichdotdev/lich/api"
 	"github.com/lichdotdev/lich/internal/store"
 )
 
-// RenamedEventName carries a session's new name, so every card takes it without
-// a reload. The store emits it once store.RenameSession has written the row,
-// whoever asked: the window, `lich rename` or the MCP tool.
-//
-// It is the event the auto-applied ai-title already emits
-// (terminal.titleEventName) rather than one of its own: the payload is the same
-// pair and the window's answer to both is the same — relabel that card. A second
-// name for one instruction would have bought a second handler saying it again.
-const RenamedEventName = "session-title"
+type RenamedEvent = api.SessionTitle
 
-// RenamedEvent is RenamedEventName's payload, the shape terminal's title event
-// writes.
-type RenamedEvent struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
-}
+type Renamed = api.RenamedSession
 
-// Renamed is what a caller is told about the session it renamed. Previous is
-// the name that is gone, which is the half the caller cannot look up afterwards.
-type Renamed struct {
-	ID       string `json:"id"`
-	Project  string `json:"project"`
-	Label    string `json:"label"`
-	Previous string `json:"previous"`
-}
-
-// RenameOptions is one Rename call, an object for the reason CloseOptions is
-// one.
-type RenameOptions struct {
-	From    string `json:"from"`
-	Target  string `json:"target"`
-	Project string `json:"project"`
-	Label   string `json:"label"`
-}
+type RenameOptions = api.RenameSessionOptions
 
 // Rename gives a session the name on its card, the window's rename from outside
 // the window. Like the window's, it makes the name the user's: the provider's

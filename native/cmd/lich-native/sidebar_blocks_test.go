@@ -6,24 +6,25 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lichdotdev/lich/native/lichclient"
+	"github.com/lichdotdev/lich/api"
+	"github.com/lichdotdev/lich/native/backend"
 )
 
 const sidebarProject = "/home/me/try/repo"
 
 // sidebarModel is a model on project "p" at sidebarProject holding stored, the
 // last session active, backed by a fake settings backend.
-func sidebarModel(t *testing.T, stored []lichclient.Session) (*model, *sidebarBackend) {
+func sidebarModel(t *testing.T, stored []backend.Session) (*model, *sidebarBackend) {
 	t.Helper()
 	f, c := newSidebarBackend(t)
 	m := newModel(c, func() {})
-	m.projects = []lichclient.Project{{ID: "p", Path: sidebarProject, Sessions: stored}}
+	m.projects = []backend.Project{{ID: "p", Path: sidebarProject, Sessions: stored}}
 	m.activeProject, m.active = "p", stored[len(stored)-1].ID
 	return m, f
 }
 
 func reportStatus(m *model, id, state string) {
-	send(m, statusEventName, statusEvent{ID: id, State: state})
+	send(m, api.SessionStatusEvent.Name, statusEvent{ID: id, State: state})
 }
 
 func blockKeys(v sidebarView) []string {
@@ -40,7 +41,7 @@ func TestSidebarBlocksTitleEachKindAndHideHeadersForOneBlock(t *testing.T) {
 		t.Fatalf("lone block: %+v", v)
 	}
 	stored := pin(filed(ss("s1", "w1@/x/worktrees/p/feat/a", "w2@/x/worktrees/p/feat/a"), "Apps", "w1"), "s1")
-	stored = with(stored, "w1", func(s *lichclient.Session) { s.Color = "teal" })
+	stored = with(stored, "w1", func(s *backend.Session) { s.Color = "teal" })
 	m, _ = sidebarModel(t, stored)
 	v := m.sidebarBlocks(sidebarFilter{})
 	titles := []string{}
@@ -122,7 +123,7 @@ func TestCommitDragOrderStoresTheWholeList(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := m.project()
-	if idList(p.Sessions) != "p1,a1,r1" || !slices.Equal(f.calls, []string{`store.ReorderSessions("p",["p1","a1","r1"])`}) {
+	if idList(p.Sessions) != "p1,a1,r1" || !slices.Equal(f.calls, []string{`store.ReorderSessions({"projectId":"p","ids":["p1","a1","r1"]})`}) {
 		t.Fatalf("order %s, calls %v", idList(p.Sessions), f.calls)
 	}
 }
@@ -149,7 +150,7 @@ func TestFileSessionsChangesTheModelThenTheStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := m.project()
-	want := []string{`store.SetSessionFolder("s1","Apps")`, `store.SetSessionFolder("ghost","Apps")`}
+	want := []string{`store.SetSessionFolder({"sessionId":"s1","folder":"Apps"})`, `store.SetSessionFolder({"sessionId":"ghost","folder":"Apps"})`}
 	if folderList(p.Sessions) != "Apps," || !slices.Equal(f.calls, want) {
 		t.Fatalf("folders %s, calls %v", folderList(p.Sessions), f.calls)
 	}
@@ -172,7 +173,7 @@ func TestRenameFolderMovesTheFoldAndUngroupDropsIt(t *testing.T) {
 	if err := m.ungroupFolder(ctx, "Ops"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{`store.RenameFolder("p","Apps","Ops")`, `store.RenameFolder("p","Ops","")`}
+	want := []string{`store.RenameFolder({"projectId":"p","from":"Apps","to":"Ops"})`, `store.RenameFolder({"projectId":"p","from":"Ops","to":""})`}
 	if got := m.sidebarBlocks(sidebarFilter{}); !slices.Equal(blockKeys(got), []string{rootBlockKey}) || !slices.Equal(f.calls, want) {
 		t.Fatalf("after ungroup: %v, calls %v", blockKeys(got), f.calls)
 	}

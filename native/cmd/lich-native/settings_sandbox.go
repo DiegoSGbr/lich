@@ -9,8 +9,8 @@ import (
 
 	"gioui.org/widget"
 
+	"github.com/lichdotdev/lich/native/backend"
 	"github.com/lichdotdev/lich/native/i18n"
-	"github.com/lichdotdev/lich/native/lichclient"
 	"github.com/lichdotdev/lich/native/ui"
 )
 
@@ -188,12 +188,13 @@ func (s *settingsScreen) loadSandbox() {
 	}()
 }
 
-func readSandboxMachine(ctx context.Context, c *lichclient.Client) (sandboxMachine, error) {
+func readSandboxMachine(ctx context.Context, c *backend.Client) (sandboxMachine, error) {
 	m := sandboxMachine{loaded: true, globals: map[string]string{}}
-	if err := c.Call(ctx, "system.SandboxBackend", &m.backend); err != nil {
+	var err error
+	if m.backend, err = c.SandboxBackend(ctx); err != nil {
 		return m, err
 	}
-	if err := c.Call(ctx, "system.SSHAgentKeys", &m.agentKeys); err != nil {
+	if m.agentKeys, err = c.SSHAgentKeys(ctx); err != nil {
 		return m, err
 	}
 	keys := []string{sshAgentKey, ghTokenKey}

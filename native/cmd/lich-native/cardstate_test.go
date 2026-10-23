@@ -11,7 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lichdotdev/lich/native/lichclient"
+	"github.com/lichdotdev/lich/api"
+	"github.com/lichdotdev/lich/native/backend"
 )
 
 func TestCardWearsTheLiveAgentUntilItLeaves(t *testing.T) {
@@ -21,13 +22,13 @@ func TestCardWearsTheLiveAgentUntilItLeaves(t *testing.T) {
 		data any
 		want string
 	}{
-		{"session-agent", agentEvent{ID: "s1", Agent: "claude"}, "claude"},
-		{"session-agent", agentEvent{ID: "s1", Agent: ""}, ""},
-		{"session-agent", agentEvent{ID: "s1", Agent: "codex"}, "codex"},
-		{"session-agent", agentEvent{ID: "s1", Agent: "from-a-newer-lich"}, ""},
-		{"session-agent", agentEvent{ID: "s1", Agent: "claude"}, "claude"},
-		{statusEventName, map[string]string{"id": "s1", "state": "busy"}, "claude"},
-		{statusEventName, map[string]string{"id": "s1", "state": "idle"}, ""},
+		{"session-agent", api.SessionAgent{ID: "s1", Agent: "claude"}, "claude"},
+		{"session-agent", api.SessionAgent{ID: "s1", Agent: ""}, ""},
+		{"session-agent", api.SessionAgent{ID: "s1", Agent: "codex"}, "codex"},
+		{"session-agent", api.SessionAgent{ID: "s1", Agent: "from-a-newer-lich"}, ""},
+		{"session-agent", api.SessionAgent{ID: "s1", Agent: "claude"}, "claude"},
+		{api.SessionStatusEvent.Name, map[string]string{"id": "s1", "state": "busy"}, "claude"},
+		{api.SessionStatusEvent.Name, map[string]string{"id": "s1", "state": "idle"}, ""},
 	}
 	for i, s := range steps {
 		send(m, s.name, s.data)
@@ -61,9 +62,9 @@ func TestPinFlipsTheCard(t *testing.T) {
 
 // fakeUnread serves LoadState with one unread session and records every
 // SetSessionUnread call.
-func fakeUnread(t *testing.T, calls chan<- []any) *lichclient.Client {
+func fakeUnread(t *testing.T, calls chan<- []any) *backend.Client {
 	t.Helper()
-	projects := []lichclient.Project{{ID: "p", Path: checkout, Sessions: []lichclient.Session{{ID: "s1", Unread: true}, {ID: "s2"}}}}
+	projects := []backend.Project{{ID: "p", Path: checkout, Sessions: []backend.Session{{ID: "s1", Unread: true}, {ID: "s2"}}}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/rpc/store.LoadState":
@@ -71,14 +72,14 @@ func fakeUnread(t *testing.T, calls chan<- []any) *lichclient.Client {
 		case "/rpc/store.GetSetting":
 			_ = json.NewEncoder(w).Encode("")
 		case "/rpc/project.Home":
-			_ = json.NewEncoder(w).Encode(lichclient.Project{ID: "home", Path: "/home/me"})
+			_ = json.NewEncoder(w).Encode(backend.Project{ID: "home", Path: "/home/me"})
 		case "/rpc/store.AddProject", "/rpc/store.AddSession":
 			_ = json.NewEncoder(w).Encode(nil)
 		case "/rpc/store.SetSessionUnread":
-			var args []any
+			var args []api.SessionUnreadOptions
 			body, _ := io.ReadAll(r.Body)
 			_ = json.Unmarshal(body, &args)
-			calls <- args
+			calls <- []any{args[0].SessionID, args[0].Unread}
 			_ = json.NewEncoder(w).Encode(nil)
 		default:
 			t.Errorf("unexpected call %s", r.URL.Path)
@@ -87,7 +88,7 @@ func fakeUnread(t *testing.T, calls chan<- []any) *lichclient.Client {
 	t.Cleanup(srv.Close)
 	u, _ := url.Parse(srv.URL)
 	port, _ := strconv.Atoi(u.Port())
-	return lichclient.New(lichclient.Runtime{Port: port, Token: "tok"})
+	return backend.New(backend.Runtime{Port: port, Token: "tok"})
 }
 
 func unreadOf(m *model, id string) bool {
@@ -138,7 +139,7 @@ func TestRelayMarkFollowsTheRequest(t *testing.T) {
 		{"session-relay", sessionRelay{ID: "s1", Direction: relayIn}, sessionRelay{ID: "s1", Direction: relayIn}},
 		{"session-relay", sessionRelay{ID: "s1", Direction: "sideways"}, sessionRelay{}},
 		{"session-relay", sessionRelay{ID: "s1", Direction: relayIn}, sessionRelay{ID: "s1", Direction: relayIn}},
-		{statusEventName, map[string]string{"id": "s1", "state": "idle"}, sessionRelay{}},
+		{api.SessionStatusEvent.Name, map[string]string{"id": "s1", "state": "idle"}, sessionRelay{}},
 	}
 	for i, s := range steps {
 		send(m, s.name, s.data)

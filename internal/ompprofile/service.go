@@ -12,9 +12,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lichdotdev/lich/api"
 	"github.com/lichdotdev/lich/internal/profilestore"
 	"github.com/lichdotdev/lich/internal/providers"
 	"github.com/lichdotdev/lich/internal/winexec"
+
+	"github.com/lichdotdev/lich/internal/events"
 )
 
 const (
@@ -56,21 +59,7 @@ func (s *Service) SetSessions(inUse func(slug string) int, forget func(slug stri
 	s.inUse, s.forget = inUse, forget
 }
 
-// Info is a profile as the Settings screen shows it: whether any account is
-// logged in there, and which.
-type Info struct {
-	Profile
-	LoggedIn bool `json:"loggedIn"`
-	// Email is the address of each OAuth account, comma separated. omp keeps
-	// several logins per profile, one per provider or more, so there is no one
-	// account to name.
-	Email string `json:"email,omitempty"`
-	// Providers are the providers omp holds an OAuth login for here.
-	Providers []string `json:"providers,omitempty"`
-	// StatusError is why `omp usage accounts` gave no answer, in its own words;
-	// LoggedIn is then false for want of one.
-	StatusError string `json:"statusError,omitempty"`
-}
+type Info = api.ProfileInfo
 
 // accounts is the JSON `omp usage accounts --json` prints (measured on 18.8.9):
 // one row per OAuth login in the profile, API keys left out. identityKey reads
@@ -146,7 +135,7 @@ func (s *Service) UpdateProfile(slug string, u profilestore.Update) (Profile, er
 	if err != nil {
 		return p, err
 	}
-	s.emit(profilestore.ChangedEvent, profilestore.Changed{Provider: store.Provider, Profile: p})
+	events.Send(s.emit, api.ProfileChangedEvent, profilestore.Changed{Provider: store.Provider, Profile: p})
 	return p, nil
 }
 

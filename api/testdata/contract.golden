@@ -1,0 +1,1683 @@
+agentplugin.Install(PluginProviderOptions) None
+agentplugin.Status(None) []PluginStatus
+agentplugin.Update(PluginProviderOptions) None
+appupdate.Apply(None) None
+appupdate.Status(None) AppUpdateStatus
+claudeprofile.CancelLogin(ProfileSlugOptions) None
+claudeprofile.CreateProfile(CreateProfileOptions) Profile
+claudeprofile.DeleteProfile(ProfileSlugOptions) None
+claudeprofile.InstallPlugins(InstallPluginsOptions) []ProfilePluginResult
+claudeprofile.Login(ProfileSlugOptions) None
+claudeprofile.LoginCode(LoginCodeOptions) None
+claudeprofile.LoginCommand(ProfileSlugOptions) string
+claudeprofile.Plugins(ProfileSlugOptions) []ProfilePlugin
+claudeprofile.Profiles(None) []ProfileInfo
+claudeprofile.UpdateProfile(UpdateProfileOptions) Profile
+codexprofile.CancelLogin(ProfileSlugOptions) None
+codexprofile.CreateProfile(CreateProfileOptions) Profile
+codexprofile.DeleteProfile(ProfileSlugOptions) None
+codexprofile.InstallPlugins(InstallPluginsOptions) []ProfilePluginResult
+codexprofile.Login(ProfileSlugOptions) None
+codexprofile.LoginCommand(ProfileSlugOptions) string
+codexprofile.Plugins(ProfileSlugOptions) []ProfilePlugin
+codexprofile.Profiles(None) []ProfileInfo
+codexprofile.UpdateProfile(UpdateProfileOptions) Profile
+cursorprofile.CreateProfile(CreateProfileOptions) Profile
+cursorprofile.DeleteProfile(ProfileSlugOptions) None
+cursorprofile.LoginCommand(ProfileSlugOptions) string
+cursorprofile.Profiles(None) []ProfileInfo
+cursorprofile.UpdateProfile(UpdateProfileOptions) Profile
+drop.Attach(AttachDropOptions) DropAttachment
+kiroprofile.CreateProfile(CreateProfileOptions) Profile
+kiroprofile.DeleteProfile(ProfileSlugOptions) None
+kiroprofile.LoginCommand(ProfileSlugOptions) string
+kiroprofile.Profiles(None) []ProfileInfo
+kiroprofile.UpdateProfile(UpdateProfileOptions) Profile
+ompprofile.CreateProfile(CreateProfileOptions) Profile
+ompprofile.DeleteProfile(ProfileSlugOptions) None
+ompprofile.LoginCommand(ProfileSlugOptions) string
+ompprofile.Profiles(None) []ProfileInfo
+ompprofile.UpdateProfile(UpdateProfileOptions) Profile
+opencodeprofile.CreateProfile(CreateProfileOptions) Profile
+opencodeprofile.DeleteProfile(ProfileSlugOptions) None
+opencodeprofile.LoginCommand(ProfileSlugOptions) string
+opencodeprofile.Profiles(None) []ProfileInfo
+opencodeprofile.UpdateProfile(UpdateProfileOptions) Profile
+patchnotes.Current(PatchNotesOptions) PatchNotes
+project.BaseFreshness(PathBranchOptions) BaseFreshness
+project.BaseStatus(PathOptions) *BaseStatus
+project.BranchRules(PathBranchOptions) *BranchRules
+project.BranchesOf(PathsOptions) map[string]string
+project.CarryUncommitted(CarryUncommittedOptions) None
+project.CommentOnPullRequest(PRBodyOptions) None
+project.CommitIdentity(PathOptions) CommitIdentity
+project.CreatePullRequest(PathOptions) None
+project.CreateWorktree(CreateWorktreeOptions) *Worktree
+project.CreateWorktreeFromPR(CreateWorktreeFromPROptions) *Worktree
+project.DeletePullRequestComment(PRCommentOptions) None
+project.DeleteReviewComment(PRCommentOptions) None
+project.Diff(PathOptions) DiffStats
+project.DiffText(PathOptions) string
+project.DiscardFile(CheckoutFileOptions) None
+project.EditPullRequestBody(PRBodyOptions) None
+project.EditPullRequestComment(PRCommentBodyOptions) None
+project.EditPullRequestTitle(PRTitleOptions) None
+project.EditReviewBody(PRReviewBodyOptions) None
+project.EditReviewComment(PRCommentBodyOptions) None
+project.Exists(PathOptions) bool
+project.FileLines(FileLinesOptions) []string
+project.GitHubAccounts(None) []string
+project.Home(None) *OpenedProject
+project.Issue(NumberOptions) Issue
+project.ListBranches(PathOptions) Branches
+project.ListCheckouts(PathOptions) []Worktree
+project.ListPullRequests(ListPullRequestsOptions) []PRSummary
+project.MergePullRequest(MergePullRequestOptions) None
+project.Missing(PathsOptions) []string
+project.Open(None) *OpenedProject
+project.PickFile(PickFileOptions) string
+project.PickSaveFile(PickSaveFileOptions) string
+project.PullRequest(PathOptions) *PullRequest
+project.PullRequestConflicts(PRConflictsOptions) []string
+project.PullRequestConversation(NumberOptions) *PRConversation
+project.PullRequestDetail(NumberOptions) *PRDetail
+project.PullRequestDiff(NumberOptions) string
+project.PullRequestMergeBase(NumberOptions) string
+project.ReadFile(CheckoutFileOptions) string
+project.ReadFileAt(ReadFileAtOptions) string
+project.Relocate(ProjectIDOptions) *OpenedProject
+project.RemoveWorktree(RemoveWorktreeOptions) None
+project.ReplyToReviewThread(PRCommentBodyOptions) None
+project.ResolveReviewThread(ResolveThreadOptions) None
+project.RestoreLines(RestoreLinesOptions) None
+project.RevertLines(RevertLinesOptions) RevertResult
+project.Search(SearchOptions) SearchResult
+project.SubmitReview(SubmitReviewOptions) None
+project.Tree(PathOptions) FileListing
+project.WorktreeAdopted(PathOptions) bool
+project.WorktreeDirty(PathOptions) bool
+providers.Detect(None) []DetectedProvider
+providers.OnPath(ProviderIDOptions) []ProviderBinary
+providers.RefreshPath(None) None
+providers.Verify(BinaryOptions) BinaryCheck
+providers.Version(BinaryOptions) string
+quota.CodexProfilePlan(ProfilePlanOptions) QuotaPlan
+quota.Plans(QuotaPlansOptions) []QuotaPlan
+quota.ProfilePlan(ProfilePlanOptions) QuotaPlan
+relay.AnnounceMerge(AnnounceMergeOptions) None
+relay.Collect(CollectOptions) CollectedResults
+relay.CollectNow(CollectNowOptions) CollectedResults
+relay.Focus(FocusSessionOptions) FocusedSession
+relay.Insert(InsertTextOptions) InsertedText
+relay.Peers(PeersOptions) []Peer
+relay.Reply(ReplyOptions) None
+relay.Self(SelfOptions) Peer
+relay.Send(SendOptions) SendResult
+relay.SendPrivate(SendOptions) SendResult
+relay.SendSubagent(SendOptions) SendResult
+relay.Submit(SubmitOptions) None
+relay.Wait(WaitOptions) SendResult
+spawn.Ask(AskSessionOptions) SessionAnswer
+spawn.Close(CloseSessionOptions) ClosedSession
+spawn.ColorFolder(ColorFolderOptions) ColoredFolder
+spawn.Control(ControlSessionOptions) ControlledSession
+spawn.File(FileSessionOptions) FiledSession
+spawn.Folders(FoldersOptions) []SessionFolder
+spawn.Open(OpenSessionOptions) OpenedSession
+spawn.OpenSubagent(OpenSubagentOptions) OpenedSession
+spawn.Rename(RenameSessionOptions) RenamedSession
+spawn.RenameFolder(RenameFolderOptions) RenamedFolder
+spawn.Worktrees(WorktreesOptions) []WorktreeCheckout
+store.AddProject(AddProjectOptions) None
+store.AddSession(AddSessionOptions) None
+store.AddSessionFrom(AddSessionFromOptions) None
+store.AddSessionInFolder(AddSessionInFolderOptions) None
+store.AdoptExternalSession(AdoptExternalSessionOptions) None
+store.CloseProject(ProjectIDOptions) None
+store.CloseSession(ParkSessionOptions) None
+store.ClosedProjectCount(SearchTermOptions) int
+store.ClosedSessions(SearchTermOptions) ClosedHistory
+store.CostTotals(CostTotalsOptions) CostReport
+store.ExternalSessions(None) []ExternalSession
+store.ForgetSession(SessionIDOptions) None
+store.GetSetting(GetSettingOptions) string
+store.LoadState(None) []Project
+store.MarkForked(SessionIDOptions) None
+store.PurgeWorktreeSessions(WorktreeSessionsOptions) None
+store.RecentProjects(SearchTermOptions) []RecentProject
+store.RenameFolder(RenameProjectFolderOptions) []string
+store.RenameSession(LabelSessionOptions) None
+store.ReopenSession(ReopenSessionOptions) *Session
+store.ReopenWorktreeSession(ReopenWorktreeSessionOptions) *Session
+store.ReorderProjects(ReorderProjectsOptions) None
+store.ReorderSessions(ReorderSessionsOptions) None
+store.SetActiveSession(ActiveSessionOptions) None
+store.SetSessionColor(SessionColorOptions) None
+store.SetSessionFolder(SessionFolderOptions) None
+store.SetSessionPinned(SessionPinnedOptions) None
+store.SetSessionUnread(SessionUnreadOptions) None
+store.SetSetting(SetSettingOptions) None
+system.AttachNative(AttachNativeOptions) None
+system.Diagnostics(None) Diagnostics
+system.Notify(NotifyOptions) None
+system.OpenExternal(OpenExternalOptions) None
+system.OpenFile(OpenFileOptions) None
+system.OpenFolder(OpenFolderOptions) None
+system.OpenFolderInEditor(OpenFolderOptions) string
+system.Quit(QuitOptions) None
+system.RevealLog(None) None
+system.SSHAgentKeys(None) []string
+system.SandboxBackend(None) string
+system.ShowWindow(ShowWindowOptions) None
+system.TakeUncleanExit(None) bool
+terminal.Close(SessionIDOptions) None
+terminal.ContinueIn(ContinueInOptions) None
+terminal.HandsOn(SessionIDOptions) int64
+terminal.LastTurnSaid(SessionIDOptions) LastSaid
+terminal.Live(SessionIDOptions) bool
+terminal.LiveCount(None) int
+terminal.Ready(SessionIDOptions) bool
+terminal.Replay(SessionIDOptions) string
+terminal.Resize(ResizeOptions) None
+terminal.ResumeAvailable(ResumeAvailableOptions) bool
+terminal.SearchTranscripts(SearchTranscriptsOptions) []TranscriptMatch
+terminal.SetVisible(SetVisibleOptions) None
+terminal.Start(StartOptions) None
+terminal.TurnStates(None) []TurnState
+terminal.WorkdirMissing(WorkdirOptions) bool
+terminal.Write(WriteOptions) None
+themes.Import(ImportThemeOptions) ThemeImportResult
+themes.InstallFromGit(InstallThemesOptions) ThemeGitResult
+themes.List(None) []Theme
+themes.ListBroken(None) []BrokenTheme
+themes.Remove(RemoveThemeOptions) None
+themes.SaveTemplate(SaveThemeTemplateOptions) None
+themes.Select(SelectThemeOptions) None
+themes.Selection(None) ThemeSelection
+themes.SetFollowSystem(FollowSystemOptions) None
+themes.UpdateFromGit(UpdateThemeOptions) ThemeGitResult
+tray.SetLabels(TrayLabels) None
+
+event appupdate-progress AppUpdateProgress
+event claude-profile-login ProfileLogin
+event codex-profile-login ProfileLogin
+event lich-plugin-profiles PluginProfiles
+event plugin-incompatible PluginIncompatible
+event profile-changed ProfileChanged
+event project-added ProjectAdded
+event project-closed ProjectClosed
+event project-opened Project
+event projects-reordered ProjectsReordered
+event pull-request-changed PRChanged
+event session-agent SessionAgent
+event session-closed SessionClosed
+event session-conversation SessionConversation
+event session-cwd SessionCwd
+event session-duplicate SessionDuplicate
+event session-focus SessionFocus
+event session-inbox SessionInbox
+event session-limit SessionLimit
+event session-mcp SessionMCP
+event session-opened OpenedSession
+event session-profile SessionProfile
+event session-relay SessionRelay
+event session-relay-stalled RelayStalled
+event session-sandbox SessionSandbox
+event session-schedule SessionSchedule
+event session-schedule-forfeited ScheduleForfeited
+event session-status SessionStatus
+event session-title SessionTitle
+event session-todo SessionTodo
+event session-touched SessionTouched
+event session-usage SessionUsage
+event sessions-colored SessionsColored
+event sessions-filed SessionsFiled
+event terminal:data:<id> string
+event terminal:exit:<id> SessionExit
+event theme-selection ThemeSelection
+event window-close None
+event window-raise None
+
+PluginProviderOptions {
+	provider string
+}
+
+None {
+}
+
+PluginStatus {
+	provider string
+	name string
+	available bool
+	installed bool
+	installedVersion string
+	latestVersion string
+	updateAvailable bool
+	compatible bool
+}
+
+AppUpdateStatus {
+	currentVersion string
+	latestVersion string
+	updateAvailable bool
+	canSelfApply bool
+	releaseUrl string
+	installCommand string
+}
+
+ProfileSlugOptions {
+	slug string
+}
+
+CreateProfileOptions {
+	name string
+}
+
+Profile {
+	slug string
+	name string
+	dir string
+	personal bool
+	copied,omitempty []string
+	color,omitempty string
+	image,omitempty base64
+}
+
+InstallPluginsOptions {
+	slug string
+	keys []string
+}
+
+ProfilePluginResult {
+	key string
+	ok bool
+	message,omitempty string
+}
+
+LoginCodeOptions {
+	slug string
+	code string
+}
+
+ProfilePlugin {
+	key string
+	name string
+	marketplace string
+	version,omitempty string
+}
+
+ProfileInfo {
+	...Profile
+	loggedIn bool
+	email,omitempty string
+	orgName,omitempty string
+	plan,omitempty string
+	authMethod,omitempty string
+	plugins int
+	providers,omitempty []string
+	statusError,omitempty string
+}
+
+UpdateProfileOptions {
+	slug string
+	update ProfileUpdate
+}
+
+AttachDropOptions {
+	sessionId string
+	root string
+	confined bool
+}
+
+DropAttachment {
+	path string
+	notice string
+}
+
+PatchNotesOptions {
+	locale string
+}
+
+PatchNotes {
+	version string
+	highlights []PatchNotesHighlight
+	groups []PatchNotesGroup
+}
+
+PathBranchOptions {
+	path string
+	branch string
+}
+
+BaseFreshness {
+	upstream string
+	ahead int
+	behind int
+	fetchError,omitempty string
+}
+
+PathOptions {
+	path string
+}
+
+BaseStatus {
+	base string
+	behind int
+	conflicts []string
+}
+
+BranchRules {
+	allowedMergeMethods []string
+	commitPatterns []CommitPattern
+	viewerCanBypass bool
+}
+
+PathsOptions {
+	paths []string
+}
+
+CarryUncommittedOptions {
+	src string
+	dst string
+}
+
+PRBodyOptions {
+	path string
+	number int
+	body string
+}
+
+CommitIdentity {
+	name string
+	email string
+	local bool
+}
+
+CreateWorktreeOptions {
+	projectPath string
+	projectId string
+	name string
+	base string
+	baseIsRemote bool
+}
+
+Worktree {
+	name string
+	path string
+	reused,omitempty bool
+}
+
+CreateWorktreeFromPROptions {
+	projectPath string
+	projectId string
+	number int
+}
+
+PRCommentOptions {
+	path string
+	number int
+	commentId int64
+}
+
+DiffStats {
+	files int
+	added int
+	deleted int
+	head string
+	branch string
+}
+
+CheckoutFileOptions {
+	path string
+	rel string
+}
+
+PRCommentBodyOptions {
+	path string
+	number int
+	commentId int64
+	body string
+}
+
+PRTitleOptions {
+	path string
+	number int
+	title string
+}
+
+PRReviewBodyOptions {
+	path string
+	number int
+	reviewId int64
+	body string
+}
+
+FileLinesOptions {
+	path string
+	rel string
+	ref string
+	from int
+	to int
+}
+
+OpenedProject {
+	id string
+	name string
+	path string
+}
+
+NumberOptions {
+	path string
+	number int
+}
+
+Issue {
+	number int
+	title string
+	body string
+	url string
+}
+
+Branches {
+	local []string
+	remote []string
+	worktrees []Worktree
+}
+
+ListPullRequestsOptions {
+	path string
+	state string
+}
+
+PRSummary {
+	number int
+	title string
+	author string
+	state string
+	isDraft bool
+	reviewDecision string
+	headRefName string
+	isCrossRepository bool
+	updatedAt string
+	checks ChecksRollup
+	threads ThreadTally
+}
+
+MergePullRequestOptions {
+	path string
+	number int
+	method string
+	subject string
+	body string
+	admin bool
+}
+
+PickFileOptions {
+	title string
+}
+
+PickSaveFileOptions {
+	title string
+	defaultName string
+}
+
+PullRequest {
+	number int
+	url string
+	state string
+}
+
+PRConflictsOptions {
+	path string
+	number int
+	base string
+	prUrl string
+}
+
+PRConversation {
+	headRefOid string
+	reviews []PRReview
+	comments []PRComment
+	threads []PRReviewThread
+}
+
+PRDetail {
+	number int
+	url string
+	title string
+	body string
+	author string
+	authorLogin string
+	state string
+	isDraft bool
+	mergeable string
+	mergeStateStatus string
+	reviewDecision string
+	reviewers []PRReviewer
+	baseRefName string
+	headRefName string
+	changedFiles int
+	checks ChecksRollup
+	checkRuns []CheckItem
+	commits []PRCommit
+	isCrossRepository bool
+	maintainerCanModify bool
+}
+
+ReadFileAtOptions {
+	path string
+	rel string
+	ref string
+}
+
+ProjectIDOptions {
+	id string
+}
+
+RemoveWorktreeOptions {
+	projectPath string
+	worktreePath string
+	force bool
+	adoptedAck bool
+}
+
+ResolveThreadOptions {
+	path string
+	threadId string
+	resolved bool
+}
+
+RestoreLinesOptions {
+	path string
+	rel string
+	undo RevertResult
+}
+
+RevertLinesOptions {
+	path string
+	rel string
+	lines []RevertLine
+}
+
+RevertResult (MarshalJSON) {
+	patch base64
+	indexPatch base64
+}
+
+SearchOptions {
+	path string
+	query string
+}
+
+SearchResult {
+	matches []SearchMatch
+	cut bool
+	tooLarge int
+}
+
+SubmitReviewOptions {
+	path string
+	number int
+	event string
+	body string
+	head string
+	comments []ReviewComment
+}
+
+FileListing {
+	files []string
+	cut bool
+	hidden []string
+}
+
+DetectedProvider {
+	id string
+	name string
+	binary string
+	installed bool
+	path string
+	source string
+	docs string
+}
+
+ProviderIDOptions {
+	id string
+}
+
+ProviderBinary {
+	path string
+	version string
+}
+
+BinaryOptions {
+	bin string
+}
+
+BinaryCheck {
+	path string
+	status string
+}
+
+ProfilePlanOptions {
+	profile string
+}
+
+QuotaPlan {
+	provider string
+	name string
+	plan,omitempty string
+	account,omitempty string
+	noAccount,omitempty string
+	windows,omitempty []QuotaWindow
+	status string
+}
+
+QuotaPlansOptions {
+	sessionId string
+}
+
+AnnounceMergeOptions {
+	checkout string
+	number int
+	title string
+	branch string
+	base string
+}
+
+CollectOptions {
+	from string
+	waitSeconds int
+}
+
+CollectedResults {
+	results []SendResult
+	open []string
+}
+
+CollectNowOptions {
+	from string
+}
+
+FocusSessionOptions {
+	from string
+	target string
+	project string
+}
+
+FocusedSession {
+	id string
+	label string
+	project string
+}
+
+InsertTextOptions {
+	from string
+	target string
+	project string
+	text string
+	waitSeconds int
+}
+
+InsertedText {
+	id string
+	label string
+	project string
+	kind string
+	bytes int
+}
+
+PeersOptions {
+	from string
+}
+
+Peer {
+	label string
+	name string
+	project string
+	kind string
+	state string
+	id string
+	path string
+	projectPath string
+}
+
+ReplyOptions {
+	from string
+	ticket string
+	answer string
+}
+
+SelfOptions {
+	from string
+}
+
+SendOptions {
+	from string
+	target string
+	project string
+	prompt string
+	waitSeconds int
+}
+
+SendResult {
+	ticket string
+	target string
+	status string
+	answer string
+	private,omitempty bool
+}
+
+SubmitOptions {
+	sessionId string
+	message string
+}
+
+WaitOptions {
+	ticket string
+	waitSeconds int
+}
+
+AskSessionOptions {
+	from string
+	target string
+	project string
+	question string
+}
+
+SessionAnswer {
+	id string
+	project string
+	label string
+	answer string
+}
+
+CloseSessionOptions {
+	from string
+	target string
+	project string
+	worktree string
+	force bool
+}
+
+ClosedSession {
+	id string
+	projectId string
+	project string
+	label string
+	worktree string
+	kept bool
+	removed bool
+}
+
+ColorFolderOptions {
+	from string
+	project string
+	folder string
+	color string
+}
+
+ColoredFolder {
+	project string
+	folder string
+	color string
+	sessions []string
+}
+
+ControlSessionOptions {
+	from string
+	target string
+	project string
+	action string
+	value string
+	args string
+}
+
+ControlledSession {
+	id string
+	project string
+	label string
+	action string
+	value,omitempty string
+	command_id string
+	state string
+}
+
+FileSessionOptions {
+	from string
+	target string
+	project string
+	folder string
+}
+
+FiledSession {
+	id string
+	project string
+	label string
+	folder string
+	previous string
+}
+
+FoldersOptions {
+	from string
+	project string
+}
+
+SessionFolder {
+	name string
+	sessions []string
+}
+
+OpenSessionOptions {
+	from string
+	project string
+	kind string
+	worktree string
+	base string
+	model string
+	effort string
+	folder string
+	ultracode bool
+}
+
+OpenedSession {
+	id string
+	projectId string
+	project string
+	label string
+	name string
+	kind string
+	path string
+	nextSeq int
+	originSessionId string
+	originLabel string
+	confined bool
+	folder string
+}
+
+OpenSubagentOptions {
+	from string
+	kind string
+	worktree string
+	base string
+	model string
+	effort string
+	ultracode bool
+}
+
+RenameSessionOptions {
+	from string
+	target string
+	project string
+	label string
+}
+
+RenamedSession {
+	id string
+	project string
+	label string
+	previous string
+}
+
+RenameFolderOptions {
+	from string
+	project string
+	folder string
+	to string
+}
+
+RenamedFolder {
+	project string
+	from string
+	to string
+	sessions []string
+}
+
+WorktreesOptions {
+	from string
+	project string
+}
+
+WorktreeCheckout {
+	name string
+	path string
+	dirty bool
+	sessions []string
+}
+
+AddProjectOptions {
+	id string
+	name string
+	path string
+}
+
+AddSessionOptions {
+	projectId string
+	sessionId string
+	label string
+	kind string
+	path string
+	nextSeq int
+	sandbox string
+}
+
+AddSessionFromOptions {
+	projectId string
+	sessionId string
+	label string
+	kind string
+	path string
+	nextSeq int
+	originId string
+	originLabel string
+	folder string
+}
+
+AddSessionInFolderOptions {
+	...AddSessionOptions
+	folder string
+}
+
+AdoptExternalSessionOptions {
+	projectId string
+	sessionId string
+	kind string
+	path string
+	providerSessionId string
+	label string
+}
+
+ParkSessionOptions {
+	projectId string
+	sessionId string
+	activeId string
+}
+
+SearchTermOptions {
+	term string
+}
+
+ClosedHistory {
+	sessions []ParkedSession
+	total int
+	indexing int
+}
+
+CostTotalsOptions {
+	project string
+	provider string
+	since int64
+}
+
+CostReport {
+	projects []CostTotal
+	sessions int
+	unpriced int
+	priced int
+	reported int
+	source string
+	costUsd float64
+	readout bool
+}
+
+ExternalSession {
+	kind string
+	providerSessionId string
+	title string
+	path string
+	projectId string
+	projectName string
+	projectPath string
+	updatedAt int64
+	profile,omitempty string
+}
+
+SessionIDOptions {
+	id string
+}
+
+GetSettingOptions {
+	key string
+	projectId string
+}
+
+Project {
+	id string
+	name string
+	path string
+	nextSeq int
+	activeSessionId string
+	defaultProvider string
+	sessions []Session
+}
+
+WorktreeSessionsOptions {
+	projectId string
+	path string
+}
+
+RecentProject {
+	id string
+	name string
+	path string
+}
+
+RenameProjectFolderOptions {
+	projectId string
+	from string
+	to string
+}
+
+LabelSessionOptions {
+	sessionId string
+	label string
+}
+
+ReopenSessionOptions {
+	sessionId string
+	newSessionId string
+}
+
+Session {
+	id string
+	label string
+	kind string
+	path string
+	providerSessionId string
+	sandbox string
+	pinned bool
+	folder string
+	color string
+	profile string
+	model string
+	originSessionId string
+	originLabel string
+	forked bool
+	scheduledAt int64
+	scheduledPrompt string
+	unread bool
+	mcpServers []string
+	sandboxSkippedLinks []string
+}
+
+ReopenWorktreeSessionOptions {
+	projectId string
+	path string
+	newSessionId string
+}
+
+ReorderProjectsOptions {
+	ids []string
+}
+
+ReorderSessionsOptions {
+	projectId string
+	ids []string
+}
+
+ActiveSessionOptions {
+	projectId string
+	sessionId string
+}
+
+SessionColorOptions {
+	sessionId string
+	color string
+}
+
+SessionFolderOptions {
+	sessionId string
+	folder string
+}
+
+SessionPinnedOptions {
+	sessionId string
+	pinned bool
+}
+
+SessionUnreadOptions {
+	sessionId string
+	unread bool
+}
+
+SetSettingOptions {
+	key string
+	projectId string
+	value string
+}
+
+AttachNativeOptions {
+	executable string
+}
+
+Diagnostics {
+	version string
+	platform string
+	logPath string
+}
+
+NotifyOptions {
+	summary string
+	detail string
+}
+
+OpenExternalOptions {
+	url string
+}
+
+OpenFileOptions {
+	dir string
+	rel string
+}
+
+OpenFolderOptions {
+	dir string
+}
+
+QuitOptions {
+}
+
+ShowWindowOptions {
+}
+
+ContinueInOptions {
+	id string
+	profile string
+}
+
+LastSaid {
+	text,omitempty string
+}
+
+ResizeOptions {
+	id string
+	cols int
+	rows int
+}
+
+ResumeAvailableOptions {
+	kind string
+	providerSessionId string
+	cwd string
+}
+
+SearchTranscriptsOptions {
+	ids []string
+	query string
+}
+
+TranscriptMatch {
+	id string
+	snippet string
+	count int
+}
+
+SetVisibleOptions {
+	id string
+	visible bool
+}
+
+StartOptions {
+	id string
+	projectId string
+	cwd string
+	kind string
+	resume string
+	fork bool
+	cols int
+	rows int
+}
+
+TurnState {
+	id string
+	state,omitempty string
+	tool,omitempty string
+	detail,omitempty string
+	reason,omitempty string
+	since,omitempty int64
+	usage,omitempty *SessionUsage
+	cwd,omitempty string
+	host,omitempty string
+}
+
+WorkdirOptions {
+	cwd string
+}
+
+WriteOptions {
+	id string
+	data string
+}
+
+ImportThemeOptions {
+	path string
+	overwrite bool
+}
+
+ThemeImportResult {
+	theme Theme
+	needsOverwrite bool
+}
+
+InstallThemesOptions {
+	url string
+	overwrite bool
+}
+
+ThemeGitResult {
+	pack string
+	version string
+	themes []Theme
+	conflicts []string
+	upToDate bool
+}
+
+Theme {
+	formatVersion,omitempty int
+	id string
+	name string
+	scheme string
+	origin string
+	source,omitempty *ThemeSource
+	app map[string]string
+	terminal map[string]string
+	syntax,omitempty Syntax
+	pair,omitempty string
+}
+
+BrokenTheme {
+	id string
+	reason string
+}
+
+RemoveThemeOptions {
+	id string
+}
+
+SaveThemeTemplateOptions {
+	path string
+}
+
+SelectThemeOptions {
+	id string
+}
+
+ThemeSelection {
+	theme string
+	followSystem bool
+}
+
+FollowSystemOptions {
+	on bool
+}
+
+UpdateThemeOptions {
+	id string
+}
+
+TrayLabels {
+	show string
+	running string
+	quit string
+}
+
+AppUpdateProgress {
+	phase string
+	received int64
+	total int64
+}
+
+ProfileLogin {
+	profile string
+	output,omitempty string
+	url,omitempty string
+	authenticating,omitempty bool
+	done,omitempty bool
+	loggedIn,omitempty bool
+	cancelled,omitempty bool
+	error,omitempty string
+	pluginError,omitempty string
+}
+
+PluginProfiles {
+	provider string
+	name string
+	version string
+	failures []PluginProfileFailure
+}
+
+PluginIncompatible {
+	id string
+	version string
+}
+
+ProfileChanged {
+	provider string
+	profile Profile
+}
+
+ProjectAdded {
+	id string
+	name string
+	path string
+}
+
+ProjectClosed {
+	id string
+}
+
+ProjectsReordered {
+	ids []string
+}
+
+PRChanged {
+	path string
+	number int
+}
+
+SessionAgent {
+	id string
+	agent string
+}
+
+SessionClosed {
+	id string
+	projectId string
+	activeId string
+}
+
+SessionConversation {
+	id string
+	providerSessionId string
+}
+
+SessionCwd {
+	id string
+	cwd string
+	host string
+}
+
+SessionDuplicate {
+	id string
+	heldBy string
+}
+
+SessionFocus {
+	id string
+}
+
+SessionInbox {
+	id string
+	count int
+}
+
+SessionLimit {
+	id string
+	window string
+	resetsAt int64
+}
+
+SessionMCP {
+	id string
+	servers []string
+}
+
+SessionProfile {
+	id string
+	profile string
+}
+
+SessionRelay {
+	id string
+	peer string
+	direction string
+	ticket string
+}
+
+RelayStalled {
+	id string
+	targetId string
+	target string
+}
+
+SessionSandbox {
+	id string
+	confined bool
+	skippedLinks []string
+}
+
+SessionSchedule {
+	id string
+	at int64
+	prompt,omitempty string
+}
+
+ScheduleForfeited {
+	label string
+	at int64
+	prompt string
+}
+
+SessionStatus {
+	id string
+	state string
+	tool,omitempty string
+	detail,omitempty string
+	reason,omitempty string
+}
+
+SessionTitle {
+	id string
+	label string
+}
+
+SessionTodo {
+	id string
+	done int
+	total int
+}
+
+SessionTouched {
+	id string
+}
+
+SessionUsage {
+	id string
+	percent int
+	tokens int
+	window int
+	model string
+	effort string
+	costUsd,omitempty *float64
+	costMiss,omitempty string
+}
+
+SessionsColored {
+	projectId string
+	ids []string
+	color string
+}
+
+SessionsFiled {
+	projectId string
+	ids []string
+	folder string
+}
+
+SessionExit {
+	code,omitempty *int
+}
+
+ProfileUpdate {
+	name,omitempty string
+	color,omitempty *string
+	image,omitempty *string
+}
+
+PatchNotesHighlight {
+	kind string
+	text string
+}
+
+PatchNotesGroup {
+	label string
+	items []string
+}
+
+CommitPattern {
+	target string
+	operator string
+	pattern string
+	negate bool
+}
+
+ChecksRollup {
+	passed int
+	failed int
+	pending int
+	total int
+}
+
+ThreadTally {
+	open int
+	total int
+}
+
+PRReview {
+	id string
+	databaseId int64
+	author string
+	state string
+	body string
+	date string
+	canEdit bool
+}
+
+PRComment {
+	id int64
+	author string
+	body string
+	date string
+	canEdit bool
+	canDelete bool
+}
+
+PRReviewThread {
+	id string
+	path string
+	line int
+	startLine int
+	side string
+	isResolved bool
+	isOutdated bool
+	comments []PRThreadComment
+}
+
+PRReviewer {
+	login string
+	isTeam bool
+	state string
+}
+
+CheckItem {
+	name string
+	state string
+	description string
+	url string
+	startedAt string
+	completedAt string
+	required bool
+}
+
+PRCommit {
+	oid string
+	headline string
+	body string
+	login string
+	name string
+	email string
+	date string
+}
+
+RevertLine {
+	side string
+	line int
+	text string
+}
+
+SearchMatch {
+	path string
+	line int
+	text string
+}
+
+ReviewComment {
+	path string
+	line int
+	startLine int
+	side string
+	body string
+}
+
+QuotaWindow {
+	label string
+	seconds int
+	percent int
+	resetsAt,omitempty string
+	active,omitempty bool
+	lockedReason,omitempty string
+	ahead,omitempty bool
+}
+
+ParkedSession {
+	id string
+	projectId string
+	projectName string
+	projectPath string
+	label string
+	kind string
+	path string
+	parkedBranch string
+	closedAt int64
+	matchedConversation bool
+	snippet string
+	truncated bool
+}
+
+CostTotal {
+	project string
+	sessions int
+	unpriced int
+	source string
+	costUsd float64
+}
+
+ThemeSource {
+	url string
+	version string
+}
+
+Syntax = map[string]SyntaxStyle
+
+PluginProfileFailure {
+	profile string
+	name string
+	error string
+}
+
+PRThreadComment {
+	id int64
+	author string
+	body string
+	date string
+	diffHunk string
+	canEdit bool
+	canDelete bool
+}
+
+SyntaxStyle {
+	color,omitempty string
+	bold,omitempty bool
+	italic,omitempty bool
+	underline,omitempty bool
+	strikethrough,omitempty bool
+}
