@@ -3,6 +3,20 @@ agentplugin.Status(None) []PluginStatus
 agentplugin.Update(PluginProviderOptions) None
 appupdate.Apply(None) None
 appupdate.Status(None) AppUpdateStatus
+browser.Back(SessionIDOptions) None
+browser.Click(BrowserClickOptions) None
+browser.Close(SessionIDOptions) None
+browser.Forward(SessionIDOptions) None
+browser.Info(SessionIDOptions) BrowserPageInfo
+browser.List(SessionIDOptions) []BrowserHandle
+browser.Navigate(BrowserOpenOptions) BrowserHandle
+browser.Open(BrowserOpenOptions) BrowserHandle
+browser.Press(BrowserPressOptions) None
+browser.Reload(SessionIDOptions) None
+browser.Screenshot(BrowserScreenshotOptions) string
+browser.Scroll(BrowserScrollOptions) None
+browser.Show(SessionIDOptions) BrowserHandle
+browser.Type(BrowserTypeOptions) None
 claudeprofile.CancelLogin(ProfileSlugOptions) None
 claudeprofile.CreateProfile(CreateProfileOptions) Profile
 claudeprofile.DeleteProfile(ProfileSlugOptions) None
@@ -263,6 +277,59 @@ AppUpdateStatus {
 	canSelfApply bool
 	releaseUrl string
 	installCommand string
+}
+
+SessionIDOptions {
+	id string
+}
+
+BrowserClickOptions {
+	id string
+	...BrowserTarget
+}
+
+BrowserPageInfo {
+	url string
+	title string
+	text string
+	interactive []BrowserInteractive
+	truncated bool
+}
+
+BrowserHandle {
+	id string
+	url string
+	title string
+	owner string
+	headed bool
+}
+
+BrowserOpenOptions {
+	id string
+	url string
+}
+
+BrowserPressOptions {
+	id string
+	key string
+	...BrowserTarget
+}
+
+BrowserScreenshotOptions {
+	id string
+	path string
+}
+
+BrowserScrollOptions {
+	id string
+	dy int
+}
+
+BrowserTypeOptions {
+	id string
+	text string
+	clear bool
+	...BrowserTarget
 }
 
 ProfileSlugOptions {
@@ -1031,10 +1098,6 @@ ExternalSession {
 	profile,omitempty string
 }
 
-SessionIDOptions {
-	id string
-}
-
 GetSettingOptions {
 	key string
 	projectId string
@@ -1507,6 +1570,25 @@ SessionExit {
 	code,omitempty *int
 }
 
+BrowserTarget {
+	index,omitempty *int
+	selector,omitempty string
+	x,omitempty *float64
+	y,omitempty *float64
+}
+
+BrowserInteractive {
+	index int
+	tag string
+	type,omitempty string
+	role,omitempty string
+	text string
+	href,omitempty string
+	rect BrowserRect
+	filled,omitempty *bool
+	checked,omitempty *bool
+}
+
 ProfileUpdate {
 	name,omitempty string
 	color,omitempty *string
@@ -1662,6 +1744,13 @@ PluginProfileFailure {
 	profile string
 	name string
 	error string
+}
+
+BrowserRect {
+	x int
+	y int
+	w int
+	h int
 }
 
 PRThreadComment {

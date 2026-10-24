@@ -35,6 +35,13 @@ func (c *Client) OpenFolderInEditor(ctx context.Context, dir string) (string, er
 	return callMethod(ctx, c, api.SystemOpenFolderInEditor, api.OpenFolderOptions{Dir: dir})
 }
 
+// ShowBrowser opens the Chromium window owned by session id, creating it
+// when the session has none yet.
+func (c *Client) ShowBrowser(ctx context.Context, id string) error {
+	_, err := callMethod(ctx, c, api.BrowserShow, api.SessionIDOptions{ID: id})
+	return err
+}
+
 // OpenFolder opens dir in the file manager.
 func (c *Client) OpenFolder(ctx context.Context, dir string) error {
 	_, err := callMethod(ctx, c, api.SystemOpenFolder, api.OpenFolderOptions{Dir: dir})

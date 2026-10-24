@@ -76,7 +76,9 @@ Nunca faça polling por resultados. Um envio que passa do tempo de espera devolv
 
 Um subagente ou etapa de workflow rodando dentro desta sessão não é o agente dela, e o lich não consegue distingui-los: ele envia e abre com private, e depois espera pelos próprios tickets. A nota [lich] e o wait_for_answer sem ticket pertencem ao agente da própria sessão.
 
-Quando uma mensagem [lich] com ticket chega ao SEU prompt, você é a sessão de trabalho: faça a tarefa e responda com %s, um relatório conciso (o que foi feito, onde, o que falta), nunca uma transcrição.`,
+Quando uma mensagem [lich] com ticket chega ao SEU prompt, você é a sessão de trabalho: faça a tarefa e responda com %s, um relatório conciso (o que foi feito, onde, o que falta), nunca uma transcrição.
+
+Esta sessão tem um navegador próprio (ferramentas browser_*): a mesma janela Chromium que o item Navegador do card abre, não a janela do lich. Abra, leia a página, clique, digite, pressione teclas nomeadas e capture a tela. Capturas são arquivos. Nunca cole os bytes na resposta.`,
 	HandOverFailed: "A tarefa não chegou a ela: %[1]v. A sessão está aberta, então entregue a tarefa com " +
 		"%[2]s depois de resolver o que isso diz.",
 	SendToSessionPrivate: "send_to_session com private",

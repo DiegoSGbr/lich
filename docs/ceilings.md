@@ -910,6 +910,25 @@ work when nobody knows it and that the call site never shows. The mechanism and 
   up to that late: observing `AppleInterfaceThemeChangedNotification` needs an Objective-C shim no one
   could compile or run without a Mac. The BSDs read no scheme and draw dark.
 
+- **A session's browser is a second Chromium, one per card** (`internal/browser`,
+  `docs/browser-tab.md`): the card menu opens a headed window of the system
+  Chrome, Edge, Chromium, Brave or Vivaldi, never a page inside lich. The agent
+  drives that same window. A headless one the agent opened first is replaced by
+  a headed window at the same URL, because chromedp cannot show a headless
+  process. Closing the card, or the session's process ending, closes it; closing
+  the browser window does not close the session. It loads only http, https and
+  about:blank. Page info never includes a form's value. Screenshots are files.
+  There is no tool that runs JavaScript in the page. It is not a sandbox: the
+  page runs as the user, in an ephemeral profile.
+- **opencode does not list `browser_*`** (`internal/agentplugin`,
+  `internal/cli/mcp_browser.go`): Claude Code and Codex are handed lich's MCP
+  server at spawn, and Antigravity, oh-my-pi, Crush, Cursor CLI and Kiro get
+  that same server from the plugin install, so they list the browser tools with
+  the rest. opencode's plugin defines its own tool list and does not ask `lich
+  mcp` for one, so a tool added here does not appear there until lich-plugin
+  ships it. The card still opens the window, and `lich browser` still drives it
+  from that session.
+
 ## Languages
 
 - **The prompt language reaches a running session only through lich itself** (`internal/prompt`): text lich

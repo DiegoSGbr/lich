@@ -863,6 +863,7 @@ func (u *window) apply(act sidebarAction) {
 		go func() { u.logErr("pin session", u.client.SetSessionPinned(u.ctx, id, pinned)) }()
 	}
 	u.applyOpenIn(act)
+	u.applyBrowser(act)
 	u.applyContinueIn(act)
 	if pick := act.profilePick; pick.key != "" {
 		u.settings.writeProviderKey(pick.key, pick.projectID, pick.value, nil)
@@ -885,6 +886,19 @@ func renameSession(ctx context.Context, c *backend.Client, show func(ui.Toast) s
 	if err := c.RenameSession(ctx, id, label); err != nil {
 		show(ui.Toast{Variant: ui.ToastError, Title: i18n.T("shell.main.renameFailed", i18n.Args{"error": backend.ErrorText(err)})})
 	}
+}
+
+// applyBrowser opens the session's Chromium, the window its agent drives.
+func (u *window) applyBrowser(act sidebarAction) {
+	id := act.browser
+	if id == "" {
+		return
+	}
+	go func() {
+		if err := u.client.ShowBrowser(u.ctx, id); err != nil {
+			u.toaster.Show(ui.Toast{Variant: ui.ToastError, Title: i18n.T("sidebar.sessionCard.browserFailed", i18n.Args{"error": backend.ErrorText(err)})})
+		}
+	}()
 }
 
 // applyOpenIn carries out the card menu's Open in: a shell session at the

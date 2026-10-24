@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A session card's menu opens a browser for that session, above Open in. It is a Chromium window of its own, and the session's agent drives the same page: open a URL, read it, click, type, press a key, go back and forward, scroll and screenshot, from `browser_*` tools or from `lich browser`. You watch and use that window while the agent does. Closing the card closes the browser. opencode's agent reaches it through `lich browser`; its own tool list does not include `browser_*`.
+
 ### Fixed
 
+- A session browser's open, reload, back and forward return once the page is interactive, instead of waiting for every image and tracker to finish. That wait held the agent's next action for as long as the load event took, up to 30 seconds, after the page was already on screen. A screenshot is the viewport being watched.
 - Branch, changes and pull request on the cards and the footer catch up within a second of a commit, checkout or edit made outside a turn, where they could lag up to three seconds, and selecting a card reads its checkout at once instead of showing what the last read found.
 - Hiding the pull request list in Pulls slides it away at once, where the list stayed on screen until the mouse moved or Pulls next checked GitHub. Showing it again no longer waits a frame either.
 - Kiro CLI sessions follow `KIRO_HOME`. With it set, lich read Kiro's conversations, cost and context from `~/.kiro` while Kiro kept them under `KIRO_HOME`, so they showed nothing and History listed none; the agent that carries lich's hooks was installed where Kiro never looked, and a sandboxed session was not given the directory it writes into.

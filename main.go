@@ -18,6 +18,7 @@ import (
 	"github.com/lichdotdev/lich/api"
 	"github.com/lichdotdev/lich/internal/agentplugin"
 	"github.com/lichdotdev/lich/internal/appupdate"
+	"github.com/lichdotdev/lich/internal/browser"
 	"github.com/lichdotdev/lich/internal/claudeprofile"
 	"github.com/lichdotdev/lich/internal/cli"
 	"github.com/lichdotdev/lich/internal/codexprofile"
@@ -146,7 +147,8 @@ func main() {
 	// it (internal/terminal.handsOn).
 	defer term.FlushHandsOn()
 	coord := newCoordinator()
-	sys := registerServices(db, term, hub, configDir, logPath, env, launchEnv, coord)
+	sys, closeBrowsers := registerServices(db, term, hub, configDir, logPath, env, launchEnv, coord)
+	defer closeBrowsers()
 
 	coord.SetWindowOpen(hub.Attached)
 	term.SetRestart(coord.Do)
@@ -202,7 +204,10 @@ func resolveEnv() (launchEnv, env []string) {
 // to exist first. It is lifted out of main only for its length; nothing here
 // runs anywhere else.
 func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub,
-	configDir, logPath string, env, launchEnv []string, coord *restart.Coordinator) *system.Service {
+	configDir, logPath string, env, launchEnv []string, coord *restart.Coordinator) (*system.Service, func()) {
+	// One Chromium per session, closed with the card and with the process.
+	// Never the lich window: this is a second browser the agent drives.
+	brows := browser.New()
 	proj := project.New(project.ZenityPicker{})
 	// gh has one active account per host; a project can name a different one.
 	proj.SetAccounts(db.GHAccountForPath)
@@ -268,6 +273,7 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 		return proj.PickFile(context.Background(), api.PickFileOptions{Title: title})
 	})
 	routes.Terminal(dispatcher, term)
+	routes.Browser(dispatcher, brows)
 	routes.Drop(dispatcher, drops)
 	routes.Project(dispatcher, proj)
 	plugins := agentplugin.New(db)
@@ -409,8 +415,14 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 	// without a word to its caller.
 	term.SetWorkerAnswer(rl.WorkerAnswered)
 	term.SetWorkerUnanswered(rl.WorkerUnanswered)
-	term.SetSessionClosed(rl.SessionClosed)
-	term.SetSessionExited(rl.SessionExited)
+	term.SetSessionClosed(func(id, closerID string) {
+		rl.SessionClosed(id, closerID)
+		_ = brows.CloseOwnedBy(id)
+	})
+	term.SetSessionExited(func(id string) {
+		rl.SessionExited(id)
+		_ = brows.CloseOwnedBy(id)
+	})
 	term.SetErrandStatus(rl.Status)
 	// Both questions the relay asks about a provider — whether its sessions
 	// report at all, and whether they can answer with a tool — are about what
@@ -454,7 +466,7 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 	term.Mount("/drop", http.HandlerFunc(drops.Upload))
 	term.Mount("/blob", http.HandlerFunc(proj.ServeBlob))
 	term.Mount("/events", hub)
-	return sys
+	return sys, func() { _ = brows.Cleanup() }
 }
 
 // run serves the loopback listener, opens the window on it (the native one,
