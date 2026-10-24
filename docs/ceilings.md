@@ -790,6 +790,36 @@ work when nobody knows it and that the call site never shows. The mechanism and 
   it across sessions: a push that finds it full, and the flush a session runs before its exit banner so the banner
   cannot overtake its own last bytes.
 
+## Services
+
+- **A service is up exactly as long as its command runs** (`internal/services`, `internal/terminal/service.go`):
+  there is no shell behind it and no supervisor. A command that detaches (`docker compose up -d`, a trailing
+  `&`, a tool that daemonizes) exits 0 at once and the service shows stopped while its work carries on, and a
+  service that fails stays failed until someone presses Start. Stop types Ctrl+C at the PTY, so a command that
+  ignores it stays stopping until Force stop. Force stop and quitting lich end the process lich started
+  (SIGTERM, then SIGKILL past the PTY's grace), not what it handed off to: a container `docker compose up`
+  started survives the kill of that command.
+- **A service's command loads no rc file, except under fish** (`serviceArgs`): `$SHELL -c` on Linux and macOS,
+  PowerShell `-NoProfile` on Windows, so an alias, a function or a `PATH` entry from the user's rc is not there.
+  fish reads `config.fish` even for `-c`, so the same line can work there and nowhere else.
+- **A service lives as long as its project's tab** (`services.ProjectChanged`, `main.go`): closing the tab asks
+  its services to stop and kills what is still up after 10 seconds, without asking first, and reopening the
+  project starts only the ones saved to start with lich; one started by hand stays down. Closing the window
+  stops nothing. Quitting lich stops everything the same way, and an in-place restart after an update is a quit:
+  the new lich starts the services saved to start with lich in the projects it opens with, so one started by
+  hand is down after an update. Home's services, edited from Settings › Services in Global, run for as long as
+  lich does, since Home has no tab to close.
+- **What a stopped service printed is kept in memory only** (`services.Output`): the tail of its last run, as
+  long as a session's replay, until it starts again or lich exits. After a restart of lich a service that has
+  not run yet has no output to show.
+- **The tray names at most eight running services** (`internal/tray`, `serviceSlots`): the menu is built once
+  and its entries shown and hidden, so past eight the count above them says how many run and the window lists
+  them all. The macOS menu-bar entries were never run on a Mac: they compile, and the logic they share with
+  Linux and Windows is tested.
+- **On Windows, Stop is Ctrl+C through ConPTY** (`InterruptService`): it reaches the console's processes as
+  `CTRL_C_EVENT`, which a process that left the console or turned the event off never sees. Not measured: the
+  service tests spawn real PTYs and run on Linux and macOS only.
+
 ## Window, sidebar and settings
 
 - **A closed card outlives its session by 180ms** (`native/cmd/lich-native/sidebar_closing.go`, `exitDuration`):
