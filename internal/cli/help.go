@@ -135,7 +135,7 @@ var commands = []command{
 	{
 		name: "browser",
 		args: "<verb> [args]",
-		about: "Drive this session's browser — the same window the card's Browser item opens.\n" +
+		about: "Drive this session's browser — the page its tab in the lich window shows.\n" +
 			"Verbs: open [url], info, click, type, press <key>, screenshot [path], navigate <url>,\n" +
 			"reload, back, forward, scroll, list, close.",
 	},

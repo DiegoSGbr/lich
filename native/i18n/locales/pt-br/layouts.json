@@ -16,19 +16,19 @@
     }
   },
   "browser": {
-    "title": "Browser",
+    "title": "Navegador",
     "agent": "agente",
-    "close": "Fechar o browser",
+    "close": "Fechar o navegador",
     "address": "Digite uma URL",
     "back": "Voltar",
     "forward": "Avançar",
     "reload": "Recarregar",
     "openInWindow": "Abrir em janela",
-    "locked": "Esta aba é só de {label} e do browser dela",
-    "opened": "{label} abriu um browser",
+    "locked": "Esta aba é só de {label} e do navegador dela",
+    "opened": "{label} abriu um navegador",
     "dismiss": "Dispensar",
     "open": "Abrir",
-    "moveBody": "Ela sai de \"{layout}\". A aba do browser só comporta {label} e o browser dela."
+    "moveBody": "Ela sai de \"{layout}\". A aba do navegador só comporta {label} e o navegador dela."
   },
   "split": {
     "noRoom": "Não há espaço para outro painel aqui. Alargue a janela ou tire um painel antes."

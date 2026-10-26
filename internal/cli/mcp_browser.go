@@ -8,16 +8,17 @@ import (
 	"github.com/lichdotdev/lich/api"
 )
 
-// browserTools are this session's Chromium window — the same one the card's
-// Browser item opens. Appended to mcpTools, so tools/list cannot drift from
-// the commands.
+// browserTools drive this session's browser, the page its tab in the lich
+// window shows. Appended to mcpTools, so tools/list cannot drift from the
+// commands.
 var browserTools = []mcpTool{
 	{
 		Name: "browser_open",
-		Description: "Open a page in this lich session's browser. Creates the browser if " +
-			"this session has none (headless unless the user already opened Browser on " +
-			"this card). The URL must be http, https, or omitted (about:blank). file, " +
-			"javascript and data URLs are refused. This is not the lich window.",
+		Description: "Open a page in this lich session's browser, creating the browser if " +
+			"this session has none. It runs headless: the user sees the same page in a tab " +
+			"beside this session, which lich offers to open, so no window of its own is needed " +
+			"(headed is false, and that is expected). The URL must be http, https, or omitted " +
+			"(about:blank). file, javascript and data URLs are refused.",
 		Schema: schema(map[string]any{
 			"url": property("string", "Page to load. Omit for about:blank."),
 		}),
@@ -200,8 +201,8 @@ var browserTools = []mcpTool{
 	},
 	{
 		Name: "browser_close",
-		Description: "Close this session's browser. The lich window is untouched. Closing the " +
-			"session card also closes it.",
+		Description: "Close this session's browser, and with it the page's tab in the lich window. " +
+			"Closing the session card also closes it.",
 		Schema: schema(map[string]any{}),
 		Run: func(ctx context.Context, c *client, _ mcpArgs) (string, error) {
 			return mcpBrowserID(ctx, c, api.BrowserClose)

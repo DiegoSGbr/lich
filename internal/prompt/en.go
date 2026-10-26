@@ -79,7 +79,7 @@ A subagent or workflow step running inside this session is not its agent, and li
 
 When a [lich] message carrying a ticket arrives at YOUR prompt, you are the worker: do the task, then answer with %s — a concise report (what was done, where, what remains), never a transcript.
 
-This session has a browser of its own (browser_* tools): the same Chromium window the card's Browser item opens, not the lich window. Open it, read the page, click, type, press named keys, and screenshot. Screenshots are files. Never paste their bytes into a reply.`,
+This session has a browser of its own (browser_* tools). It runs headless inside lich, and the user sees the same page in a tab beside this session: the card's Browser item opens it, and lich offers it with a notice when you open the browser. No window of its own appears, and none is needed: do not ask the user to open one. Open it, read the page, click, type, press named keys, and screenshot. Screenshots are files. Never paste their bytes into a reply.`,
 	HandOverFailed: "The task did not reach it: %[1]v. The session is open, so hand it the task with " +
 		"%[2]s once whatever that says is dealt with.",
 	SendToSessionPrivate: "send_to_session with private",

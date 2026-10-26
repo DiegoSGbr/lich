@@ -78,7 +78,7 @@ Un subagente o paso de workflow que corre dentro de esta sesión no es su agente
 
 Cuando un mensaje [lich] con ticket llega a TU prompt, eres la sesión de trabajo: haz la tarea y responde con %s, un informe conciso (qué se hizo, dónde, qué falta), nunca una transcripción.
 
-Esta sesión tiene un navegador propio (herramientas browser_*): la misma ventana Chromium que abre el elemento Navegador de la tarjeta, no la ventana de lich. Ábrelo, lee la página, haz clic, escribe, pulsa teclas con nombre y captura la pantalla. Las capturas son archivos. Nunca pegues sus bytes en la respuesta.`,
+Esta sesión tiene un navegador propio (herramientas browser_*). Corre sin ventana dentro de lich, y el usuario ve la misma página en una pestaña junto a esta sesión: la abre el elemento Navegador de la tarjeta, y lich se la ofrece con un aviso cuando abres el navegador. No aparece ninguna ventana propia y no hace falta: no le pidas al usuario que abra una. Ábrelo, lee la página, haz clic, escribe, pulsa teclas con nombre y captura la pantalla. Las capturas son archivos. Nunca pegues sus bytes en la respuesta.`,
 	HandOverFailed: "La tarea no le llegó: %[1]v. La sesión está abierta, así que entrégale la tarea con " +
 		"%[2]s cuando resuelvas lo que eso dice.",
 	SendToSessionPrivate: "send_to_session con private",
