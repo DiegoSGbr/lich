@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -204,5 +205,52 @@ func TestChromeWindowInputTypesAndSubmits(t *testing.T) {
 	}
 	if sent != "ação" {
 		t.Fatalf("form sent %q, want the clicked field's typed text", sent)
+	}
+}
+
+func TestChromeLinkToANewTabLoadsInThePageAndKeepsItResponding(t *testing.T) {
+	pg, err := chromeLaunch(t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := pg.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<title>%s</title><a href="/elsewhere" target="_blank" style="position:absolute;left:0;top:0;font-size:40px">away</a>`, r.URL.Path)
+	}))
+	t.Cleanup(srv.Close)
+	p := pg.(*chromePage)
+	urls := make(chan string, 8)
+	p.Listen(func(string) {}, func(url, _ string) { urls <- url })
+	ctx, cancel := context.WithTimeout(context.Background(), pageWait)
+	defer cancel()
+	if err := p.Navigate(ctx, srv.URL+"/"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Screencast(ctx, Viewport{W: 400, H: 300, Scale: 1}); err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"press", "release"} {
+		if err := p.Mouse(ctx, api.BrowserMouseOptions{Type: kind, X: 20, Y: 20, Button: "left", Clicks: 1}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deadline := time.After(10 * time.Second)
+	for loaded := false; !loaded; {
+		select {
+		case u := <-urls:
+			loaded = strings.HasSuffix(u, "/elsewhere")
+		case <-deadline:
+			t.Fatal("the link's new tab never loaded in the page")
+		}
+	}
+	quick, stop := context.WithTimeout(ctx, inputWait)
+	defer stop()
+	if err := p.Mouse(quick, api.BrowserMouseOptions{Type: "move", X: 50, Y: 50}); err != nil {
+		t.Fatalf("the page stopped taking input after the link: %v", err)
 	}
 }

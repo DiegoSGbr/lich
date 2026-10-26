@@ -915,7 +915,7 @@ work when nobody knows it and that the call site never shows. The mechanism and 
   whose page reaches the session's browser tab as a JPEG screencast over `/events`, at the pace the window
   takes frames. The native window cannot hold a webview: on Linux it speaks Wayland without GTK. So the pane
   has no DevTools, shows the arrow whatever cursor the page asks for, does not copy the page's selection to
-  the system clipboard (paste works), and leaves popups, downloads and the page's own dialogs out; Open in
+  the system clipboard (paste works), loads what the page opens in a new tab or window in the page itself, and leaves downloads and the page's own dialogs out; Open in
   a window moves the page to a real Chromium window for those, reopening it on the same profile with every
   cookie, since chromedp cannot show a headless process in place. A half-filled form or sessionStorage is
   lost on that move. Closing the card, or the session's process ending, closes the browser; closing that

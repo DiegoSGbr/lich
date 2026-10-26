@@ -6,9 +6,11 @@ import (
 	"math"
 	"sync"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/page"
+	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 	"github.com/lichdotdev/lich/api"
 )
@@ -21,7 +23,9 @@ const screencastQuality = 85
 // listeners are what a chromePage hands its CDP events to; the service sets
 // them once, right after the launch.
 type listeners struct {
-	mu      sync.Mutex
+	mu sync.Mutex
+	// taken are the tabs this page opened that keepOneTab already took over.
+	taken   sync.Map
 	onFrame func(data string)
 	onInfo  func(url, title string)
 }
@@ -42,6 +46,61 @@ func (p *chromePage) Listen(onFrame func(data string), onInfo func(url, title st
 			go p.reportInfo()
 		}
 	})
+	p.keepOneTab()
+}
+
+// keepOneTab loads, in this page, what a link or a script opens in a new tab
+// or window, and closes that tab. The pane shows only this page, and Chrome
+// puts the one a new tab covers in the background, where it takes no input
+// and draws no frames: one click on a target=_blank link froze the pane.
+func (p *chromePage) keepOneTab() {
+	c := chromedp.FromContext(p.ctx)
+	self := c.Target.TargetID
+	discover := chromedp.ActionFunc(func(ctx context.Context) error {
+		return target.SetDiscoverTargets(true).Do(cdp.WithExecutor(ctx, c.Browser))
+	})
+	if err := p.run(nil, discover); err != nil {
+		slog.Warn("browser: watch for new tabs", "err", err)
+		return
+	}
+	chromedp.ListenBrowser(p.ctx, func(ev any) {
+		var info *target.Info
+		switch e := ev.(type) {
+		case *target.EventTargetCreated:
+			info = e.TargetInfo
+		case *target.EventTargetInfoChanged:
+			info = e.TargetInfo
+		}
+		// A new tab is created at about:blank and gets its URL after.
+		if info == nil || info.OpenerID != self || info.Type != "page" || info.URL == "" || info.URL == "about:blank" {
+			return
+		}
+		// Both the created and the info-changed event can name the tab.
+		if _, taken := p.listen.taken.LoadOrStore(info.TargetID, true); !taken {
+			go p.takeOver(info.TargetID, info.URL)
+		}
+	})
+}
+
+// takeOver closes the tab id this page opened and loads its url here.
+func (p *chromePage) takeOver(id target.ID, url string) {
+	c := chromedp.FromContext(p.ctx)
+	closeTab := chromedp.ActionFunc(func(ctx context.Context) error {
+		return target.CloseTarget(id).Do(cdp.WithExecutor(ctx, c.Browser))
+	})
+	if err := p.run(nil, closeTab); err != nil {
+		slog.Warn("browser: close a tab the page opened", "url", url, "err", err)
+	}
+	if err := p.run(nil, page.BringToFront()); err != nil {
+		slog.Warn("browser: bring the page back to the front", "err", err)
+	}
+	if _, err := allowURL(url); err != nil {
+		slog.Warn("browser: a new tab's URL is not one the page may load", "url", url, "err", err)
+		return
+	}
+	if err := p.Navigate(context.Background(), url); err != nil && p.Alive() {
+		slog.Warn("browser: load a new tab's URL in the page", "url", url, "err", err)
+	}
 }
 
 // reportInfo reads the URL and title after a navigation: a link followed, a
