@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/chromedp/cdproto/network"
+	"github.com/lichdotdev/lich/api"
 )
 
 // fakePage is a Page that never talks to Chrome. Tests inject it through
@@ -25,6 +26,14 @@ type fakePage struct {
 	focused     int
 	cookies     []*network.CookieParam
 	setCookies  []*network.CookieParam
+	clickAt     [2]float64
+	onFrame     func(string)
+	onInfo      func(url, title string)
+	casting     bool
+	viewports   []Viewport
+	mice        []api.BrowserMouseOptions
+	keys        []api.BrowserKeyOptions
+	texts       []string
 	info        PageInfo
 	shotErr     error
 	navErr      error
@@ -82,11 +91,11 @@ func (p *fakePage) Info(context.Context) (PageInfo, error) {
 	return info, nil
 }
 
-func (p *fakePage) Click(_ context.Context, t Target) error {
+func (p *fakePage) Click(_ context.Context, t Target) (x, y float64, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.clicks = append(p.clicks, t)
-	return nil
+	return p.clickAt[0], p.clickAt[1], nil
 }
 
 func (p *fakePage) Type(_ context.Context, text string, clear bool, t Target) error {
@@ -158,6 +167,92 @@ func (p *fakePage) SetCookies(_ context.Context, cookies []*network.CookieParam)
 	defer p.mu.Unlock()
 	p.setCookies = append(p.setCookies, cookies...)
 	return nil
+}
+
+func (p *fakePage) Listen(onFrame func(string), onInfo func(url, title string)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.onFrame, p.onInfo = onFrame, onInfo
+}
+
+func (p *fakePage) Screencast(_ context.Context, v Viewport) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.casting = true
+	p.viewports = append(p.viewports, v)
+	return nil
+}
+
+func (p *fakePage) StopScreencast(context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.casting = false
+	return nil
+}
+
+func (p *fakePage) Resize(_ context.Context, v Viewport) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.viewports = append(p.viewports, v)
+	return nil
+}
+
+func (p *fakePage) Mouse(_ context.Context, m api.BrowserMouseOptions) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.mice = append(p.mice, m)
+	return nil
+}
+
+func (p *fakePage) Key(_ context.Context, k api.BrowserKeyOptions) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.keys = append(p.keys, k)
+	return nil
+}
+
+func (p *fakePage) InsertText(_ context.Context, text string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.texts = append(p.texts, text)
+	return nil
+}
+
+// emitted records what the service pushed to the window, by event name.
+type emitted struct {
+	mu   sync.Mutex
+	sent []sentEvent
+}
+
+type sentEvent struct {
+	name string
+	data any
+}
+
+func (e *emitted) emit(name string, data any) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.sent = append(e.sent, sentEvent{name, data})
+}
+
+func (e *emitted) named(name string) []any {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var out []any
+	for _, ev := range e.sent {
+		if ev.name == name {
+			out = append(out, ev.data)
+		}
+	}
+	return out
+}
+
+func (e *emitted) states() []api.BrowserState {
+	var out []api.BrowserState
+	for _, d := range e.named(api.BrowserStateEvent.Name) {
+		out = append(out, d.(api.BrowserState))
+	}
+	return out
 }
 
 type fakeLauncher struct {

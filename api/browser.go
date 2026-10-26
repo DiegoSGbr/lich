@@ -15,7 +15,104 @@ var (
 	BrowserScroll     = define[BrowserScrollOptions, None]("browser.Scroll")
 	BrowserList       = define[SessionIDOptions, []BrowserHandle]("browser.List")
 	BrowserClose      = define[SessionIDOptions, None]("browser.Close")
+
+	// The window's side: a pane that shows a session's page and passes the
+	// person's input to it, beside the agent driving the same page.
+	BrowserRunning = define[None, []BrowserState]("browser.Running")
+	BrowserAttach  = define[BrowserViewOptions, BrowserHandle]("browser.Attach")
+	BrowserDetach  = define[SessionIDOptions, None]("browser.Detach")
+	BrowserResize  = define[BrowserViewOptions, None]("browser.Resize")
+	BrowserMouse   = define[BrowserMouseOptions, None]("browser.Mouse")
+	BrowserKey     = define[BrowserKeyOptions, None]("browser.Key")
+	BrowserText    = define[BrowserTextOptions, None]("browser.Text")
+	BrowserNav     = define[BrowserNavOptions, None]("browser.Nav")
 )
+
+var (
+	// BrowserStateEvent is emitted whenever a session's browser starts, closes,
+	// moves to a window or loads another page, so the one store the window
+	// keeps of them stays true.
+	BrowserStateEvent = defineEvent[BrowserState]("browser-state")
+
+	// BrowserFrameEvents carries a base64 JPEG of a session's page while a pane
+	// shows it: per session, like terminal output, so only that pane listens.
+	BrowserFrameEvents = defineEventFamily[string]("browser:frame:")
+
+	// BrowserAgentEvent is emitted each time the agent acts on its page, so the
+	// pane can show that the page moved because of it, and where it clicked.
+	BrowserAgentEvent = defineEvent[BrowserAgentAct]("browser-agent")
+)
+
+// BrowserState is a session's browser as the window shows it. Open false means
+// it is gone; ByAgent says the agent started it rather than the window.
+type BrowserState struct {
+	Owner   string `json:"owner"`
+	Open    bool   `json:"open"`
+	Headed  bool   `json:"headed"`
+	ByAgent bool   `json:"byAgent"`
+	URL     string `json:"url"`
+	Title   string `json:"title"`
+}
+
+// BrowserAgentAct is one agent action on its page. X and Y are where it
+// clicked, in CSS pixels, when the action was a click.
+type BrowserAgentAct struct {
+	Owner string   `json:"owner"`
+	X     *float64 `json:"x,omitempty"`
+	Y     *float64 `json:"y,omitempty"`
+}
+
+// BrowserViewOptions sizes a session's page to the pane showing it: W and H in
+// CSS pixels, Scale the device pixels per CSS pixel.
+type BrowserViewOptions struct {
+	ID    string  `json:"id"`
+	W     int     `json:"w"`
+	H     int     `json:"h"`
+	Scale float64 `json:"scale"`
+}
+
+// BrowserMouseOptions is one pointer event over the pane, in CSS pixels.
+// Type is press, release, move or wheel; Button is left, middle, right or
+// none; DX and DY are a wheel's scroll in CSS pixels.
+type BrowserMouseOptions struct {
+	ID        string  `json:"id"`
+	Type      string  `json:"type"`
+	X         float64 `json:"x"`
+	Y         float64 `json:"y"`
+	Button    string  `json:"button,omitempty"`
+	Clicks    int     `json:"clicks,omitempty"`
+	DX        float64 `json:"dx,omitempty"`
+	DY        float64 `json:"dy,omitempty"`
+	Modifiers int     `json:"modifiers,omitempty"`
+}
+
+// BrowserKeyOptions is one key going down or up, for keys that do not type
+// text (Enter, arrows, shortcuts): text goes through BrowserText. Key and Code
+// are the DOM's KeyboardEvent.key and .code; Modifiers is CDP's bit set (Alt
+// 1, Ctrl 2, Meta 4, Shift 8).
+type BrowserKeyOptions struct {
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	Key       string `json:"key"`
+	Code      string `json:"code,omitempty"`
+	KeyCode   int    `json:"keyCode,omitempty"`
+	Modifiers int    `json:"modifiers,omitempty"`
+}
+
+// BrowserNavOptions is the pane's toolbar: Action is back, forward, reload or
+// go, and URL is where go loads.
+type BrowserNavOptions struct {
+	ID     string `json:"id"`
+	Action string `json:"action"`
+	URL    string `json:"url,omitempty"`
+}
+
+// BrowserTextOptions types text into whatever has focus, the way an input
+// method commits it.
+type BrowserTextOptions struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+}
 
 // BrowserHandle is one session's browser: the id later calls take, and enough
 // for a tool result to say which window it is.

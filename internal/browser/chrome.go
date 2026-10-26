@@ -56,6 +56,7 @@ type chromePage struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	allocCancel context.CancelFunc
+	listen      listeners
 }
 
 func (p *chromePage) Alive() bool { return p.ctx.Err() == nil }
@@ -103,17 +104,17 @@ func (p *chromePage) Info(ctx context.Context) (PageInfo, error) {
 	return info, nil
 }
 
-func (p *chromePage) Click(ctx context.Context, t Target) error {
+func (p *chromePage) Click(ctx context.Context, t Target) (x, y float64, err error) {
 	pt, err := p.resolve(ctx, t)
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
-	return p.run(ctx, chromedp.MouseClickXY(pt.X, pt.Y))
+	return pt.X, pt.Y, p.run(ctx, chromedp.MouseClickXY(pt.X, pt.Y))
 }
 
 func (p *chromePage) Type(ctx context.Context, text string, clear bool, t Target) error {
 	if !t.empty() {
-		if err := p.Click(ctx, t); err != nil {
+		if _, _, err := p.Click(ctx, t); err != nil {
 			return err
 		}
 	}
@@ -142,7 +143,7 @@ func (p *chromePage) Press(ctx context.Context, key string, t Target) error {
 		return err
 	}
 	if !t.empty() {
-		if err := p.Click(ctx, t); err != nil {
+		if _, _, err := p.Click(ctx, t); err != nil {
 			return err
 		}
 	}

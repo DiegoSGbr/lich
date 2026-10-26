@@ -207,7 +207,7 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 	configDir, logPath string, env, launchEnv []string, coord *restart.Coordinator) (*system.Service, func()) {
 	// One Chromium per session, closed with the card and with the process.
 	// Never the lich window: this is a second browser the agent drives.
-	brows := browser.New()
+	brows := browser.New(hub.Emit)
 	proj := project.New(project.ZenityPicker{})
 	// gh has one active account per host; a project can name a different one.
 	proj.SetAccounts(db.GHAccountForPath)

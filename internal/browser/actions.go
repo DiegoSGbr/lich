@@ -65,6 +65,7 @@ func (s *Service) Info(id string) (PageInfo, error) {
 		return PageInfo{}, err
 	}
 	s.remember(sess, info.URL, info.Title)
+	s.agentActed(sess, nil, nil)
 	return info, nil
 }
 
@@ -73,9 +74,23 @@ func (s *Service) Click(id string, t Target) error {
 	if t.empty() {
 		return fmt.Errorf("click needs an index, a selector, or x and y")
 	}
-	return s.act(id, func(p Page, ctx context.Context) error {
-		return p.Click(ctx, t)
+	sess, err := s.live(id)
+	if err != nil {
+		return err
+	}
+	var x, y float64
+	err = runPage(func(ctx context.Context) error {
+		var e error
+		x, y, e = sess.page.Click(ctx, t)
+		return e
 	})
+	if err != nil {
+		s.drop(sess)
+		return err
+	}
+	s.touch(sess)
+	s.agentActed(sess, &x, &y)
+	return nil
 }
 
 // Type sends keystrokes. clear selects-and-replaces; the typed text never
@@ -121,6 +136,7 @@ func (s *Service) Screenshot(id, dest string) (string, error) {
 		return "", err
 	}
 	s.touch(sess)
+	s.agentActed(sess, nil, nil)
 	return dest, nil
 }
 
@@ -142,6 +158,7 @@ func (s *Service) Navigate(id, rawURL string) (Handle, error) {
 		return Handle{}, err
 	}
 	s.remember(sess, u, "")
+	s.agentActed(sess, nil, nil)
 	return s.handleOf(sess), nil
 }
 
@@ -165,16 +182,26 @@ func (s *Service) Scroll(id string, dy int) error {
 	return s.act(id, func(p Page, ctx context.Context) error { return p.Scroll(ctx, dy) })
 }
 
+// act runs one agent action on its page; drive is the same for the window's
+// own input, which lights nothing up.
 func (s *Service) act(id string, fn func(Page, context.Context) error) error {
+	sess, err := s.drive(id, fn)
+	if err == nil {
+		s.agentActed(sess, nil, nil)
+	}
+	return err
+}
+
+func (s *Service) drive(id string, fn func(Page, context.Context) error) (*session, error) {
 	sess, err := s.live(id)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	err = runPage(func(ctx context.Context) error { return fn(sess.page, ctx) })
 	if err != nil {
 		s.drop(sess)
-		return err
+		return nil, err
 	}
 	s.touch(sess)
-	return nil
+	return sess, nil
 }

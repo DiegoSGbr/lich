@@ -3,19 +3,27 @@ agentplugin.Status(None) []PluginStatus
 agentplugin.Update(PluginProviderOptions) None
 appupdate.Apply(None) None
 appupdate.Status(None) AppUpdateStatus
+browser.Attach(BrowserViewOptions) BrowserHandle
 browser.Back(SessionIDOptions) None
 browser.Click(BrowserClickOptions) None
 browser.Close(SessionIDOptions) None
+browser.Detach(SessionIDOptions) None
 browser.Forward(SessionIDOptions) None
 browser.Info(SessionIDOptions) BrowserPageInfo
+browser.Key(BrowserKeyOptions) None
 browser.List(SessionIDOptions) []BrowserHandle
+browser.Mouse(BrowserMouseOptions) None
+browser.Nav(BrowserNavOptions) None
 browser.Navigate(BrowserOpenOptions) BrowserHandle
 browser.Open(BrowserOpenOptions) BrowserHandle
 browser.Press(BrowserPressOptions) None
 browser.Reload(SessionIDOptions) None
+browser.Resize(BrowserViewOptions) None
+browser.Running(None) []BrowserState
 browser.Screenshot(BrowserScreenshotOptions) string
 browser.Scroll(BrowserScrollOptions) None
 browser.Show(SessionIDOptions) BrowserHandle
+browser.Text(BrowserTextOptions) None
 browser.Type(BrowserTypeOptions) None
 claudeprofile.CancelLogin(ProfileSlugOptions) None
 claudeprofile.CreateProfile(CreateProfileOptions) Profile
@@ -213,6 +221,9 @@ themes.UpdateFromGit(UpdateThemeOptions) ThemeGitResult
 tray.SetLabels(TrayLabels) None
 
 event appupdate-progress AppUpdateProgress
+event browser-agent BrowserAgentAct
+event browser-state BrowserState
+event browser:frame:<id> string
 event claude-profile-login ProfileLogin
 event codex-profile-login ProfileLogin
 event lich-plugin-profiles PluginProfiles
@@ -279,6 +290,21 @@ AppUpdateStatus {
 	installCommand string
 }
 
+BrowserViewOptions {
+	id string
+	w int
+	h int
+	scale float64
+}
+
+BrowserHandle {
+	id string
+	url string
+	title string
+	owner string
+	headed bool
+}
+
 SessionIDOptions {
 	id string
 }
@@ -296,12 +322,31 @@ BrowserPageInfo {
 	truncated bool
 }
 
-BrowserHandle {
+BrowserKeyOptions {
 	id string
-	url string
-	title string
-	owner string
-	headed bool
+	type string
+	key string
+	code,omitempty string
+	keyCode,omitempty int
+	modifiers,omitempty int
+}
+
+BrowserMouseOptions {
+	id string
+	type string
+	x float64
+	y float64
+	button,omitempty string
+	clicks,omitempty int
+	dx,omitempty float64
+	dy,omitempty float64
+	modifiers,omitempty int
+}
+
+BrowserNavOptions {
+	id string
+	action string
+	url,omitempty string
 }
 
 BrowserOpenOptions {
@@ -315,6 +360,15 @@ BrowserPressOptions {
 	...BrowserTarget
 }
 
+BrowserState {
+	owner string
+	open bool
+	headed bool
+	byAgent bool
+	url string
+	title string
+}
+
 BrowserScreenshotOptions {
 	id string
 	path string
@@ -323,6 +377,11 @@ BrowserScreenshotOptions {
 BrowserScrollOptions {
 	id string
 	dy int
+}
+
+BrowserTextOptions {
+	id string
+	text string
 }
 
 BrowserTypeOptions {
@@ -1387,6 +1446,12 @@ AppUpdateProgress {
 	phase string
 	received int64
 	total int64
+}
+
+BrowserAgentAct {
+	owner string
+	x,omitempty *float64
+	y,omitempty *float64
 }
 
 ProfileLogin {

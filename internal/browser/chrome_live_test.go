@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
+	"github.com/lichdotdev/lich/api"
 	"github.com/lichdotdev/lich/internal/chromium"
 )
 
@@ -21,7 +23,10 @@ func liveChrome(t *testing.T) (*chromePage, *httptest.Server) {
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprint(w, `<input id="f" oninput="document.body.dataset.seen = this.value">`)
+		fmt.Fprint(w, `<title>Probe</title>
+<form onsubmit="event.preventDefault(); document.body.dataset.sent = this.q.value">
+<input id="f" name="q" style="position:absolute;left:10px;top:10px;width:200px;height:30px"
+ oninput="document.body.dataset.seen = this.value"></form>`)
 	}))
 	t.Cleanup(srv.Close)
 	p, err := chromeLaunch(t.TempDir(), false)
@@ -125,5 +130,79 @@ func TestCookieParamGivesAPersistentCookieItsExpiry(t *testing.T) {
 	got := cookieParam(&network.Cookie{Name: "k", Expires: float64(when.Unix())})
 	if got.Expires == nil || !got.Expires.Time().Equal(when) {
 		t.Fatalf("expires = %v, want %v", got.Expires, when)
+	}
+}
+
+func TestChromeScreencastSendsFramesAndPageInfo(t *testing.T) {
+	p, srv := liveChrome(t)
+	frames := make(chan string, 4)
+	titles := make(chan string, 4)
+	p.Listen(func(data string) {
+		select {
+		case frames <- data:
+		default:
+		}
+	}, func(_, title string) {
+		select {
+		case titles <- title:
+		default:
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), pageWait)
+	defer cancel()
+	if err := p.Navigate(ctx, srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Screencast(ctx, Viewport{W: 400, H: 300, Scale: 1}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case data := <-frames:
+		img, err := base64.StdEncoding.DecodeString(data)
+		if err != nil || len(img) < 2 || img[0] != 0xFF || img[1] != 0xD8 {
+			t.Fatalf("frame is not a JPEG (err %v, %d bytes)", err, len(img))
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no screencast frame")
+	}
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case title := <-titles:
+			if title == "Probe" {
+				return
+			}
+		case <-deadline:
+			t.Fatal("no page info with the document's title")
+		}
+	}
+}
+
+func TestChromeWindowInputTypesAndSubmits(t *testing.T) {
+	p, srv := liveChrome(t)
+	ctx, cancel := context.WithTimeout(context.Background(), pageWait)
+	defer cancel()
+	if err := p.Navigate(ctx, srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"press", "release"} {
+		if err := p.Mouse(ctx, api.BrowserMouseOptions{Type: kind, X: 50, Y: 25, Button: "left", Clicks: 1}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := p.InsertText(ctx, "ação"); err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"down", "up"} {
+		if err := p.Key(ctx, api.BrowserKeyOptions{Type: kind, Key: "Enter", Code: "Enter", KeyCode: 13}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var sent string
+	if err := p.run(ctx, chromedp.Evaluate(`document.body.dataset.sent || ""`, &sent)); err != nil {
+		t.Fatal(err)
+	}
+	if sent != "ação" {
+		t.Fatalf("form sent %q, want the clicked field's typed text", sent)
 	}
 }

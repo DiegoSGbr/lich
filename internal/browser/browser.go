@@ -14,11 +14,11 @@ import (
 	"github.com/chromedp/cdproto/network"
 )
 
-// idleAfter is how long a headless browser sits unused before the reaper
-// closes it. Five minutes matches the "walked away from the card" window
-// without holding a Chromium for a session that finished hours ago. A headed
-// window is never reaped: lich cannot see a person using it, so only the card
-// closing ends it.
+// idleAfter is how long a headless browser no pane shows sits unused before
+// the reaper closes it. Five minutes matches the "walked away from the card"
+// window without holding a Chromium for a session that finished hours ago. A
+// headed window is never reaped: lich cannot see a person using it, so only
+// the card closing ends it.
 const idleAfter = 5 * time.Minute
 
 // reapEvery is how often the reaper looks. Shorter than idleAfter so a
@@ -55,20 +55,27 @@ type Service struct {
 	dead    []*session
 	stop    chan struct{}
 	stopped bool
+	// emit pushes to the window's /events (events.Hub.Emit).
+	emit func(name string, data any)
 }
 
 type session struct {
 	id, owner, dir string
 	url, title     string
 	headed         bool
-	page           Page
-	lastUsed       time.Time
+	// byAgent: the agent started it, not the window. watching: a pane shows
+	// it, so the reaper leaves it alone like a headed window.
+	byAgent, watching bool
+	page              Page
+	lastUsed          time.Time
 }
 
 // New starts a service that launches the system Chromium (chromium.FindBrowser)
-// into an ephemeral profile, never the lich --app one.
-func New() *Service {
+// into an ephemeral profile, never the lich --app one, and tells the window
+// about each browser through emit.
+func New(emit func(name string, data any)) *Service {
 	s := newService(chromeLaunch, os.MkdirTemp, time.Now, idleAfter)
+	s.emit = emit
 	s.startReaper()
 	return s
 }
@@ -83,6 +90,7 @@ func newService(launch Launcher, mkTmp func(string, string) (string, error), now
 		byID:    make(map[string]*session),
 		owners:  make(map[string]*sync.Mutex),
 		stop:    make(chan struct{}),
+		emit:    func(string, any) {},
 	}
 }
 
@@ -101,7 +109,7 @@ func (s *Service) Open(owner, rawURL string) (Handle, error) {
 	defer lock.Unlock()
 	sess := s.current(owner)
 	if sess == nil {
-		return s.launchFresh(owner, u, false)
+		return s.launchFresh(owner, u, false, true)
 	}
 	if err := runPage(func(ctx context.Context) error {
 		return sess.page.Navigate(ctx, u)
@@ -110,6 +118,7 @@ func (s *Service) Open(owner, rawURL string) (Handle, error) {
 		return Handle{}, err
 	}
 	s.remember(sess, u, "")
+	s.agentActed(sess, nil, nil)
 	return s.handleOf(sess), nil
 }
 
@@ -126,7 +135,7 @@ func (s *Service) OpenVisible(owner string) (Handle, error) {
 	sess := s.current(owner)
 	switch {
 	case sess == nil:
-		return s.launchFresh(owner, "about:blank", true)
+		return s.launchFresh(owner, "about:blank", true, false)
 	case !sess.headed:
 		return s.promote(sess)
 	}
@@ -155,14 +164,16 @@ func (s *Service) promote(sess *session) (Handle, error) {
 	s.mu.Lock()
 	s.detachLocked(sess)
 	s.unlock()
-	if err := sess.page.Close(); err != nil {
+	err := sess.page.Close()
+	s.emitState(sess, false)
+	if err != nil {
 		return Handle{}, errors.Join(err, os.RemoveAll(sess.dir))
 	}
 	u := sess.url
 	if u == "" {
 		u = "about:blank"
 	}
-	return s.start(sess.owner, u, true, sess.dir, cookies)
+	return s.start(launchSpec{owner: sess.owner, url: u, headed: true, byAgent: sess.byAgent, dir: sess.dir, cookies: cookies})
 }
 
 // List returns this session's browser, or an empty list. Never null: a
@@ -189,7 +200,9 @@ func (s *Service) Close(id string) error {
 	if sess == nil {
 		return nil
 	}
-	return sess.destroy()
+	err := sess.destroy()
+	s.emitState(sess, false)
+	return err
 }
 
 // CloseOwnedBy tears down the browser of a lich session that is going away.
@@ -220,43 +233,57 @@ func (s *Service) Cleanup() error {
 	return errors.Join(errs...)
 }
 
-func (s *Service) launchFresh(owner, u string, headed bool) (Handle, error) {
+func (s *Service) launchFresh(owner, u string, headed, byAgent bool) (Handle, error) {
 	dir, err := s.mkTmp("", "lich-browser-")
 	if err != nil {
 		return Handle{}, err
 	}
-	return s.start(owner, u, headed, dir, nil)
+	return s.start(launchSpec{owner: owner, url: u, headed: headed, byAgent: byAgent, dir: dir})
 }
 
-// start launches a browser on dir, loads cookies and then u, and registers it.
-// The caller holds owner's lock; mu is taken only to register.
-func (s *Service) start(owner, u string, headed bool, dir string, cookies []*network.CookieParam) (Handle, error) {
-	page, err := s.launch(dir, headed)
+// launchSpec is one browser start: whose, where it opens, how, on which
+// profile, and the cookies it carries over from the one it replaces.
+type launchSpec struct {
+	owner, url, dir string
+	headed, byAgent bool
+	cookies         []*network.CookieParam
+}
+
+// start launches a browser on spec.dir, loads the cookies and then the URL,
+// and registers it. The caller holds the owner's lock; mu is taken only to
+// register.
+func (s *Service) start(spec launchSpec) (Handle, error) {
+	page, err := s.launch(spec.dir, spec.headed)
 	if err != nil {
-		return Handle{}, errors.Join(err, os.RemoveAll(dir))
+		return Handle{}, errors.Join(err, os.RemoveAll(spec.dir))
 	}
+	sess := &session{
+		id: newID(), owner: spec.owner, dir: spec.dir, url: spec.url, headed: spec.headed,
+		byAgent: spec.byAgent, page: page, lastUsed: s.now(),
+	}
+	page.Listen(s.frameSink(sess), s.infoSink(sess))
 	if err := runPage(func(ctx context.Context) error {
-		if len(cookies) > 0 {
-			if err := page.SetCookies(ctx, cookies); err != nil {
+		if len(spec.cookies) > 0 {
+			if err := page.SetCookies(ctx, spec.cookies); err != nil {
 				return err
 			}
 		}
-		return page.Navigate(ctx, u)
+		return page.Navigate(ctx, spec.url)
 	}); err != nil {
-		return Handle{}, errors.Join(err, page.Close(), os.RemoveAll(dir))
-	}
-	sess := &session{
-		id: newID(), owner: owner, dir: dir, url: u, headed: headed, page: page, lastUsed: s.now(),
+		return Handle{}, errors.Join(err, page.Close(), os.RemoveAll(spec.dir))
 	}
 	s.mu.Lock()
-	defer s.unlock()
 	if s.stopped {
 		s.dead = append(s.dead, sess)
+		s.unlock()
 		return Handle{}, errStopped
 	}
-	s.byOwner[owner] = sess
+	s.byOwner[spec.owner] = sess
 	s.byID[sess.id] = sess
-	return sess.handle(), nil
+	h := sess.handle()
+	s.unlock()
+	s.emitState(sess, true)
+	return h, nil
 }
 
 func (s *Service) ownerLock(owner string) *sync.Mutex {
@@ -332,6 +359,7 @@ func (s *Service) unlock() {
 		if err := sess.destroy(); err != nil {
 			slog.Warn("close a session browser", "owner", sess.owner, "err", err)
 		}
+		s.emitState(sess, false)
 	}
 }
 
@@ -362,7 +390,8 @@ func (s *Service) startReaper() {
 	}()
 }
 
-// Reap closes headless browsers that have sat idle past the idle window.
+// Reap closes headless browsers no pane shows that have sat idle past the
+// idle window.
 func (s *Service) Reap() {
 	s.mu.Lock()
 	defer s.unlock()
@@ -372,7 +401,7 @@ func (s *Service) Reap() {
 func (s *Service) reapLocked() {
 	cutoff := s.now().Add(-s.idle)
 	for _, sess := range s.byID {
-		if !sess.headed && sess.lastUsed.Before(cutoff) {
+		if !sess.headed && !sess.watching && sess.lastUsed.Before(cutoff) {
 			s.buryLocked(sess)
 		}
 	}

@@ -117,3 +117,51 @@ func infoAPI(p PageInfo) api.BrowserPageInfo {
 func targetOf(t api.BrowserTarget) Target {
 	return Target{Index: t.Index, Selector: t.Selector, X: t.X, Y: t.Y}
 }
+
+// RunningStates is every browser this process runs, for a window catching up.
+func (s *Service) RunningStates(_ context.Context, _ api.None) ([]api.BrowserState, error) {
+	return s.Running(), nil
+}
+
+// AttachView shows this session's page in a pane.
+func (s *Service) AttachView(_ context.Context, opts api.BrowserViewOptions) (api.BrowserHandle, error) {
+	h, err := s.Attach(opts.ID, viewportOf(opts))
+	return handleAPI(h), err
+}
+
+// DetachView stops a pane's frames.
+func (s *Service) DetachView(_ context.Context, opts api.SessionIDOptions) (api.None, error) {
+	return api.None{}, s.Detach(opts.ID)
+}
+
+// ResizeView lays the page out at the pane's new size.
+func (s *Service) ResizeView(_ context.Context, opts api.BrowserViewOptions) (api.None, error) {
+	return api.None{}, s.Resize(opts.ID, viewportOf(opts))
+}
+
+// MouseInput passes one pointer event from the pane.
+func (s *Service) MouseInput(_ context.Context, opts api.BrowserMouseOptions) (api.None, error) {
+	_, err := s.drive(opts.ID, func(p Page, ctx context.Context) error { return p.Mouse(ctx, opts) })
+	return api.None{}, err
+}
+
+// KeyInput passes one key from the pane.
+func (s *Service) KeyInput(_ context.Context, opts api.BrowserKeyOptions) (api.None, error) {
+	_, err := s.drive(opts.ID, func(p Page, ctx context.Context) error { return p.Key(ctx, opts) })
+	return api.None{}, err
+}
+
+// TextInput types text the pane's input method committed.
+func (s *Service) TextInput(_ context.Context, opts api.BrowserTextOptions) (api.None, error) {
+	_, err := s.drive(opts.ID, func(p Page, ctx context.Context) error { return p.InsertText(ctx, opts.Text) })
+	return api.None{}, err
+}
+
+// NavView runs the pane's toolbar.
+func (s *Service) NavView(_ context.Context, opts api.BrowserNavOptions) (api.None, error) {
+	return api.None{}, s.Nav(opts.ID, opts.Action, opts.URL)
+}
+
+func viewportOf(opts api.BrowserViewOptions) Viewport {
+	return Viewport{W: opts.W, H: opts.H, Scale: opts.Scale}
+}

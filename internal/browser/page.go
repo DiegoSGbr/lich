@@ -2,9 +2,20 @@ package browser
 
 import (
 	"context"
+	"errors"
 
 	"github.com/chromedp/cdproto/network"
+	"github.com/lichdotdev/lich/api"
 )
+
+var errUnknownInput = errors.New("unknown input type")
+
+// Viewport is the pane a page is drawn into: W and H in CSS pixels, Scale the
+// device pixels per CSS pixel.
+type Viewport struct {
+	W, H  int
+	Scale float64
+}
 
 // Handle is what Open and OpenVisible return: the id later calls take, and
 // enough for a card or a tool result to say which window it is.
@@ -68,7 +79,8 @@ type PageInfo struct {
 type Page interface {
 	Navigate(ctx context.Context, url string) error
 	Info(ctx context.Context) (PageInfo, error)
-	Click(ctx context.Context, t Target) error
+	// Click returns where it clicked, in CSS pixels.
+	Click(ctx context.Context, t Target) (x, y float64, err error)
 	Type(ctx context.Context, text string, clear bool, t Target) error
 	Press(ctx context.Context, key string, t Target) error
 	Screenshot(ctx context.Context, dest string) error
@@ -81,6 +93,15 @@ type Page interface {
 	// into the process that replaces it.
 	Cookies(ctx context.Context) ([]*network.CookieParam, error)
 	SetCookies(ctx context.Context, cookies []*network.CookieParam) error
+	// Listen hands the page what to call with each screencast frame (base64
+	// JPEG) and with its URL and title whenever they change.
+	Listen(onFrame func(data string), onInfo func(url, title string))
+	Screencast(ctx context.Context, v Viewport) error
+	StopScreencast(ctx context.Context) error
+	Resize(ctx context.Context, v Viewport) error
+	Mouse(ctx context.Context, m api.BrowserMouseOptions) error
+	Key(ctx context.Context, k api.BrowserKeyOptions) error
+	InsertText(ctx context.Context, text string) error
 	Alive() bool
 	Close() error
 }
