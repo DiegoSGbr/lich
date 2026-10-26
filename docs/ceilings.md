@@ -910,18 +910,19 @@ work when nobody knows it and that the call site never shows. The mechanism and 
   up to that late: observing `AppleInterfaceThemeChangedNotification` needs an Objective-C shim no one
   could compile or run without a Mac. The BSDs read no scheme and draw dark.
 
-- **A session's browser is a second Chromium, one per card** (`internal/browser`,
-  `docs/browser-tab.md`): the card menu opens a headed window of the system
-  Chrome, Edge, Chromium, Brave or Vivaldi, never a page inside lich. The agent
-  drives that same window. A headless one the agent opened first is reopened
-  as a headed window on the same profile, carrying the URL and every cookie,
-  because chromedp cannot show a headless process; a half-filled form or
-  sessionStorage is lost on the way. Closing the card, or the session's process
-  ending, closes it; closing the browser window does not close the session. A
-  headless browser idle for five minutes is closed, a headed window never is. It loads only http, https and
-  about:blank. Page info never includes a form's value. Screenshots are files.
-  There is no tool that runs JavaScript in the page. It is not a sandbox: the
-  page runs as the user, in an ephemeral profile.
+- **A session's browser is a second Chromium, one per card, drawn from frames** (`internal/browser`,
+  `docs/browser-tab.md`): a headless Chrome, Edge, Chromium, Brave, Vivaldi or Helium already installed,
+  whose page reaches the session's browser tab as a JPEG screencast over `/events`, at the pace the window
+  takes frames. The native window cannot hold a webview: on Linux it speaks Wayland without GTK. So the pane
+  has no DevTools, shows the arrow whatever cursor the page asks for, does not copy the page's selection to
+  the system clipboard (paste works), and leaves popups, downloads and the page's own dialogs out; Open in
+  a window moves the page to a real Chromium window for those, reopening it on the same profile with every
+  cookie, since chromedp cannot show a headless process in place. A half-filled form or sessionStorage is
+  lost on that move. Closing the card, or the session's process ending, closes the browser; closing that
+  window does not close the session. A headless browser no pane shows and no one used for five minutes is
+  closed; one a pane shows, or a window, never is. It loads only http, https and about:blank. Page info never
+  includes a form's value. Screenshots are files. There is no tool that runs JavaScript in the page. It is
+  not a sandbox: the page runs as the user, in an ephemeral profile.
 - **opencode does not list `browser_*`** (`internal/agentplugin`,
   `internal/cli/mcp_browser.go`): Claude Code and Codex are handed lich's MCP
   server at spawn, and Antigravity, oh-my-pi, Crush, Cursor CLI and Kiro get

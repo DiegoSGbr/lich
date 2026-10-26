@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- A session card's menu opens a browser for that session, above Open in. It is a Chromium window of its own, and the session's agent drives the same page: open a URL, read it, click, type, press a key, go back and forward, scroll and screenshot, from `browser_*` tools or from `lich browser`. You watch and use that window while the agent does. Closing the card closes the browser. opencode's agent reaches it through `lich browser`; its own tool list does not include `browser_*`.
+- A session card's menu opens a browser for that session, above Open in, in a tab beside the session: its terminal on one side and the page on the other, with the divider, rotate and zoom of a split. The session's agent drives the same page: open a URL, read it, click, type, press a key, go back and forward, scroll and screenshot, from `browser_*` tools or from `lich browser`, and the pane marks what the agent does. You click, type and paste in the page while it does. When the agent opens a browser on its own, a toast in the bottom-right corner offers to show it. Open in a window moves the page to a Chromium window of its own, cookies and all. Closing the card closes the browser. The browser is the Chrome, Edge, Chromium, Brave, Vivaldi or Helium already installed. opencode's agent reaches it through `lich browser`; its own tool list does not include `browser_*`.
 
 ### Fixed
 

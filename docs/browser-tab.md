@@ -1,32 +1,43 @@
-# Decision: the session browser is a sidecar window
+# Decision: the session browser is a tab of frames
 
 **Status: the card's Browser item opens it.** Right-click a session card →
-**Browser**, above Open in. That opens a Chromium window owned by that session.
-The agent drives the same page through `lich browser` and the `browser_*` MCP
-tools.
+**Browser**, above Open in. That opens a tab beside the session: its terminal
+and its page, split as any layout is. The agent drives the same page through
+`lich browser` and the `browser_*` MCP tools.
 
-## Why not a page inside lich
+## Why frames and not a webview
 
-lich's window is native (`docs/native-window.md`). It does not embed Chromium.
-The product is a **second Chromium process** on `chromium.FindBrowser` (system
-Chrome, Edge, Chromium, Brave or Vivaldi), with its own user-data directory.
-Closing that window does not quit lich. Closing the session closes the sidecar.
+lich's window is native (`docs/native-window.md`). On Linux it speaks Wayland
+directly, without GTK, so no system webview fits inside it; Windows and macOS
+would take one, Linux would not. The page is a **headless Chromium** on
+`chromium.FindBrowser` (the system's Chrome, Edge, Chromium, Brave, Vivaldi
+or Helium), with its own user-data directory. `browser.Attach` starts its
+screencast at the pane's size; each frame reaches the window as
+`browser:frame:<session>` and is acked only once sent, so a window slow to
+draw slows the stream. The pane's pointer, keys, committed text (an input
+method's or a paste) and toolbar go back through `browser.Mouse`, `.Key`,
+`.Text` and `.Nav`, which light nothing up: only the agent's actions emit
+`browser-agent`, which the pane shows as the agent chip and a mark where it
+clicked.
 
 ## One browser per card
 
-- none yet → headed window at `about:blank`
-- already headed → focus that window
-- headless only (the agent opened first) → reopen it as a headed window at
-  the same URL, on the same profile, with its cookies (session ones
-  included). chromedp cannot show a headless process in place, so what lives
-  only in the page, a half-filled form or sessionStorage, does not survive
+- the card's Browser item → its tab, starting a headless browser at
+  `about:blank` when there is none. A session in another layout is asked
+  about before it moves.
+- the agent's `browser_open` first → a headless browser, and a toast in the
+  bottom-right corner whose Open shows that same page in the tab
+- **Open in a window** → the page reopens as a headed window on the same
+  profile, with its cookies (session ones included); its tab goes. chromedp
+  cannot show a headless process in place, so what lives only in the page, a
+  half-filled form or sessionStorage, does not survive. Browser on the card
+  then brings that window forward.
 
-A headless browser nobody used for five minutes is closed. A headed window is
-not: lich cannot see a person using it, so only the card closing ends it.
-
-The agent without the menu uses `browser_open`: headless if nobody asked for a
-window, and the headed one if the person already did. MCP and `lich browser`
-target `LICH_SESSION_ID`.
+`browser-state` tells the window when a browser starts, closes, moves to a
+window or loads another page; `browser.Running` is what a window reads when
+it attaches. A browser no pane shows and no one used for five minutes is
+closed; one a pane shows, or a window, is not. The tab takes no other
+session, and closing its page closes the browser.
 
 ## What the agent may load
 
