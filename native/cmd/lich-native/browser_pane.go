@@ -1,0 +1,437 @@
+package main
+
+import (
+	"context"
+	"image"
+	"log"
+	"runtime"
+	"strings"
+	"time"
+
+	"gioui.org/f32"
+	"gioui.org/font"
+	"gioui.org/io/clipboard"
+	"gioui.org/io/event"
+	"gioui.org/io/key"
+	"gioui.org/io/pointer"
+	"gioui.org/io/transfer"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
+	"gioui.org/widget"
+
+	"github.com/lichdotdev/lich/api"
+	"github.com/lichdotdev/lich/native/gioterm"
+	"github.com/lichdotdev/lich/native/i18n"
+	"github.com/lichdotdev/lich/native/ui"
+	"github.com/lichdotdev/lich/native/ui/icons"
+)
+
+// A page pane: the browser of a session drawn in its tab beside it, from the
+// frames the backend streams, with the person's pointer and keys passed on.
+
+var (
+	icBrowserBack    = icons.Lucide("arrow-left")
+	icBrowserForward = icons.Lucide("arrow-right")
+	icBrowserReload  = icons.Lucide("rotate-cw")
+	icBrowserWindow  = icons.Lucide("external-link")
+	icBrowserAgent   = icons.Lucide("bot")
+)
+
+// agentGlow is how long the agent chip and its click mark stay up after the
+// agent's last action on the page.
+const agentGlow = 2 * time.Second
+
+// doubleClick is the window two presses of a button count as one double
+// click in, as most desktops set it.
+const doubleClick = 400 * time.Millisecond
+
+// browserPaneUI is one page pane's widgets and what it last told the
+// backend, kept across frames by session.
+type browserPaneUI struct {
+	back, forward, reload, window iconActionState
+	zoom, close                   widget.Clickable
+	zoomTip, closeTip             ui.Tooltip
+	url                           widget.Editor
+	// shownURL is the page's URL the field last showed: a navigation
+	// replaces the field's text unless the person is editing it.
+	shownURL    string
+	tag         int
+	composition gioterm.Composition
+	// view is the size the backend lays the page out at; zero until the
+	// pane is attached.
+	view api.BrowserViewOptions
+	// held is the button the pointer holds down, for a drag's moves.
+	held                  string
+	lastPress             time.Time
+	presses               int
+	input                 chan func()
+	onScreen, wasOnScreen bool
+}
+
+func (u *window) browserPane(session string) *browserPaneUI {
+	if u.browserPanes == nil {
+		u.browserPanes = map[string]*browserPaneUI{}
+	}
+	p, ok := u.browserPanes[session]
+	if !ok {
+		p = &browserPaneUI{input: make(chan func(), 256)}
+		// One goroutine sends a pane's input, so a release never overtakes
+		// its press.
+		go func() {
+			for send := range p.input {
+				send()
+			}
+		}()
+		u.browserPanes[session] = p
+	}
+	return p
+}
+
+// sendBrowser queues one call to the backend for session's page, logging
+// what fails: the page answers on screen, not here.
+func (u *window) sendBrowser(session, what string, call func(context.Context) error) {
+	p := u.browserPane(session)
+	send := func() {
+		if err := call(u.ctx); err != nil {
+			log.Printf("browser %s of %s: %v", what, session, err)
+		}
+	}
+	select {
+	case p.input <- send:
+	default:
+		log.Printf("browser %s of %s: input queue full, dropped", what, session)
+	}
+}
+
+// browserPaneAt draws session's page pane in r, the way paneAt draws a
+// session's: a header, the toolbar, and the page.
+func (u *window) browserPaneAt(gtx C, v stageView, session string, r image.Rectangle, several bool) {
+	pane := browserPaneOf(session)
+	p := u.browserPane(session)
+	p.onScreen = true
+	st, frame, mark := u.model.browserView(session)
+	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
+	gtx.Constraints = layout.Exact(r.Size())
+	size := r.Size()
+	focused := pane == v.layout.Focus
+	th := u.theme
+	shape := clip.UniformRRect(image.Rectangle{Max: size}, gtx.Dp(paneRadius))
+	paint.FillShape(gtx.Ops, th.Background, shape.Op(gtx.Ops))
+	area := shape.Push(gtx.Ops)
+	head, bar := gtx.Dp(paneHeader), gtx.Dp(ui.Space(9))
+	header := gtx
+	header.Constraints = layout.Exact(image.Pt(size.X, head))
+	u.browserHeader(header, p, pane, focused, gtx.Now.Sub(mark.at) < agentGlow)
+	line := th.Over(th.Border)
+	paint.FillShape(gtx.Ops, line, clip.Rect{Min: image.Pt(0, head-gtx.Dp(1)), Max: image.Pt(size.X, head)}.Op())
+	tool := op.Offset(image.Pt(0, head)).Push(gtx.Ops)
+	toolbar := gtx
+	toolbar.Constraints = layout.Exact(image.Pt(size.X, bar))
+	u.browserToolbar(toolbar, p, session, st)
+	tool.Pop()
+	paint.FillShape(gtx.Ops, line, clip.Rect{Min: image.Pt(0, head+bar-gtx.Dp(1)), Max: image.Pt(size.X, head+bar)}.Op())
+	page := gtx
+	page.Constraints = layout.Exact(image.Pt(size.X, max(size.Y-head-bar, 0)))
+	off := op.Offset(image.Pt(0, head+bar)).Push(gtx.Ops)
+	u.browserPage(page, p, session, frame, mark, focused)
+	if several && !focused {
+		paint.FillShape(gtx.Ops, ui.Alpha(th.Background, paneDim), clip.Rect{Max: page.Constraints.Max}.Op())
+	}
+	off.Pop()
+	u.paneFocusTarget(gtx, pane)
+	area.Pop()
+	u.lockedDropRefusal(gtx, session, image.Rectangle{Max: size}, r.Add(u.islandAt))
+	border, width := line, float32(gtx.Dp(1))
+	if several && focused {
+		border, width = th.Ring, float32(gtx.Dp(1.5))
+	}
+	paint.FillShape(gtx.Ops, border, clip.Stroke{Path: shape.Path(gtx.Ops), Width: width}.Op())
+	if gtx.Now.Sub(mark.at) < agentGlow {
+		gtx.Execute(op.InvalidateCmd{At: mark.at.Add(agentGlow)})
+	}
+}
+
+// browserHeader is the page pane's top row: its name, the agent chip while
+// the agent acts on the page, and zoom and close.
+func (u *window) browserHeader(gtx C, p *browserPaneUI, pane string, focused, agent bool) {
+	th := u.theme
+	if p.zoom.Clicked(gtx) {
+		u.layoutStage.focus, u.layoutStage.zoom = pane, true
+	}
+	if p.close.Clicked(gtx) {
+		session := paneSession(pane)
+		u.sendBrowser(session, "close", func(ctx context.Context) error { return u.client.CloseBrowser(ctx, session) })
+	}
+	fg, weight := th.MutedForeground, font.Normal
+	if focused {
+		fg, weight = th.Foreground, font.Medium
+	}
+	layout.Inset{Left: ui.Space(2.5), Right: ui.Space(2)}.Layout(gtx, func(gtx C) D {
+		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx C) D { return icBrowser.Layout(gtx, ui.Space(3.5), th.MutedForeground) }),
+			ui.Gap(2),
+			layout.Rigid(th.Text(ui.TextXS, i18n.T("layouts.browser.title")).In(fg).Weight(weight).Layout),
+			ui.Gap(2),
+			layout.Rigid(func(gtx C) D {
+				if !agent {
+					return D{}
+				}
+				return pill(gtx, th, func(gtx C) D {
+					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx C) D { return icBrowserAgent.Layout(gtx, ui.Space(3), th.Foreground) }),
+						ui.Gap(1),
+						layout.Rigid(th.Text(ui.TextXS, i18n.T("layouts.browser.agent")).Layout),
+					)
+				}, ui.Space(2), ui.Space(2))
+			}),
+			layout.Flexed(1, func(gtx C) D { return D{Size: image.Pt(gtx.Constraints.Max.X, 0)} }),
+			layout.Rigid(func(gtx C) D {
+				zoom := th.Tooltip(&u.root, &p.zoomTip, i18n.T("layouts.pane.zoom"))
+				return zoom.Layout(gtx, func(gtx C) D { return cornerButton(gtx, th, &p.zoom, icPaneZoom, false) })
+			}),
+			ui.Gap(1.5),
+			layout.Rigid(func(gtx C) D {
+				closer := th.Tooltip(&u.root, &p.closeTip, i18n.T("layouts.browser.close"))
+				return closer.Layout(gtx, func(gtx C) D { return cornerButton(gtx, th, &p.close, icPaneUnsplit, false) })
+			}),
+		)
+	})
+}
+
+// browserToolbar is back, forward, reload, the address and Open in window.
+func (u *window) browserToolbar(gtx C, p *browserPaneUI, session string, st api.BrowserState) {
+	th := u.theme
+	nav := func(action string) {
+		u.sendBrowser(session, action, func(ctx context.Context) error { return u.client.BrowserNav(ctx, session, action, "") })
+	}
+	if p.back.click.Clicked(gtx) {
+		nav("back")
+	}
+	if p.forward.click.Clicked(gtx) {
+		nav("forward")
+	}
+	if p.reload.click.Clicked(gtx) {
+		nav("reload")
+	}
+	if p.window.click.Clicked(gtx) {
+		u.sendBrowser(session, "show", func(ctx context.Context) error { return u.client.ShowBrowser(ctx, session) })
+	}
+	for {
+		ev, ok := p.url.Update(gtx)
+		if !ok {
+			break
+		}
+		if submit, ok := ev.(widget.SubmitEvent); ok {
+			target := typedURL(submit.Text)
+			u.sendBrowser(session, "go", func(ctx context.Context) error { return u.client.BrowserNav(ctx, session, "go", target) })
+			gtx.Execute(key.FocusCmd{Tag: &p.tag})
+		}
+	}
+	if st.URL != p.shownURL && !gtx.Focused(&p.url) {
+		p.shownURL = st.URL
+		p.url.SetText(displayURL(st.URL))
+	}
+	p.url.Submit = true
+	field := th.Input(&p.url, i18n.T("layouts.browser.address"))
+	field.Height, field.TextSize, field.Mono = ui.Space(6), ui.TextXS, true
+	layout.Inset{Left: ui.Space(1.5), Right: ui.Space(1.5)}.Layout(gtx, func(gtx C) D {
+		gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
+		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx C) D {
+				return iconAction(gtx, th, &u.root, &p.back, icBrowserBack, i18n.T("layouts.browser.back"), false)
+			}),
+			layout.Rigid(func(gtx C) D {
+				return iconAction(gtx, th, &u.root, &p.forward, icBrowserForward, i18n.T("layouts.browser.forward"), false)
+			}),
+			layout.Rigid(func(gtx C) D {
+				return iconAction(gtx, th, &u.root, &p.reload, icBrowserReload, i18n.T("layouts.browser.reload"), false)
+			}),
+			ui.Gap(1.5),
+			layout.Flexed(1, field.Layout),
+			ui.Gap(1.5),
+			layout.Rigid(func(gtx C) D {
+				return iconAction(gtx, th, &u.root, &p.window, icBrowserWindow, i18n.T("layouts.browser.openInWindow"), false)
+			}),
+		)
+	})
+}
+
+// browserPage draws the page's last frame over gtx's area, keeps the
+// backend's page the area's size, and passes the pointer and keys on.
+func (u *window) browserPage(gtx C, p *browserPaneUI, session string, frame browserFrame, mark browserMark, focused bool) {
+	size := gtx.Constraints.Max
+	scale := gtx.Metric.PxPerDp
+	want := api.BrowserViewOptions{ID: session, W: int(float32(size.X) / scale), H: int(float32(size.Y) / scale), Scale: float64(scale)}
+	if want.W > 0 && want.H > 0 && want != p.view {
+		attach := p.view.ID == ""
+		p.view = want
+		u.sendBrowser(session, "attach", func(ctx context.Context) error {
+			if attach {
+				return u.client.AttachBrowser(ctx, want)
+			}
+			return u.client.ResizeBrowser(ctx, want)
+		})
+	}
+	paint.FillShape(gtx.Ops, u.theme.Background, clip.Rect{Max: size}.Op())
+	if frame.size.X > 0 {
+		// A frame is the page at the size it was last laid out at, which
+		// lags a resize by a frame or two: it is drawn scaled to the area.
+		sx, sy := float32(size.X)/float32(frame.size.X), float32(size.Y)/float32(frame.size.Y)
+		s := min(sx, sy)
+		t := op.Affine(f32.Affine2D{}.Scale(f32.Point{}, f32.Pt(s, s))).Push(gtx.Ops)
+		frame.img.Add(gtx.Ops)
+		paint.PaintOp{}.Add(gtx.Ops)
+		t.Pop()
+	}
+	if gtx.Now.Sub(mark.at) < agentGlow && mark.x != nil && mark.y != nil {
+		at := image.Pt(int(float32(*mark.x)*scale), int(float32(*mark.y)*scale))
+		r := gtx.Dp(ui.Space(2))
+		dot := clip.Ellipse{Min: at.Sub(image.Pt(r, r)), Max: at.Add(image.Pt(r, r))}
+		paint.FillShape(gtx.Ops, ui.Alpha(u.theme.Ring, 0.35), dot.Op(gtx.Ops))
+		paint.FillShape(gtx.Ops, u.theme.Ring, clip.Stroke{Path: dot.Path(gtx.Ops), Width: float32(gtx.Dp(1.5))}.Op())
+	}
+	u.browserInput(gtx, p, session, scale, focused)
+	defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
+	event.Op(gtx.Ops, &p.tag)
+}
+
+// browserInput passes the pane's pointer and keys to the page.
+func (u *window) browserInput(gtx C, p *browserPaneUI, session string, scale float32, focused bool) {
+	filters := append(gioterm.KeyFilters(&p.tag),
+		pointer.Filter{Target: &p.tag, Kinds: pointer.Scroll | pointer.Press | pointer.Release | pointer.Drag | pointer.Move,
+			ScrollX: pointer.ScrollRange{Min: -1 << 20, Max: 1 << 20}, ScrollY: pointer.ScrollRange{Min: -1 << 20, Max: 1 << 20}},
+		key.Filter{Focus: &p.tag, Name: "V", Required: key.ModCommand},
+		transfer.TargetFilter{Target: &p.tag, Type: "application/text"})
+	if focused && !gtx.Focused(&p.url) && !gtx.Focused(&p.tag) {
+		gtx.Execute(key.FocusCmd{Tag: &p.tag})
+	}
+	for {
+		ev, ok := gtx.Event(filters...)
+		if !ok {
+			return
+		}
+		switch e := ev.(type) {
+		case key.EditEvent, key.CompositionEvent, key.SelectionEvent, key.FocusEvent:
+			if text := p.composition.Update(e, &p.tag, gtx.Execute); text != "" {
+				u.sendBrowser(session, "text", func(ctx context.Context) error { return u.client.BrowserText(ctx, session, text) })
+			}
+		case key.Event:
+			if e.State == key.Press && isPasteChord(e, runtime.GOOS) {
+				gtx.Execute(clipboard.ReadCmd{Tag: &p.tag})
+				break
+			}
+			if k, ok := browserKey(session, e); ok {
+				u.sendBrowser(session, "key", func(ctx context.Context) error { return u.client.BrowserKey(ctx, k) })
+			}
+		case transfer.DataEvent:
+			text, err := readTransfer(e)
+			if err != nil {
+				log.Printf("paste into the browser of %s: %v", session, err)
+				break
+			}
+			u.sendBrowser(session, "paste", func(ctx context.Context) error { return u.client.BrowserText(ctx, session, text) })
+		case pointer.Event:
+			u.browserPointer(gtx, p, session, scale, e)
+		}
+	}
+}
+
+func (u *window) browserPointer(gtx C, p *browserPaneUI, session string, scale float32, e pointer.Event) {
+	m := api.BrowserMouseOptions{ID: session, X: float64(e.Position.X / scale), Y: float64(e.Position.Y / scale), Modifiers: cdpModifiers(e.Modifiers)}
+	switch e.Kind {
+	case pointer.Press:
+		gtx.Execute(key.FocusCmd{Tag: &p.tag})
+		u.layoutStage.focus = browserPaneOf(session)
+		if gtx.Now.Sub(p.lastPress) < doubleClick {
+			p.presses++
+		} else {
+			p.presses = 1
+		}
+		p.lastPress = gtx.Now
+		p.held = browserButton(e.Buttons)
+		m.Type, m.Button, m.Clicks = "press", p.held, p.presses
+	case pointer.Release:
+		m.Type, m.Button, m.Clicks = "release", p.held, p.presses
+		p.held = ""
+	case pointer.Move, pointer.Drag:
+		m.Type, m.Button = "move", p.held
+	case pointer.Scroll:
+		m.Type, m.DX, m.DY = "wheel", float64(e.Scroll.X/scale), float64(e.Scroll.Y/scale)
+	default:
+		return
+	}
+	u.sendBrowser(session, m.Type, func(ctx context.Context) error { return u.client.BrowserMouse(ctx, m) })
+}
+
+// settleBrowserPanes stops the frames of every page pane that was on screen
+// last frame and is not on this one, after the frame laid everything out.
+func (u *window) settleBrowserPanes() {
+	for session, p := range u.browserPanes {
+		gone := p.wasOnScreen && !p.onScreen
+		p.wasOnScreen, p.onScreen = p.onScreen, false
+		if !gone || p.view.ID == "" {
+			continue
+		}
+		p.view = api.BrowserViewOptions{}
+		u.sendBrowser(session, "detach", func(ctx context.Context) error { return u.client.DetachBrowser(ctx, session) })
+	}
+}
+
+// lockedDropRefusal tells a drag carried over a browser tab's pane that the
+// tab takes no one else.
+func (u *window) lockedDropRefusal(gtx C, session string, local, at image.Rectangle) {
+	carried := u.sidebar.carry.Carrying()
+	if carried == "" || carried == session || !u.layoutStage.pointer.at.In(at) {
+		return
+	}
+	u.dropHighlight(gtx, local, i18n.T("layouts.browser.locked", i18n.Args{"label": u.model.sessionLabel(session)}))
+}
+
+// displayURL is the page's URL as the address field shows it: about:blank
+// as an empty field.
+func displayURL(raw string) string {
+	if raw == "about:blank" {
+		return ""
+	}
+	return raw
+}
+
+// typedURL is what the address field's text loads: a URL as typed, and a
+// bare host (localhost:3000, example.com) over http for a local one and https
+// for any other.
+func typedURL(text string) string {
+	switch {
+	case text == "":
+		return "about:blank"
+	case hasScheme(text):
+		return text
+	case isLocalHost(text):
+		return "http://" + text
+	}
+	return "https://" + text
+}
+
+func hasScheme(text string) bool {
+	for i, c := range text {
+		switch {
+		case c == ':':
+			return i > 0 && len(text) > i+2 && text[i+1:i+3] == "//"
+		case !('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || i > 0 && ('0' <= c && c <= '9' || c == '+' || c == '-' || c == '.')):
+			return false
+		}
+	}
+	return false
+}
+
+func isLocalHost(text string) bool {
+	host := text
+	for i, c := range text {
+		if c == ':' || c == '/' {
+			host = text[:i]
+			break
+		}
+	}
+	return host == "localhost" || host == "127.0.0.1" || host == "[::1]" || strings.HasSuffix(host, ".localhost")
+}
