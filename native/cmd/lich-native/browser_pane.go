@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"log"
 	"runtime"
@@ -66,7 +67,7 @@ type browserPaneUI struct {
 	held                  string
 	lastPress             time.Time
 	presses               int
-	input                 chan func()
+	queue                 *browserQueue
 	onScreen, wasOnScreen bool
 }
 
@@ -76,33 +77,22 @@ func (u *window) browserPane(session string) *browserPaneUI {
 	}
 	p, ok := u.browserPanes[session]
 	if !ok {
-		p = &browserPaneUI{input: make(chan func(), 256)}
-		// One goroutine sends a pane's input, so a release never overtakes
-		// its press.
-		go func() {
-			for send := range p.input {
-				send()
-			}
-		}()
+		p = &browserPaneUI{queue: newBrowserQueue()}
+		go p.queue.run(u.ctx, func(err error) { log.Printf("browser of %s: %v", session, err) })
 		u.browserPanes[session] = p
 	}
 	return p
 }
 
-// sendBrowser queues one call to the backend for session's page, logging
-// what fails: the page answers on screen, not here.
+// sendBrowser queues one call to the backend for session's page; a failure
+// is logged, since the page answers on screen.
 func (u *window) sendBrowser(session, what string, call func(context.Context) error) {
-	p := u.browserPane(session)
-	send := func() {
-		if err := call(u.ctx); err != nil {
-			log.Printf("browser %s of %s: %v", what, session, err)
+	u.browserPane(session).queue.push(browserCall{send: func(ctx context.Context) error {
+		if err := call(ctx); err != nil {
+			return fmt.Errorf("%s: %w", what, err)
 		}
-	}
-	select {
-	case p.input <- send:
-	default:
-		log.Printf("browser %s of %s: input queue full, dropped", what, session)
-	}
+		return nil
+	}})
 }
 
 // browserPaneAt draws session's page pane in r, the way paneAt draws a
@@ -267,12 +257,11 @@ func (u *window) browserPage(gtx C, p *browserPaneUI, session string, frame brow
 	if want.W > 0 && want.H > 0 && want != p.view {
 		attach := p.view.ID == ""
 		p.view = want
-		u.sendBrowser(session, "attach", func(ctx context.Context) error {
-			if attach {
-				return u.client.AttachBrowser(ctx, want)
-			}
-			return u.client.ResizeBrowser(ctx, want)
-		})
+		if attach {
+			u.sendBrowser(session, "attach", func(ctx context.Context) error { return u.client.AttachBrowser(ctx, want) })
+		} else {
+			u.browserPane(session).queue.push(browserCall{resize: true, send: func(ctx context.Context) error { return u.client.ResizeBrowser(ctx, want) }})
+		}
 	}
 	paint.FillShape(gtx.Ops, u.theme.Background, clip.Rect{Max: size}.Op())
 	if frame.size.X > 0 {
@@ -362,7 +351,7 @@ func (u *window) browserPointer(gtx C, p *browserPaneUI, session string, scale f
 	default:
 		return
 	}
-	u.sendBrowser(session, m.Type, func(ctx context.Context) error { return u.client.BrowserMouse(ctx, m) })
+	u.browserPane(session).queue.push(browserCall{mouse: &m, send: func(ctx context.Context) error { return u.client.BrowserMouse(ctx, m) }})
 }
 
 // settleBrowserPanes stops the frames of every page pane that was on screen

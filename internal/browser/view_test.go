@@ -186,3 +186,18 @@ func TestNavRejectsBlockedURLAndUnknownAction(t *testing.T) {
 		t.Fatal("nav accepted an unknown action")
 	}
 }
+
+func TestResizeRestartsTheFramesOfAWatchedPage(t *testing.T) {
+	s, launch, _ := viewService(t)
+	if _, err := s.Attach("s", Viewport{W: 800, H: 600, Scale: 1}); err != nil {
+		t.Fatal(err)
+	}
+	bigger := Viewport{W: 1600, H: 900, Scale: 1}
+	if err := s.Resize("s", bigger); err != nil {
+		t.Fatal(err)
+	}
+	p := launch.pages[0]
+	if !p.casting || p.viewports[len(p.viewports)-1] != bigger {
+		t.Fatalf("after resize casting=%v viewports=%v, want frames at %v", p.casting, p.viewports, bigger)
+	}
+}

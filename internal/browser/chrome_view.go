@@ -13,9 +13,10 @@ import (
 	"github.com/lichdotdev/lich/api"
 )
 
-// screencastQuality is the JPEG quality of a pane's frames: legible text at a
-// fraction of PNG's size, since every frame crosses /events as base64.
-const screencastQuality = 70
+// screencastQuality is the JPEG quality of a pane's frames: text without
+// visible ringing at a fraction of PNG's size, since every frame crosses
+// /events as base64.
+const screencastQuality = 85
 
 // listeners are what a chromePage hands its CDP events to; the service sets
 // them once, right after the launch.
@@ -84,7 +85,12 @@ func (p *chromePage) deliver(frame *page.EventScreencastFrame) {
 	}
 }
 
+// Screencast starts the frames at v, or restarts them there: Chrome keeps
+// the size a screencast started with.
 func (p *chromePage) Screencast(ctx context.Context, v Viewport) error {
+	if err := p.run(ctx, page.StopScreencast()); err != nil {
+		return err
+	}
 	if err := p.Resize(ctx, v); err != nil {
 		return err
 	}

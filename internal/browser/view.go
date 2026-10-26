@@ -58,9 +58,23 @@ func (s *Service) Detach(owner string) error {
 	return nil
 }
 
-// Resize lays the page out again at the pane's new size.
+// Resize lays the page out again at the pane's new size. A pane showing it
+// gets its frames at that size too: the screencast keeps the size it started
+// at, and the window would stretch the smaller frames over the larger pane.
 func (s *Service) Resize(owner string, v Viewport) error {
-	_, err := s.drive(owner, func(p Page, ctx context.Context) error { return p.Resize(ctx, v) })
+	sess, err := s.live(owner)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	watching := sess.watching
+	s.mu.Unlock()
+	_, err = s.drive(owner, func(p Page, ctx context.Context) error {
+		if watching {
+			return p.Screencast(ctx, v)
+		}
+		return p.Resize(ctx, v)
+	})
 	return err
 }
 
