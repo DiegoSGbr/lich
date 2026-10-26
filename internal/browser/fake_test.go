@@ -32,6 +32,7 @@ type fakePage struct {
 	casting     bool
 	viewports   []Viewport
 	mice        []api.BrowserMouseOptions
+	mouseErr    error
 	keys        []api.BrowserKeyOptions
 	texts       []string
 	info        PageInfo
@@ -200,6 +201,9 @@ func (p *fakePage) Resize(_ context.Context, v Viewport) error {
 func (p *fakePage) Mouse(_ context.Context, m api.BrowserMouseOptions) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.mouseErr != nil {
+		return p.mouseErr
+	}
 	p.mice = append(p.mice, m)
 	return nil
 }

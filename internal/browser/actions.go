@@ -182,8 +182,9 @@ func (s *Service) Scroll(id string, dy int) error {
 	return s.act(id, func(p Page, ctx context.Context) error { return p.Scroll(ctx, dy) })
 }
 
-// act runs one agent action on its page; drive is the same for the window's
-// own input, which lights nothing up.
+// act runs one agent action on its page and tells the window the agent
+// acted; drive runs it, dropping a browser whose page failed it. The
+// window's own calls go through steer instead.
 func (s *Service) act(id string, fn func(Page, context.Context) error) error {
 	sess, err := s.drive(id, fn)
 	if err == nil {

@@ -141,19 +141,19 @@ func (s *Service) ResizeView(_ context.Context, opts api.BrowserViewOptions) (ap
 
 // MouseInput passes one pointer event from the pane.
 func (s *Service) MouseInput(_ context.Context, opts api.BrowserMouseOptions) (api.None, error) {
-	_, err := s.drive(opts.ID, func(p Page, ctx context.Context) error { return p.Mouse(ctx, opts) })
+	_, err := s.steer(opts.ID, inputWait, func(p Page, ctx context.Context) error { return p.Mouse(ctx, opts) })
 	return api.None{}, err
 }
 
 // KeyInput passes one key from the pane.
 func (s *Service) KeyInput(_ context.Context, opts api.BrowserKeyOptions) (api.None, error) {
-	_, err := s.drive(opts.ID, func(p Page, ctx context.Context) error { return p.Key(ctx, opts) })
+	_, err := s.steer(opts.ID, inputWait, func(p Page, ctx context.Context) error { return p.Key(ctx, opts) })
 	return api.None{}, err
 }
 
 // TextInput types text the pane's input method committed.
 func (s *Service) TextInput(_ context.Context, opts api.BrowserTextOptions) (api.None, error) {
-	_, err := s.drive(opts.ID, func(p Page, ctx context.Context) error { return p.InsertText(ctx, opts.Text) })
+	_, err := s.steer(opts.ID, inputWait, func(p Page, ctx context.Context) error { return p.InsertText(ctx, opts.Text) })
 	return api.None{}, err
 }
 

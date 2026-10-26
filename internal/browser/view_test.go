@@ -1,6 +1,7 @@
 package browser
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -199,5 +200,22 @@ func TestResizeRestartsTheFramesOfAWatchedPage(t *testing.T) {
 	p := launch.pages[0]
 	if !p.casting || p.viewports[len(p.viewports)-1] != bigger {
 		t.Fatalf("after resize casting=%v viewports=%v, want frames at %v", p.casting, p.viewports, bigger)
+	}
+}
+
+func TestWindowInputThatTimesOutKeepsTheBrowser(t *testing.T) {
+	s, launch, out := viewService(t)
+	if _, err := s.Attach("s", Viewport{W: 800, H: 600, Scale: 1}); err != nil {
+		t.Fatal(err)
+	}
+	launch.pages[0].mouseErr = context.DeadlineExceeded
+	if _, err := s.MouseInput(t.Context(), api.BrowserMouseOptions{ID: "s", Type: "release", Button: "left"}); err == nil {
+		t.Fatal("a mouse event Chrome never answered reported success")
+	}
+	if launch.pages[0].closed {
+		t.Fatal("a page that missed one input event was closed")
+	}
+	if st := out.states(); !st[len(st)-1].Open {
+		t.Fatalf("last state %+v, want the browser still open", st[len(st)-1])
 	}
 }

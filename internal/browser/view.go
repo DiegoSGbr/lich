@@ -4,10 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/lichdotdev/lich/api"
 	"github.com/lichdotdev/lich/internal/events"
 )
+
+// inputWait bounds one of the pane's input events. Chrome answers one in
+// ~15ms, but an event dispatched while a navigation swaps the document can go
+// unanswered (as Puppeteer has seen); the pane's queue waits on it, so it
+// must give up long before pageWait.
+const inputWait = 2 * time.Second
 
 // errInWindow: the pane draws a headless browser, and this one moved to its
 // own window, where the person already sees it.
@@ -48,7 +55,7 @@ func (s *Service) Attach(owner string, v Viewport) (Handle, error) {
 // Detach stops the frames of a pane that closed or went off screen. The
 // browser keeps running for the agent.
 func (s *Service) Detach(owner string) error {
-	sess, err := s.drive(owner, func(p Page, ctx context.Context) error { return p.StopScreencast(ctx) })
+	sess, err := s.steer(owner, inputWait, func(p Page, ctx context.Context) error { return p.StopScreencast(ctx) })
 	if err != nil {
 		return err
 	}
@@ -69,7 +76,7 @@ func (s *Service) Resize(owner string, v Viewport) error {
 	s.mu.Lock()
 	watching := sess.watching
 	s.mu.Unlock()
-	_, err = s.drive(owner, func(p Page, ctx context.Context) error {
+	_, err = s.steer(owner, inputWait, func(p Page, ctx context.Context) error {
 		if watching {
 			return p.Screencast(ctx, v)
 		}
@@ -97,8 +104,28 @@ func (s *Service) Nav(owner, action, rawURL string) error {
 	default:
 		return fmt.Errorf("unknown browser action %q", action)
 	}
-	_, err := s.drive(owner, fn)
+	_, err := s.steer(owner, pageWait, fn)
 	return err
+}
+
+// steer runs one of the window's own calls on owner's page, bounded by wait.
+// Unlike an agent action, a call that fails leaves the browser running
+// unless its process is gone: the person is still looking at the page.
+func (s *Service) steer(owner string, wait time.Duration, fn func(Page, context.Context) error) (*session, error) {
+	sess, err := s.live(owner)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	if err := fn(sess.page, ctx); err != nil {
+		if !sess.alive() {
+			s.drop(sess)
+		}
+		return nil, err
+	}
+	s.touch(sess)
+	return sess, nil
 }
 
 // Running is every browser this process runs, for a window catching up.
