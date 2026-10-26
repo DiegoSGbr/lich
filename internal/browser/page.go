@@ -1,6 +1,10 @@
 package browser
 
-import "context"
+import (
+	"context"
+
+	"github.com/chromedp/cdproto/network"
+)
 
 // Handle is what Open and OpenVisible return: the id later calls take, and
 // enough for a card or a tool result to say which window it is.
@@ -73,6 +77,10 @@ type Page interface {
 	Forward(ctx context.Context) error
 	Scroll(ctx context.Context, dy int) error
 	Focus(ctx context.Context) error
+	// Cookies and SetCookies carry a browser's cookies, session ones included,
+	// into the process that replaces it.
+	Cookies(ctx context.Context) ([]*network.CookieParam, error)
+	SetCookies(ctx context.Context, cookies []*network.CookieParam) error
 	Alive() bool
 	Close() error
 }

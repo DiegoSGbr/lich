@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"sync"
+
+	"github.com/chromedp/cdproto/network"
 )
 
 // fakePage is a Page that never talks to Chrome. Tests inject it through
@@ -21,6 +23,8 @@ type fakePage struct {
 	forwards    int
 	scrolled    []int
 	focused     int
+	cookies     []*network.CookieParam
+	setCookies  []*network.CookieParam
 	info        PageInfo
 	shotErr     error
 	navErr      error
@@ -143,14 +147,38 @@ func (p *fakePage) Focus(context.Context) error {
 	return nil
 }
 
-type fakeLauncher struct {
-	pages  []*fakePage
-	headed []bool
+func (p *fakePage) Cookies(context.Context) ([]*network.CookieParam, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cookies, nil
 }
 
-func (f *fakeLauncher) launch(_ string, headed bool) (Page, error) {
+func (p *fakePage) SetCookies(_ context.Context, cookies []*network.CookieParam) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.setCookies = append(p.setCookies, cookies...)
+	return nil
+}
+
+type fakeLauncher struct {
+	mu     sync.Mutex
+	pages  []*fakePage
+	headed []bool
+	dirs   []string
+	// gate, when set, runs before the page exists: a test holds a launch open
+	// with it to see what else the service lets through meanwhile.
+	gate func()
+}
+
+func (f *fakeLauncher) launch(dir string, headed bool) (Page, error) {
+	if f.gate != nil {
+		f.gate()
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	p := &fakePage{url: "about:blank"}
 	f.pages = append(f.pages, p)
 	f.headed = append(f.headed, headed)
+	f.dirs = append(f.dirs, dir)
 	return p, nil
 }

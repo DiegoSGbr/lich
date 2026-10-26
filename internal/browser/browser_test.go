@@ -4,8 +4,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/chromedp/cdproto/network"
 )
 
 func testService(t *testing.T, launch *fakeLauncher) *Service {
@@ -376,5 +379,90 @@ func TestInfoReturnsPageInfoWithoutDroppingTheBrowser(t *testing.T) {
 	list, _ := s.List("s")
 	if len(list) != 1 {
 		t.Fatal("Info dropped the browser")
+	}
+}
+
+func TestIdleReaperKeepsHeadedWindow(t *testing.T) {
+	launch := &fakeLauncher{}
+	s := testService(t, launch)
+
+	if _, err := s.OpenVisible("s"); err != nil {
+		t.Fatal(err)
+	}
+	later := time.Date(2026, 8, 16, 13, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return later }
+	s.Reap()
+	if launch.pages[0].closed {
+		t.Fatal("reaper closed a window a person may be using; only the card closes it")
+	}
+}
+
+func TestOpenVisibleKeepsProfileAndCookies(t *testing.T) {
+	launch := &fakeLauncher{}
+	s := testService(t, launch)
+
+	if _, err := s.Open("s", "https://example.com/app"); err != nil {
+		t.Fatal(err)
+	}
+	sid := &network.CookieParam{Name: "sid", Value: "1", Domain: "example.com", Path: "/"}
+	launch.pages[0].cookies = []*network.CookieParam{sid}
+
+	if _, err := s.OpenVisible("s"); err != nil {
+		t.Fatal(err)
+	}
+	if launch.dirs[1] != launch.dirs[0] {
+		t.Fatalf("window launched on profile %q, headless was on %q", launch.dirs[1], launch.dirs[0])
+	}
+	if _, err := os.Stat(launch.dirs[0]); err != nil {
+		t.Fatalf("profile dir gone after promotion: %v", err)
+	}
+	got := launch.pages[1].setCookies
+	if len(got) != 1 || got[0].Name != "sid" || got[0].Value != "1" {
+		t.Fatalf("window cookies = %+v, want the headless session's sid", got)
+	}
+	if nav := launch.pages[1].navigations; len(nav) != 1 || nav[0] != "https://example.com/app" {
+		t.Fatalf("window navigations = %v", nav)
+	}
+}
+
+func TestLaunchDoesNotHoldOtherSessions(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	var once sync.Once
+	launch := &fakeLauncher{}
+	launch.gate = func() {
+		first := false
+		once.Do(func() { first = true })
+		if first {
+			close(entered)
+			<-release
+		}
+	}
+	s := testService(t, launch)
+
+	slow := make(chan error, 1)
+	go func() {
+		_, err := s.Open("slow", "https://example.com")
+		slow <- err
+	}()
+	<-entered
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.List("other")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("one session's Chrome launch held every other session's browser call")
+	}
+	close(release)
+	if err := <-slow; err != nil {
+		t.Fatal(err)
 	}
 }

@@ -16,8 +16,13 @@ Closing that window does not quit lich. Closing the session closes the sidecar.
 
 - none yet → headed window at `about:blank`
 - already headed → focus that window
-- headless only (the agent opened first) → replace it with a headed window at
-  the same URL. chromedp cannot show a headless process in place
+- headless only (the agent opened first) → reopen it as a headed window at
+  the same URL, on the same profile, with its cookies (session ones
+  included). chromedp cannot show a headless process in place, so what lives
+  only in the page, a half-filled form or sessionStorage, does not survive
+
+A headless browser nobody used for five minutes is closed. A headed window is
+not: lich cannot see a person using it, so only the card closing ends it.
 
 The agent without the menu uses `browser_open`: headless if nobody asked for a
 window, and the headed one if the person already did. MCP and `lich browser`

@@ -913,10 +913,12 @@ work when nobody knows it and that the call site never shows. The mechanism and 
 - **A session's browser is a second Chromium, one per card** (`internal/browser`,
   `docs/browser-tab.md`): the card menu opens a headed window of the system
   Chrome, Edge, Chromium, Brave or Vivaldi, never a page inside lich. The agent
-  drives that same window. A headless one the agent opened first is replaced by
-  a headed window at the same URL, because chromedp cannot show a headless
-  process. Closing the card, or the session's process ending, closes it; closing
-  the browser window does not close the session. It loads only http, https and
+  drives that same window. A headless one the agent opened first is reopened
+  as a headed window on the same profile, carrying the URL and every cookie,
+  because chromedp cannot show a headless process; a half-filled form or
+  sessionStorage is lost on the way. Closing the card, or the session's process
+  ending, closes it; closing the browser window does not close the session. A
+  headless browser idle for five minutes is closed, a headed window never is. It loads only http, https and
   about:blank. Page info never includes a form's value. Screenshots are files.
   There is no tool that runs JavaScript in the page. It is not a sandbox: the
   page runs as the user, in an ephemeral profile.

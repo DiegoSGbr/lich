@@ -417,11 +417,11 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 	term.SetWorkerUnanswered(rl.WorkerUnanswered)
 	term.SetSessionClosed(func(id, closerID string) {
 		rl.SessionClosed(id, closerID)
-		_ = brows.CloseOwnedBy(id)
+		closeSessionBrowser(brows, id)
 	})
 	term.SetSessionExited(func(id string) {
 		rl.SessionExited(id)
-		_ = brows.CloseOwnedBy(id)
+		closeSessionBrowser(brows, id)
 	})
 	term.SetErrandStatus(rl.Status)
 	// Both questions the relay asks about a provider — whether its sessions
@@ -466,7 +466,17 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 	term.Mount("/drop", http.HandlerFunc(drops.Upload))
 	term.Mount("/blob", http.HandlerFunc(proj.ServeBlob))
 	term.Mount("/events", hub)
-	return sys, func() { _ = brows.Cleanup() }
+	return sys, func() {
+		if err := brows.Cleanup(); err != nil {
+			slog.Warn("close the session browsers on exit", "err", err)
+		}
+	}
+}
+
+func closeSessionBrowser(brows *browser.Service, id string) {
+	if err := brows.CloseOwnedBy(id); err != nil {
+		slog.Warn("close a session's browser", "session", id, "err", err)
+	}
 }
 
 // run serves the loopback listener, opens the window on it (the native one,

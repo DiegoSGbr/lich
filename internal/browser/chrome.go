@@ -8,8 +8,11 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/input"
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
+	"github.com/chromedp/cdproto/storage"
 	"github.com/chromedp/chromedp"
 	"github.com/lichdotdev/lich/internal/chromium"
 )
@@ -19,6 +22,10 @@ import (
 // every image and tracker: the page is already on screen and the tool is
 // still held, up to pageWait. Past this, the agent reads whatever is there.
 const domSettle = 1500 * time.Millisecond
+
+// closeWait bounds a graceful Browser.close: long enough for Chrome to flush
+// the profile a promotion reopens, short enough that a hung one is killed.
+const closeWait = 5 * time.Second
 
 // chromeLaunch starts a Chromium-family browser via CDP. ExecPath is
 // chromium.FindBrowser (system Chrome/Edge/… — never lich-shell); UserDataDir
@@ -53,10 +60,17 @@ type chromePage struct {
 
 func (p *chromePage) Alive() bool { return p.ctx.Err() == nil }
 
+// Close asks Chrome to quit instead of killing it, so cookies and storage
+// reach the profile on disk before promote relaunches on it.
 func (p *chromePage) Close() error {
-	p.cancel()
-	p.allocCancel()
-	return nil
+	defer p.allocCancel()
+	defer p.cancel()
+	if p.ctx.Err() != nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(p.ctx, closeWait)
+	defer cancel()
+	return chromedp.Cancel(ctx)
 }
 
 // run drives CDP on the allocator context chromedp attached, applying wait's
@@ -104,9 +118,14 @@ func (p *chromePage) Type(ctx context.Context, text string, clear bool, t Target
 		}
 	}
 	if clear {
+		// Assigning el.value fires no input event, so a framework that owns the
+		// field keeps its old value; a delete through the editing commands does.
 		err := p.run(ctx, chromedp.Evaluate(`(() => {
 			const el = document.activeElement;
-			if (el && 'value' in el) el.value = '';
+			if (!el) return;
+			if (typeof el.select === 'function') el.select();
+			else document.execCommand('selectAll');
+			document.execCommand('delete');
 		})()`, nil))
 		if err != nil {
 			return err
@@ -203,8 +222,46 @@ func (p *chromePage) Scroll(ctx context.Context, dy int) error {
 	return p.run(ctx, chromedp.Evaluate(fmt.Sprintf("window.scrollBy(0, %d)", dy), nil))
 }
 
+// Focus raises the window. window.focus() from the page does not: the OS
+// only lets the browser itself bring a window forward.
 func (p *chromePage) Focus(ctx context.Context) error {
-	return p.run(ctx, chromedp.Evaluate("window.focus()", nil))
+	return p.run(ctx, page.BringToFront())
+}
+
+func (p *chromePage) Cookies(ctx context.Context) ([]*network.CookieParam, error) {
+	var cookies []*network.Cookie
+	err := p.run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		var err error
+		cookies, err = storage.GetCookies().Do(ctx)
+		return err
+	}))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*network.CookieParam, 0, len(cookies))
+	for _, c := range cookies {
+		out = append(out, cookieParam(c))
+	}
+	return out, nil
+}
+
+func (p *chromePage) SetCookies(ctx context.Context, cookies []*network.CookieParam) error {
+	return p.run(ctx, storage.SetCookies(cookies))
+}
+
+// cookieParam turns a cookie read back into one Chrome accepts. A session
+// cookie keeps no expiry, so it stays a session cookie in the new process.
+func cookieParam(c *network.Cookie) *network.CookieParam {
+	param := &network.CookieParam{
+		Name: c.Name, Value: c.Value, Domain: c.Domain, Path: c.Path,
+		Secure: c.Secure, HTTPOnly: c.HTTPOnly, SameSite: c.SameSite, Priority: c.Priority,
+		SourceScheme: c.SourceScheme, SourcePort: c.SourcePort, PartitionKey: c.PartitionKey,
+	}
+	if !c.Session {
+		expires := cdp.TimeSinceEpoch(time.Unix(0, int64(c.Expires*float64(time.Second))))
+		param.Expires = &expires
+	}
+	return param
 }
 
 // withPageDeadline hangs wait's timeout off the chromedp page context. A

@@ -10,7 +10,7 @@ var errNoBrowser = fmt.Errorf("no browser for this session — open one first")
 
 func (s *Service) live(id string) (*session, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	s.reapLocked()
 	sess := s.lookupLocked(id)
 	if sess == nil {
@@ -29,9 +29,9 @@ func (s *Service) touch(sess *session) {
 
 func (s *Service) drop(sess *session) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	if s.byID[sess.id] == sess {
-		_ = s.destroyLocked(sess)
+		s.buryLocked(sess)
 	}
 }
 
@@ -142,7 +142,7 @@ func (s *Service) Navigate(id, rawURL string) (Handle, error) {
 		return Handle{}, err
 	}
 	s.remember(sess, u, "")
-	return sess.handle(), nil
+	return s.handleOf(sess), nil
 }
 
 // Reload reloads the current page.
