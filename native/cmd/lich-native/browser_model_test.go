@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/lichdotdev/lich/api"
+	"github.com/lichdotdev/lich/native/backend"
 )
 
 func TestOpenBrowserTabShowsTheSessionBesideItsPage(t *testing.T) {
@@ -125,5 +126,24 @@ func TestTypedURL(t *testing.T) {
 	}
 	if displayURL("about:blank") != "" || displayURL("https://x.dev") != "https://x.dev" {
 		t.Fatal("displayURL")
+	}
+}
+
+func TestALayoutOfHomeSessionsComesOnScreen(t *testing.T) {
+	m, _ := newLayoutsModel(t)
+	m.projects = append(m.projects, backend.Project{ID: "home", Name: "~", Path: "/home/u", Sessions: []backend.Session{{ID: "h1", Label: "home one"}, {ID: "h2", Label: "home two"}}})
+	m.homeID = "home"
+	ctx := context.Background()
+	if !m.openBrowserTab(ctx, "h1", false) {
+		t.Fatal("refused a Home session")
+	}
+	if id, _, active := layoutScreen(t, m); id == "" || active != "h1" {
+		t.Fatalf("layout %q active %q: a Home session's browser tab stayed off screen", id, active)
+	}
+	if !m.splitBeside(ctx, "h2", "notes", edgeRight, false) {
+		t.Fatal("split refused")
+	}
+	if id, _, _ := layoutScreen(t, m); id == "" {
+		t.Fatal("a split holding a Home session stayed off screen")
 	}
 }

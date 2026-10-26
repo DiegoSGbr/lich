@@ -124,7 +124,7 @@ func (m *model) shownLayoutTab() (layoutTab, bool) {
 }
 
 func (m *model) shownLayoutLocked() (layoutTab, bool) {
-	if m.shownLayout == "" || m.home {
+	if m.shownLayout == "" {
 		return layoutTab{}, false
 	}
 	t := m.layouts.byID(m.shownLayout)
@@ -243,7 +243,7 @@ func (m *model) closeLayout(ctx context.Context, id string) {
 func (m *model) toggleZoom() {
 	m.mu.Lock()
 	t := m.layouts.byID(m.shownLayout)
-	if t == nil || m.home {
+	if t == nil {
 		m.mu.Unlock()
 		return
 	}
@@ -459,7 +459,7 @@ func (m *model) movePane(ctx context.Context, source, target string, edge paneEd
 func (m *model) rotateFocused() bool {
 	m.mu.Lock()
 	t := m.layouts.byID(m.shownLayout)
-	if t == nil || m.home || !t.rotate(t.Focus) {
+	if t == nil || !t.rotate(t.Focus) {
 		m.mu.Unlock()
 		return false
 	}
