@@ -57,7 +57,7 @@ func projectBranches(d *rpc.Handler, s *project.Service) {
 func projectPullRequests(d *rpc.Handler, s *project.Service) {
 	rpc.Handle(d, api.ProjectGitHubAccounts, s.GitHubAccounts)
 	rpc.Handle(d, api.ProjectIssue, s.Issue)
-	rpc.Handle(d, api.ProjectPullRequest, s.PullRequest)
+	rpc.Handle(d, api.ProjectRecheckPullRequest, s.RecheckPullRequest)
 	rpc.Handle(d, api.ProjectListPullRequests, s.ListPullRequests)
 	rpc.Handle(d, api.ProjectPullRequestDetail, s.PullRequestDetail)
 	rpc.Handle(d, api.ProjectPullRequestConversation, s.PullRequestConversation)
@@ -80,4 +80,6 @@ func projectPullRequestWrites(d *rpc.Handler, s *project.Service) {
 	rpc.Handle(d, api.ProjectDeleteReviewComment, s.DeleteReviewComment)
 	rpc.Handle(d, api.ProjectReplyToReviewThread, s.ReplyToReviewThread)
 	rpc.Handle(d, api.ProjectResolveReviewThread, s.ResolveReviewThread)
+	rpc.Handle(d, api.ProjectAwaitThreadFix, s.AwaitThreadFix)
+	rpc.Handle(d, api.ProjectThreadFixes, s.ThreadFixes)
 }

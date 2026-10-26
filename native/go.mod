@@ -9,7 +9,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/go-text/typesetting v0.3.5
 	github.com/godbus/dbus/v5 v5.2.2
-	github.com/lichdotdev/godemirror v0.8.0
+	github.com/lichdotdev/godemirror v0.8.1
 	github.com/lichdotdev/lich v0.0.0
 	github.com/yuin/goldmark v1.4.13
 	golang.org/x/exp/shiny v0.0.0-20261009195045-ca0d7ba23607
@@ -22,7 +22,7 @@ require (
 	github.com/alecthomas/chroma/v2 v2.27.0 // indirect
 	github.com/dlclark/regexp2/v2 v2.2.1 // indirect
 	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0 // indirect
-	golang.org/x/net v0.48.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 )
 
@@ -31,8 +31,10 @@ require (
 // deletion with Ctrl off macOS, Wayland fixes for EGL vsync, clipboard reads,
 // pointer.Leave and the cursor (cursor-shape-v1), an undecorated window that
 // moves, resizes and maximizes on Wayland and X11, app.TrafficLights (macOS's
-// buttons on an undecorated window), and the Editor's scroll offset (the
-// textarea's scrollbar). Every patch of ours lands on that branch.
-replace gioui.org => github.com/lichdotdev/gio v0.0.0-20261022192911-12496229bb5d
+// buttons on an undecorated window), the Editor's scroll offset (the
+// textarea's scrollbar), and text.WithOutsideCollection (the runes a shaper's
+// faces lack, which loads the CJK faces when CJK text first comes up). Every
+// patch of ours lands on that branch.
+replace gioui.org => github.com/lichdotdev/gio v0.0.0-20261023212558-16fb17377a9b
 
 replace github.com/lichdotdev/lich => ../

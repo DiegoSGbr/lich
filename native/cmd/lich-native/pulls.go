@@ -103,6 +103,10 @@ type pullsScreen struct {
 	files filesInput
 	// sessionsIn is the project's sessions sitting in a checkout.
 	sessionsIn func(projectID, path string) []string
+	// sessionLabel names a session.
+	sessionLabel func(id string) string
+	// waiting is whether a review thread waits for the push that resolves it.
+	waiting func(threadID string) bool
 }
 
 // reviewSession is where the pull request's comments go: a session in the
@@ -155,6 +159,10 @@ func (p *pullsScreen) setFocused(focused bool) {
 	}
 	p.focused = focused
 }
+
+// prRecheck is how long the Pulls screen believes what it shows before reading
+// it again.
+const prRecheck = time.Minute
 
 // recheck owes what the screen shows a newer answer once prRecheck has passed
 // since the last one: a push or a merge made outside lich announces nothing.

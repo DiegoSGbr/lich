@@ -109,8 +109,10 @@ type window struct {
 	commentEdit commentEditDialog
 	dock        *dock
 	sidebar     *sidebar
-	footer      *footer
-	topbar      *topbar
+	// console is what a service's console keeps between frames.
+	console serviceConsole
+	footer  *footer
+	topbar  *topbar
 	// settings is the Settings screen, drawn over the stage while open.
 	settings *settingsScreen
 	gate     *spawnGate
@@ -176,6 +178,8 @@ type window struct {
 	// fontsLanguage is the language the interface's CJK faces were last
 	// picked for.
 	fontsLanguage i18n.Locale
+	// cjkSeen is set once the interface has had CJK to draw (noteOutsideFaces).
+	cjkSeen atomic.Bool
 	// trayLanguage is the language the tray's words were last sent in, unset
 	// until the tray is up.
 	trayLanguage atomic.Value
@@ -219,6 +223,7 @@ func run(w *app.Window, rt backend.Runtime) error {
 	u.terms.toaster = &u.toaster
 	u.terms.profileGone = u.profileGone
 	u.sidebar = newSidebar(&u.root)
+	u.console = newServiceConsole()
 	u.palette = newCommandPalette(w.Invalidate)
 	u.worktree = newWorktreeDialog(client, &u.root, w.Invalidate)
 	u.pulls = newPullsScreen(newPullsStore(ctx, client, w.Invalidate), &u.root)
@@ -226,9 +231,12 @@ func run(w *app.Window, rt backend.Runtime) error {
 		ids, _, _ := u.model.sessionsAt(projectID, path)
 		return ids
 	}
+	u.pulls.sessionLabel = u.model.sessionLabel
+	u.pulls.waiting = u.model.threadFixes.has
 	u.model.prChanged = u.prChanged
 	u.model.themeSelection = u.appearance.applySelection
 	u.model.exited = u.sessionExited
+	u.model.serviceReveal = u.revealService
 	u.model.duplicate = u.warnDuplicate
 	u.model.browserOpened = u.offerBrowser
 	u.model.pluginIncompatible = func() { go u.checkPlugin() }
@@ -253,6 +261,8 @@ func run(w *app.Window, rt backend.Runtime) error {
 	}
 	u.settings = newSettingsScreen(ctx, client, &u.root, w.Invalidate)
 	u.settings.notify = u.notifier
+	u.settings.services.store = &u.model.services
+	u.settings.services.home = u.model.homeProject
 	u.settings.promptUpdate = u.promptAppUpdate
 	u.footer = newFooter(ctx, client, &u.root, u.model.usage, u.model.quota, w.Invalidate)
 	u.gate = &spawnGate{probe: client, invalidate: w.Invalidate, park: u.parkSession, notify: func(t ui.Toast) { u.toaster.Show(t) }}
@@ -288,7 +298,7 @@ func run(w *app.Window, rt backend.Runtime) error {
 	u.settings.theme = newThemePicker(ctx, client, u.appearance, &u.toaster, &u.root)
 	u.dock.tab = map[string]dockTab{"code": dockCode, "review": dockReview}[*flagTab]
 	u.footer.dock = u.dock
-	u.footer.openPullRequest = u.showPulls
+	u.footer.openPullRequest = u.openPR
 	u.footer.writePaste = u.terms.writePaste
 	u.footer.showDelegates = func(id string) { u.layoutStage.delegates = id }
 	u.settings.footer = u.footer
@@ -351,7 +361,7 @@ func (u *window) connect() error {
 	if err != nil {
 		return err
 	}
-	stream, _, err := u.client.Terminal(u.ctx, func(id string, data []byte) { u.terms.onOutput(id, data) })
+	stream, _, err := u.client.Terminal(u.ctx, u.terms.onOutput, u.terms.onReplay)
 	if err != nil {
 		return err
 	}
@@ -360,6 +370,14 @@ func (u *window) connect() error {
 		return err
 	}
 	if err := u.model.hydrateTurnStates(u.ctx); err != nil {
+		return err
+	}
+	// After /events attached, like the turn states: a change from here on
+	// lands on top of what this read.
+	if err := u.model.services.load(u.ctx, u.client); err != nil {
+		return err
+	}
+	if err := u.model.threadFixes.load(u.ctx, u.client); err != nil {
 		return err
 	}
 	// A stored value this build cannot read starts the window with no
@@ -431,6 +449,7 @@ func (u *window) connect() error {
 		}
 	}
 	u.shortcuts.open = *flagShortcuts
+	u.servicesShot()
 	u.paletteShot()
 	u.worktreeShot()
 	u.pullsShot()
@@ -555,8 +574,12 @@ type stageView struct {
 	// layout is the layout on screen when hasLayout, with each pane's
 	// session; mixed is its panes coming from more than one project, whose
 	// names and paths the headers read.
-	layout       layoutTab
-	hasLayout    bool
+	layout    layoutTab
+	hasLayout bool
+	// console is the service whose console is on screen in place of the
+	// active session, when hasConsole.
+	console      backend.Service
+	hasConsole   bool
 	panes        map[string]sessionView
 	mixed        bool
 	projectNames map[string]string
@@ -570,6 +593,10 @@ func (u *window) stageView(now time.Time) stageView {
 	v.tabs, v.project = u.model.projectTabs()
 	v.strip, v.stripActive = u.model.stripTabs()
 	v.layout, v.hasLayout = u.model.shownLayoutTab()
+	if id := u.model.consoleShown(); id != "" && shown {
+		v.console, v.hasConsole = u.model.services.byID(id)
+		v.hasLayout = v.hasLayout && !v.hasConsole
+	}
 	if v.hasLayout {
 		v.panes = u.model.viewsOf(v.layout.sessions(), now)
 		v.projectNames, v.projectPaths = u.model.projectNamesAndPaths()
@@ -592,7 +619,11 @@ func (u *window) body(gtx C, v stageView) (int, sidebarAction, error) {
 	column := gtx
 	column.Constraints.Min = image.Point{}
 	edge := layout.Inset{Left: gutter, Right: gutter, Bottom: gutter}.Layout(column, func(gtx C) D {
-		d, a := u.sidebar.layout(gtx, u.theme, u.model, v.active.ID)
+		active := v.active.ID
+		if v.hasConsole {
+			active = ""
+		}
+		d, a := u.sidebar.layout(gtx, u.theme, u.model, active)
 		act = a
 		return d
 	}).Size.X
@@ -654,6 +685,8 @@ func (u *window) island(gtx C, v stageView, termWidth int) error {
 	case v.home:
 		homeView(gtx, u.theme.On(fill), &u.homeOpen)
 		return nil
+	case v.hasConsole:
+		return u.consoleIsland(gtx, v.console, termWidth)
 	case v.hasLayout:
 		return u.layoutIsland(gtx, v)
 	case !v.hasActive:
@@ -680,7 +713,7 @@ func (u *window) island(gtx C, v stageView, termWidth int) error {
 // focusedCard is the session whose terminal takes the keys, "" for none.
 func focusedCard(v stageView) string {
 	switch {
-	case v.home:
+	case v.home, v.hasConsole:
 		return ""
 	case v.hasLayout:
 		return v.layout.Focus
@@ -693,6 +726,12 @@ func focusedCard(v stageView) string {
 // islandColor is the terminal's own background while it is on the island,
 // else the theme's.
 func (u *window) islandColor(v stageView) color.NRGBA {
+	if v.hasConsole && !v.home {
+		if bg := u.terms.backgroundOf(v.console.Terminal); bg.A != 0 {
+			return bg
+		}
+		return u.theme.Background
+	}
 	if v.home || !v.hasActive || v.hasLayout {
 		return u.theme.Background
 	}
@@ -836,6 +875,7 @@ func (u *window) terminalTakesKeys(gtx C) bool {
 }
 
 func (u *window) apply(act sidebarAction) {
+	u.applyService(act.service)
 	if act.activate != "" {
 		u.settings.hide()
 		u.pulls.hide()
@@ -861,9 +901,7 @@ func (u *window) apply(act sidebarAction) {
 	if act.close != "" {
 		u.closeSession(act.close)
 	}
-	if act.openPR != 0 {
-		u.showPulls(act.openPR)
-	}
+	u.openPR(act.openPR, act.openPRURL)
 	if act.pin != "" && u.model.setPinned(act.pin, act.pinTo) {
 		u.model.invalidate()
 		id, pinned := act.pin, act.pinTo

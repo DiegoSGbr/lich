@@ -17,6 +17,7 @@ import (
 
 	"github.com/lichdotdev/lich/api"
 	"github.com/lichdotdev/lich/internal/agentplugin"
+	"github.com/lichdotdev/lich/internal/appkit"
 	"github.com/lichdotdev/lich/internal/appupdate"
 	"github.com/lichdotdev/lich/internal/browser"
 	"github.com/lichdotdev/lich/internal/claudeprofile"
@@ -34,6 +35,7 @@ import (
 	"github.com/lichdotdev/lich/internal/restart"
 	"github.com/lichdotdev/lich/internal/routes"
 	"github.com/lichdotdev/lich/internal/rpc"
+	"github.com/lichdotdev/lich/internal/services"
 	"github.com/lichdotdev/lich/internal/shellintegration"
 	"github.com/lichdotdev/lich/internal/singleton"
 	"github.com/lichdotdev/lich/internal/spawn"
@@ -100,7 +102,13 @@ func main() {
 	if code := cli.Run(os.Args[1:], version, os.Getenv, os.Stdout, os.Stderr); code != cli.NotACommand {
 		os.Exit(code)
 	}
+	// On macOS AppKit's loop takes the main thread, and the app runs beside it
+	// (internal/appkit).
+	appkit.Run(app)
+}
 
+// app is lich itself: the backend, its listener and its window.
+func app() {
 	noWindow := slices.Contains(os.Args[1:], restart.NoWindowArg)
 
 	configDir, err := os.UserConfigDir()
@@ -147,13 +155,17 @@ func main() {
 	// it (internal/terminal.handsOn).
 	defer term.FlushHandsOn()
 	coord := newCoordinator()
-	sys, closeBrowsers := registerServices(db, term, hub, configDir, logPath, env, launchEnv, coord)
+	svcs := services.New(db, term, hub.Emit)
+	// Deferred after the hands-on flush, so it runs first: a service's process
+	// is lich's child, and quitting lich is what stops it.
+	defer svcs.Shutdown(serviceQuitGrace)
+	sys, closeBrowsers := registerServices(db, term, svcs, hub, configDir, logPath, env, launchEnv, coord)
 	defer closeBrowsers()
 
 	coord.SetWindowOpen(hub.Attached)
 	term.SetRestart(coord.Do)
 
-	run(term, configDir, coord, startWindow(sys, noWindow), closeWindow(hub))
+	run(term, configDir, coord, svcs.Boot, startWindow(sys, noWindow), closeWindow(hub))
 }
 
 // windowStart is what a launch does about lich's window: open it, its own or
@@ -203,7 +215,7 @@ func resolveEnv() (launchEnv, env []string) {
 // in the order main built them: a service that hands another one a callback has
 // to exist first. It is lifted out of main only for its length; nothing here
 // runs anywhere else.
-func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub,
+func registerServices(db *store.Service, term *terminal.Service, svcs *services.Service, hub *events.Hub,
 	configDir, logPath string, env, launchEnv []string, coord *restart.Coordinator) (*system.Service, func()) {
 	// One Chromium per session, closed with the card and with the process.
 	// Never the lich window: this is a second browser the agent drives.
@@ -215,6 +227,10 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 	// directory, so it validates the picked one against the workspace.
 	proj.SetProjects(db.ProjectAt)
 	proj.SetEmit(hub.Emit)
+	// A review thread handed to a session waits for the pull request's next
+	// push across restarts, since the push comes whenever the agent gets there.
+	proj.SetThreadFixes(db)
+	go proj.RunThreadFixWatch()
 	// Parking a session records the branch its checkout was on, so the history
 	// search can match a branch the row is showing (store.SetBranchOf), and a
 	// copy of what was said in it, capped, so the same search reaches the
@@ -343,6 +359,13 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 		Failed: windowFailed(configDir, liveCount, coord.Quit),
 	})
 	routes.System(dispatcher, sys)
+	// macOS opens lich again by telling the running one, and ends it at logout
+	// the same way.
+	appkit.Handle(func() { showWindow(sys, "on reopen") }, func() {
+		if err := coord.Quit(); err != nil {
+			slog.Warn("quit at logout", "err", err)
+		}
+	})
 	// Deleting a session for good takes any prompt parked on it, and the row is
 	// the only copy of what the user wrote. Both channels are used, and neither
 	// is the other's fallback: the toast is what the user reading the card sees,
@@ -359,7 +382,10 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 	db.SetSessionRenamed(func(id, label string) {
 		events.Send(hub.Emit, api.SessionTitleEvent, spawn.RenamedEvent{ID: id, Label: label})
 	})
-	db.SetProjectChanged(hub.Emit)
+	db.SetProjectChanged(func(name string, data any) {
+		hub.Emit(name, data)
+		svcs.ProjectChanged(name, data)
+	})
 	providerSvc := providers.New()
 	// One resolution, three readers: the process PATH exec.LookPath resolves a
 	// binary through, what a new session inherits, and the editor lookup. They
@@ -444,6 +470,12 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 	// The scheduled prompts are the relay's other clock: nobody calls in for
 	// them, they come due.
 	go rl.RunSchedules()
+	// The pull request watch reads every checkout an agent runs in, and tells
+	// its agents of a merge made outside lich as the Pulls screen tells them
+	// of its own.
+	proj.SetAgentCheckouts(rl.AgentCheckouts)
+	proj.SetAnnounceMerge(rl.AnnounceMerge)
+	go proj.RunBranchPRWatch()
 	// A turn a usage limit ended is picked up again once it resets, through
 	// the same scheduled prompt. Codex reports no end for that turn, so the
 	// terminal watches its open turns for one.
@@ -461,7 +493,15 @@ func registerServices(db *store.Service, term *terminal.Service, hub *events.Hub
 	// The tray is what a lich with its window closed shows of itself; it comes
 	// up once the window hands it its words (tray.SetLabels).
 	trayIcon := tray.New(trayIcons(), func() { showWindow(sys, "from the tray") }, coord.Quit, liveCount)
+	trayIcon.SetServices(tray.Services{
+		Running: svcs.Running,
+		Reveal:  svcs.Reveal,
+		Stop:    func(id string) { logServiceError(svcs.Stop(context.Background(), api.ServiceIDOptions{ID: id})) },
+		Restart: func(id string) { logServiceError(svcs.Restart(context.Background(), api.ServiceIDOptions{ID: id})) },
+		StopAll: svcs.StopRunning,
+	})
 	routes.Tray(dispatcher, trayIcon)
+	routes.Services(dispatcher, svcs)
 	term.Mount("/rpc/", dispatcher)
 	term.Mount("/drop", http.HandlerFunc(drops.Upload))
 	term.Mount("/blob", http.HandlerFunc(proj.ServeBlob))
@@ -483,11 +523,14 @@ func closeSessionBrowser(brows *browser.Service, id string) {
 // a process of its own) and serves until lich is told to quit. The window is
 // not the app's lifecycle: closing it leaves every session running, and a
 // second launch opens a new one on them (handleBindFailure).
-func run(term *terminal.Service, configDir string, coord *restart.Coordinator, start windowStart, closeNative func()) {
+func run(term *terminal.Service, configDir string, coord *restart.Coordinator, boot func(), start windowStart, closeNative func()) {
 	info := term.Transport()
 	if info.Port == 0 {
 		handleBindFailure(configDir, term.TransportError(), start.openRunning) // never returns
 	}
+	// Past the bind check: a lich that lost the port to one already running
+	// would otherwise start a second copy of every service before it exits.
+	boot()
 
 	// The runtime file lets install.sh reach a running lich for /restart when it
 	// runs outside a lich terminal (no LICH_PORT/LICH_TOKEN in the env), and lets
@@ -613,6 +656,17 @@ func handleBindFailure(configDir string, cause error, openRunning func(string, *
 // close. It ends at once (os.Exit on the event); the bound is for a window
 // that never reads it, which must not keep lich from quitting.
 const windowLeaveWait = 5 * time.Second
+
+// serviceQuitGrace is how long quitting waits for the services to stop on
+// their own before killing them. Docker's own stop timeout is 10 seconds, and
+// `docker compose up` is the service this is most often.
+const serviceQuitGrace = 10 * time.Second
+
+func logServiceError(_ api.None, err error) {
+	if err != nil {
+		slog.Warn("tray: service action", "err", err)
+	}
+}
 
 // closeWindow tells the native window to close and waits for its process to
 // end, so a Windows update that runs once lich has exited finds lich-native.exe

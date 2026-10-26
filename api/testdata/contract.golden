@@ -66,6 +66,7 @@ opencodeprofile.LoginCommand(ProfileSlugOptions) string
 opencodeprofile.Profiles(None) []ProfileInfo
 opencodeprofile.UpdateProfile(UpdateProfileOptions) Profile
 patchnotes.Current(PatchNotesOptions) PatchNotes
+project.AwaitThreadFix(ThreadFixOptions) None
 project.BaseFreshness(PathBranchOptions) BaseFreshness
 project.BaseStatus(PathOptions) *BaseStatus
 project.BranchRules(PathBranchOptions) *BranchRules
@@ -99,7 +100,6 @@ project.Missing(PathsOptions) []string
 project.Open(None) *OpenedProject
 project.PickFile(PickFileOptions) string
 project.PickSaveFile(PickSaveFileOptions) string
-project.PullRequest(PathOptions) *PullRequest
 project.PullRequestConflicts(PRConflictsOptions) []string
 project.PullRequestConversation(NumberOptions) *PRConversation
 project.PullRequestDetail(NumberOptions) *PRDetail
@@ -107,6 +107,7 @@ project.PullRequestDiff(NumberOptions) string
 project.PullRequestMergeBase(NumberOptions) string
 project.ReadFile(CheckoutFileOptions) string
 project.ReadFileAt(ReadFileAtOptions) string
+project.RecheckPullRequest(PathOptions) None
 project.Relocate(ProjectIDOptions) *OpenedProject
 project.RemoveWorktree(RemoveWorktreeOptions) None
 project.ReplyToReviewThread(PRCommentBodyOptions) None
@@ -115,6 +116,7 @@ project.RestoreLines(RestoreLinesOptions) None
 project.RevertLines(RevertLinesOptions) RevertResult
 project.Search(SearchOptions) SearchResult
 project.SubmitReview(SubmitReviewOptions) None
+project.ThreadFixes(None) []ThreadFix
 project.Tree(PathOptions) FileListing
 project.WorktreeAdopted(PathOptions) bool
 project.WorktreeDirty(PathOptions) bool
@@ -139,6 +141,16 @@ relay.SendPrivate(SendOptions) SendResult
 relay.SendSubagent(SendOptions) SendResult
 relay.Submit(SubmitOptions) None
 relay.Wait(WaitOptions) SendResult
+services.Delete(ServiceIDOptions) None
+services.ForceStop(ServiceIDOptions) None
+services.List(None) []Service
+services.Output(ServiceIDOptions) base64
+services.Restart(ServiceIDOptions) None
+services.Save(SaveServiceOptions) Service
+services.Start(ServiceIDOptions) None
+services.StartAll(ProjectIDOptions) None
+services.Stop(ServiceIDOptions) None
+services.StopAll(ProjectIDOptions) None
 spawn.Ask(AskSessionOptions) SessionAnswer
 spawn.Close(CloseSessionOptions) ClosedSession
 spawn.ColorFolder(ColorFolderOptions) ColoredFolder
@@ -199,7 +211,7 @@ terminal.LastTurnSaid(SessionIDOptions) LastSaid
 terminal.Live(SessionIDOptions) bool
 terminal.LiveCount(None) int
 terminal.Ready(SessionIDOptions) bool
-terminal.Replay(SessionIDOptions) string
+terminal.Replay(SessionIDOptions) bool
 terminal.Resize(ResizeOptions) None
 terminal.ResumeAvailable(ResumeAvailableOptions) bool
 terminal.SearchTranscripts(SearchTranscriptsOptions) []TranscriptMatch
@@ -221,6 +233,7 @@ themes.UpdateFromGit(UpdateThemeOptions) ThemeGitResult
 tray.SetLabels(TrayLabels) None
 
 event appupdate-progress AppUpdateProgress
+event branch-pull-request BranchPullRequest
 event browser-agent BrowserAgentAct
 event browser-state BrowserState
 event browser:frame:<id> string
@@ -234,6 +247,8 @@ event project-closed ProjectClosed
 event project-opened Project
 event projects-reordered ProjectsReordered
 event pull-request-changed PRChanged
+event service-reveal ServiceIDOptions
+event services []Service
 event session-agent SessionAgent
 event session-closed SessionClosed
 event session-conversation SessionConversation
@@ -260,6 +275,7 @@ event sessions-filed SessionsFiled
 event terminal:data:<id> string
 event terminal:exit:<id> SessionExit
 event theme-selection ThemeSelection
+event thread-fixes []ThreadFix
 event window-close None
 event window-raise None
 
@@ -470,6 +486,13 @@ PatchNotes {
 	groups []PatchNotesGroup
 }
 
+ThreadFixOptions {
+	path string
+	number int
+	threadId string
+	commentId int64
+}
+
 PathBranchOptions {
 	path string
 	branch string
@@ -647,12 +670,6 @@ PickSaveFileOptions {
 	defaultName string
 }
 
-PullRequest {
-	number int
-	url string
-	state string
-}
-
 PRConflictsOptions {
 	path string
 	number int
@@ -748,6 +765,14 @@ SubmitReviewOptions {
 	body string
 	head string
 	comments []ReviewComment
+}
+
+ThreadFix {
+	threadId string
+	path string
+	number int
+	commentId int64
+	head string
 }
 
 FileListing {
@@ -901,6 +926,28 @@ SubmitOptions {
 WaitOptions {
 	ticket string
 	waitSeconds int
+}
+
+ServiceIDOptions {
+	id string
+}
+
+Service {
+	...ServiceConfig
+	projectName string
+	terminal string
+	state string
+	exitCode,omitempty *int
+	startedAt int64
+	stoppedAt int64
+}
+
+SaveServiceOptions {
+	id string
+	projectId string
+	name string
+	command string
+	startWithLich bool
 }
 
 AskSessionOptions {
@@ -1440,12 +1487,22 @@ TrayLabels {
 	show string
 	running string
 	quit string
+	servicesRunning string
+	showOutput string
+	restart string
+	stop string
+	stopAll string
 }
 
 AppUpdateProgress {
 	phase string
 	received int64
 	total int64
+}
+
+BranchPullRequest {
+	path string
+	pr *PullRequest
 }
 
 BrowserAgentAct {
@@ -1775,6 +1832,14 @@ QuotaWindow {
 	ahead,omitempty bool
 }
 
+ServiceConfig {
+	id string
+	projectId string
+	name string
+	command string
+	startWithLich bool
+}
+
 ParkedSession {
 	id string
 	projectId string
@@ -1804,6 +1869,15 @@ ThemeSource {
 }
 
 Syntax = map[string]SyntaxStyle
+
+PullRequest {
+	number int
+	url string
+	title string
+	state string
+	headRefName string
+	baseRefName string
+}
 
 PluginProfileFailure {
 	profile string

@@ -1,3 +1,51 @@
+## [0.79.0] - 2026-10-24
+
+> [!IMPORTANT]
+> **Quem deixa um servidor de desenvolvimento, um container ou um túnel aberto ao lado dos agentes: agora o lich
+> roda isso.** Salve uma vez em Configurações › Serviços do projeto e inicie, pare e leia cada um no fim da barra lateral.
+
+### Added
+
+- No macOS, o lich ganha um item na barra de menus: um lich com a janela fechada mostra ali que ainda está rodando as sessões, com Mostrar o lich, a contagem de sessões em execução e Encerrar o lich, como a bandeja faz no Linux e no Windows.
+- **Serviços: comandos que um projeto mantém rodando, iniciados pelo lich.** Salve um container, um túnel ou um servidor de desenvolvimento uma vez em Configurações › Serviços de um projeto e inicie-o pela linha Serviços no fim da barra lateral, acima do perfil. Fechada, a linha diz quantos estão rodando (2/3); aberta, lista cada serviço com há quanto tempo roda ou como terminou, e Iniciar, Parar e Reiniciar ao passar o mouse. Um clique abre o console dele, onde ele aceita entrada e Ctrl+C o para. Um serviço não é um terminal: quando o comando dele sai, o serviço parou, a última saída continua legível e Iniciar o executa de novo. Marque Iniciar com o lich e ele inicia toda vez que o lich inicia com o projeto aberto. Os serviços salvos em Configurações › Serviços com Global selecionado rodam na sua pasta home e aparecem na tela inicial do lich, o lugar para um `lazydocker` que você mantém aberto seja qual for o projeto. Um serviço vive enquanto a aba do projeto existir: fechar a aba o para, e reabrir o projeto inicia os salvos para iniciar com o lich. Fechar a janela os deixa rodando, e a bandeja os lista com Mostrar saída, Reiniciar e Parar; encerrar o lich os para, e a caixa de diálogo de fechamento os conta. Com a barra lateral recolhida, o botão Serviços da barra de ícones abre a mesma lista.
+
+- **Envie as threads de revisão de um pull request para a sessão dele.** Na tela Pull requests, uma thread de revisão aberta tem Enviar para a sessão ao lado de Responder e Resolver, na aba Conversa e no diff, e a aba Conversa pode enviar todas as threads abertas de uma vez. As threads vão como um único prompt para a sessão no checkout da branch, que o lich abre quando não há nenhuma, com o arquivo, as linhas, o link e todos os comentários de cada thread. A tela Pull requests continua aberta, e um toast com Abrir avisa quando a sessão as recebeu. O lich então responde a cada thread no GitHub com "Fixing this. It'll be in the next commit." e a resolve quando o pull request recebe um novo push, respondendo com o commit em que ela foi parar; até lá a thread aparece como Enviada, aguardando um push. Qualquer push a resolve, mesmo um que não a tenha tocado.
+
+### Changed
+
+- Um pull request mergeado fora do lich, no github.com, com `gh` em um terminal ou por um agente, agora é anunciado aos agentes no checkout da branch dele como um mergeado pela tela Pull requests, em até um minuto depois do merge. Antes eles continuavam achando que ele estava aberto. Ouvem os agentes que estavam rodando ali quando o lich o viu aberto e depois mergeado; um parqueado nesse momento, ou um pull request mergeado antes de o lich iniciar pela última vez, não ouve.
+- Resolver conflitos e Corrigir erros de CI na tela Pull requests não levam mais você à sessão para a qual entregam o pull request. A tela Pull requests continua aberta para você passar ao próximo pull request, a sessão inicia na barra lateral, e um toast avisa quando o agente recebeu a tarefa, com Abrir para ir até ela. Uma sessão cujo início precisa antes da sua resposta, como retomar ou não a última conversa, ainda aparece. Abrir em sessão continua indo até a sessão.
+- Os filtros rápidos sobre a lista de pull requests na tela Pull requests (Todos, Prontos, Rascunhos, Falhando) ficaram mais leves: texto pequeno com o selecionado sombreado, como nas abas do dock, dividindo a largura da lista. Um filtro sem nada fica apagado e a contagem de Falhando fica vermelha quando uma verificação falha. Eles não passam mais da borda da lista com uma fonte monoespaçada na interface.
+
+### Fixed
+
+- O selo de pull request em um card de sessão, o item de menu Pull request dele e o botão de pull request do rodapé não abrem mais o pull request errado depois que o shell da sessão passou para outro repositório. O selo mostra o pull request desse repositório, e o clique procurava o número dele entre os do próprio projeto na tela Pull requests; agora ele abre o pull request no GitHub.
+- A barra lateral recolhida mostra o perfil em que as novas sessões nascem, no fim da barra de ícones, e abre o mesmo menu do rodapé da barra lateral aberta. Antes ela não mostrava perfil nenhum.
+- Uma aba da barra superior não pode mais ficar presa levantada, desenhada na cor de destaque como se estivesse sendo arrastada, sem que nenhuma aba voltasse a se mover até o lich reiniciar. Uma aba focada por um clique e depois acionada com Espaço ou Enter era pega para reordenar pelo teclado, e depois que um clique em outro lugar levava o teclado ela não podia ser solta nem cancelada; agora ela volta ao lugar quando perde o foco. Uma aba de layout renomeada no meio de um arrastar também não fica mais presa assim.
+- Um card de sessão não cresce e encolhe mais quando o agente começa e termina uma ferramenta, espera por você ou compacta, empurrando para cima e para baixo todos os cards abaixo dele. Essa linha agora ocupa o lugar do caminho do card enquanto aparece, e o caminho volta quando ela some.
+- A janela nativa usa menos memória para as fontes. Um arquivo de fonte pedido mais de uma vez, como a interface e o terminal na mesma família ou a face negrito que também faz as vezes de seminegrito, era processado de novo a cada vez, cerca de 30MB para uma face Nerd Font; agora é processado uma vez e compartilhado enquanto está em uso. Uma interface em um idioma que não seja chinês, japonês ou coreano não carrega mais uma fonte CJK na inicialização, dezenas de megabytes: ela carrega no primeiro texto CJK na tela, desenhado nesse meio-tempo com uma fonte do sistema. Com uma Nerd Font para a interface, o terminal e o editor e sem CJK na tela, as fontes ocupam 119MB onde ocupavam 246MB.
+- No macOS, abrir o lich pelo Dock, Launchpad, Spotlight ou Finder enquanto ele roda com a janela fechada abre a janela de novo. O lich iniciado no login com `--no-window` está incluído, onde o clique não fazia nada. Sair da sessão agora encerra o lich como `lich quit` faz, então a próxima inicialização não o lê como uma falha.
+
+## [0.78.1] - 2026-10-23
+
+### Changed
+
+- Enquanto uma sessão trabalha, a janela redesenha o spinner de ocupado a 30 quadros por segundo, e não na taxa da tela; o card monta o menu de clique direito só enquanto ele está aberto, e uma caixa de diálogo fechada não monta nada.
+
+### Fixed
+
+- Branch, alterações e pull request nos cards e no rodapé se atualizam em até um segundo depois de um commit, checkout ou edição feitos fora de um turno, onde antes podiam atrasar até três segundos, e selecionar um card lê o checkout dele na hora, em vez de mostrar o que a última leitura encontrou.
+- Ocultar a lista de pull requests na tela Pull requests a recolhe na hora, onde a lista ficava na tela até o mouse se mover ou a tela Pull requests consultar o GitHub de novo. Mostrá-la outra vez também não espera mais um quadro.
+- As sessões do Kiro CLI seguem `KIRO_HOME`. Com ela definida, o lich lia as conversas, o custo e o contexto do Kiro em `~/.kiro`, enquanto o Kiro os mantinha em `KIRO_HOME`, então nada aparecia e o Histórico não listava nenhuma; o agente que carrega os hooks do lich era instalado onde o Kiro nunca olhava, e uma sessão em sandbox não recebia o diretório em que ele escreve.
+- Abrir ou fechar o dock não deixa mais o terminal da sessão cortado na borda por um instante depois que o dock para. O terminal assume a nova largura assim que o dock começa a se mover, então o agente redesenha enquanto o dock desliza, onde o terminal esperava um décimo de segundo depois que o dock parava e então dava um salto. Os terminais de um layout dividido se ajustam no instante em que o dock para.
+- Expandir a barra lateral não deixa mais o terminal da sessão na largura antiga por um instante depois que a barra se abre. O terminal assume a nova largura assim que a barra começa a se mover, como no dock, onde esperava um décimo de segundo depois que a barra parava e então dava um salto; recolhê-la também reajusta na hora. Os terminais de um layout dividido se ajustam no instante em que a barra lateral para.
+- Reabrir a janela não digita mais texto solto em uma sessão. Reconstruir um terminal a partir da saída recente respondia de novo às consultas do terminal nela, como as que o nvim envia ao iniciar, e as respostas caíam na entrada da sessão: em um shell como um `command not found`, em um agente como texto no prompt dele.
+- O terminal de uma sessão aberto enquanto ela imprime não perde mais o que foi impresso nesse momento. O backend agora entrega à janela a saída recente da sessão em linha com a saída ao vivo, então nada entre as duas se perde nem aparece duas vezes.
+- No Linux, mudar o tamanho da fonte do terminal e abrir um card pela primeira vez travam menos. Cada terminal consultava a fonte de novo pelo fontconfig a cada vez, quatro consultas de cerca de 10 ms cada uma dentro de um quadro; o lich agora lembra a resposta pelo resto da execução.
+- Mudar o tamanho da fonte do terminal não recarrega mais a fonte de todos os terminais abertos: cada um mantém a fonte que tem e só a desenha no novo tamanho.
+- Uma sessão que imprime muita saída custa menos ao backend. Cada byte a caminho da janela era copiado cerca de sete vezes para uma memória que o coletor de lixo depois precisava recuperar; agora é copiado uma vez.
+- Um comentário de bloco que abre acima de um trecho recolhido de um diff, na Revisão e na tela Pull requests, não pinta mais de comentário o código depois desse trecho. O `*/` que o fechava ficava nas linhas ocultas, então todo hunk abaixo aparecia como comentário até algum `*/` mais adiante, e só expandir o trecho resolvia. As linhas de um comentário cortado por um trecho recolhido, acima dele, ainda podem aparecer como código até que o trecho seja expandido.
+
 ## [0.78.0] - 2026-10-22
 
 ### Added

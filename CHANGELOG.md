@@ -14,11 +14,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - A session browser's open, reload, back and forward return once the page is interactive, instead of waiting for every image and tracker to finish. That wait held the agent's next action for as long as the load event took, up to 30 seconds, after the page was already on screen. A screenshot is the viewport being watched.
+- The mouse wheel in a terminal scrolls smoothly and as far as in other terminals. A notch moves three lines of the shell's history, or a full-screen program such as `less`, eased over a few frames instead of jumping some eight lines at once. A program that takes the mouse, such as nvim, Claude Code or Codex, gets one wheel step a notch and scrolls its own distance, where it used to get about eight and race through the conversation.
+
+## [0.79.0] - 2026-10-24
+
+> [!IMPORTANT]
+> **Anyone who keeps a dev server, a container or a tunnel open beside their agents: lich now runs them.** Save
+> them once in Settings › Services of a project, then start, stop and read them from the bottom of the sidebar.
+
+### Added
+
+- On macOS, lich has a menu-bar item: a lich whose window is closed shows it is still running its sessions there, with Show lich, the count of running sessions and Quit, as the tray does on Linux and Windows.
+- **Services: commands a project keeps running, started by lich.** Save a container, a tunnel or a dev server once in Settings › Services of a project, and start it from the Services row at the bottom of the sidebar, above the profile. Closed, the row says how many run (2/3); opened, it lists each service with how long it has run or how it ended, and Start, Stop and Restart on hover. A click opens its console, where it takes input and Ctrl+C stops it. A service is not a terminal: when its command exits, it has stopped, its last output stays readable, and Start runs it again. Tick Start with lich and it starts every time lich does with its project open. Services saved in Settings › Services with Global selected run in your home directory and show on lich's home screen, the place for a `lazydocker` you keep open whatever the project. A service lives as long as its project's tab: closing the tab stops it, and reopening the project starts the ones saved to start with lich. Closing the window leaves them running, and the tray lists them with Show output, Restart and Stop; quitting lich stops them, and the close dialog counts them. With the sidebar collapsed, the rail's Services button opens the same list.
+
+- **Send a pull request's review threads to its session.** On the Pulls screen, an open review thread has Send to session beside Reply and Resolve, in the Conversation tab and in the diff, and the Conversation tab can send every open thread at once. The threads go as one prompt to the session in the branch's checkout, which lich opens when there is none, with each thread's file, lines, link and every comment in it. Pulls stays on screen, and a toast with Open says when the session took them. lich then answers each thread on GitHub with "Fixing this. It'll be in the next commit." and resolves it once the pull request is pushed again, replying with the commit it landed in; until then the thread reads Sent, waiting for a push. Any push resolves it, even one that did not touch it.
+
+### Changed
+
+- A pull request merged outside lich, on github.com, with `gh` in a terminal or by an agent, is now announced to the agents in its branch's checkout as one merged from Pulls is, within a minute of the merge. They used to keep believing it was still open. The agents running there when lich sees it open and then merged hear it; one parked at that moment, or a pull request that merged before lich last started, does not.
+- Resolve conflicts and Fix CI errors in Pulls no longer take you to the session they hand the pull request to. Pulls stays on screen so you can move to the next pull request, the session starts in the sidebar, and a toast says when the agent got the task, with Open to go to it. A session whose start needs your answer first, such as whether to resume its last conversation, still comes up. Open in Session still goes to the session.
+- The quick filters over the pull request list in Pulls (All, Ready, Drafts, Failing) are lighter: small text with the selected one shaded, as in the dock's tabs, sharing the list's width. A filter with nothing in it is faded and Failing's count turns red when a check fails. They no longer run past the list's edge with a monospace interface font.
+
+### Fixed
+
+- A pull request badge on a session card, its Pull request menu item and the footer's pull request button no longer open the wrong pull request after the session's shell moved into another repository. The badge shows that repository's pull request, and the click used to look its number up among the project's own on Pulls; it now opens the pull request on GitHub instead.
+- The collapsed sidebar shows the profile new sessions are born in, at the bottom of the rail, and opens the same menu the open sidebar's footer does. It used to show no profile at all.
+- A tab in the top bar can no longer get stuck lifted, drawn in the accent color as if it were being dragged, with no tab moving again until lich restarted. A tab focused by a click and then given Space or Enter was picked up to reorder from the keyboard, and once a click elsewhere took the keyboard it could neither be dropped nor cancelled; it now goes back to its place when it loses focus. A layout tab renamed in the middle of a drag no longer gets stuck the same way.
+- A session card no longer grows and shrinks as its agent starts and stops a tool, waits on you or compacts, pushing every card below it up and down. That line now takes the place of the card's path while it shows, and the path comes back when it goes.
+- The native window holds less memory for its fonts. A font file asked for more than once, such as the interface and the terminal set in the same family or the bold face that also stands in for semibold, was parsed again each time, about 30MB for a Nerd Font face; it is now parsed once and shared while in use. An interface in a language other than Chinese, Japanese or Korean no longer loads a CJK font at start, tens of megabytes: it does on the first CJK text on screen, drawn meanwhile with a system font. With one Nerd Font for the interface, the terminal and the editor and no CJK on screen, the fonts take 119MB where they took 246MB.
+- On macOS, opening lich from the Dock, Launchpad, Spotlight or Finder while it runs with its window closed opens the window again. lich started at login with `--no-window` included, where the click did nothing. Logging out now quits lich the way `lich quit` does, so the next launch does not read it as a crash.
+
+## [0.78.1] - 2026-10-23
+
+### Changed
+
+- While a session works, the window redraws its busy spinner at 30 frames a second rather than at the display's rate, a card builds its right-click menu only while that menu is open, and a dialog that is shut builds nothing at all.
+
+### Fixed
+
 - Branch, changes and pull request on the cards and the footer catch up within a second of a commit, checkout or edit made outside a turn, where they could lag up to three seconds, and selecting a card reads its checkout at once instead of showing what the last read found.
 - Hiding the pull request list in Pulls slides it away at once, where the list stayed on screen until the mouse moved or Pulls next checked GitHub. Showing it again no longer waits a frame either.
 - Kiro CLI sessions follow `KIRO_HOME`. With it set, lich read Kiro's conversations, cost and context from `~/.kiro` while Kiro kept them under `KIRO_HOME`, so they showed nothing and History listed none; the agent that carries lich's hooks was installed where Kiro never looked, and a sandboxed session was not given the directory it writes into.
 - Opening or closing the dock no longer leaves the session's terminal cut off at its edge for a beat once the dock stops. The terminal takes its new width as the dock starts moving, so the agent redraws while the dock slides in, where the terminal waited until a tenth of a second after the dock stopped and then jumped. A split layout's terminals fit the moment the dock stops.
 - Expanding the sidebar no longer leaves the session's terminal at its old width for a beat once the sidebar is open. The terminal takes its new width as the sidebar starts moving, as with the dock, where it waited until a tenth of a second after the sidebar stopped and then jumped; collapsing it refits at once too. A split layout's terminals fit the moment the sidebar stops.
+- Reopening the window no longer types stray text into a session. Rebuilding a terminal from its recent output answered the terminal queries in it again, such as the ones nvim sends at start, and the answers landed on the session's input: in a shell as a `command not found`, in an agent as text in its prompt.
+- A session's terminal opened while the session is printing no longer misses what it printed in that moment. The backend now hands the window the session's recent output in line with its live output, so nothing between the two is lost or shown twice.
+- On Linux, stepping the terminal font size and opening a card for the first time hitch less. Every terminal looked its font up again through fontconfig each time, four lookups of about 10ms apiece inside one frame; lich now remembers the answer for the rest of its run.
+- Stepping the terminal font size no longer reloads the font of every open terminal: each one keeps the font it has and only draws it at the new size.
+- A session printing a lot of output costs the backend less. Each byte on its way to the window was copied about seven times into memory the garbage collector then had to reclaim; it is now copied once.
+- A block comment that opens above a collapsed stretch of a diff, in Review and Pulls, no longer colors the code after that stretch as a comment. Its closing `*/` fell in the hidden lines, so every hunk below showed as comment until some later `*/`, and only expanding the stretch fixed it. The lines of a comment cut by a collapsed stretch, above it, can still show as code until it is expanded.
 
 ## [0.78.0] - 2026-10-22
 
@@ -6343,7 +6387,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CPU, costing ~40ms per frame in a full-size window. Under Xwayland typing is
   stall-free at full frame rate.
 
-[Unreleased]: https://github.com/lichdotdev/lich/compare/v0.78.0...HEAD
+[Unreleased]: https://github.com/lichdotdev/lich/compare/v0.79.0...HEAD
+[0.79.0]: https://github.com/lichdotdev/lich/compare/v0.78.1...v0.79.0
+[0.78.1]: https://github.com/lichdotdev/lich/compare/v0.78.0...v0.78.1
 [0.78.0]: https://github.com/lichdotdev/lich/compare/v0.77.0...v0.78.0
 [0.77.0]: https://github.com/lichdotdev/lich/compare/v0.76.0...v0.77.0
 [0.76.0]: https://github.com/lichdotdev/lich/compare/v0.75.0...v0.76.0

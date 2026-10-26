@@ -320,13 +320,20 @@ work when nobody knows it and that the call site never shows. The mechanism and 
   prompt lost on the way (the mod reloading as the response lands) is reported unread, not sent twice. A hook that
   drops the prompt is reported undelivered with its reason, except at a session that was mid-turn, whose ack lich
   stops waiting for after the receipt window.
-- **Only a merge lich makes is announced, and only to a card running at that moment** (`internal/relay`,
-  `AnnounceMerge`; called from the Pulls screen's merge): a pull request merged on github.com, with `gh` in a
-  terminal or by an agent leaves every session in its checkout believing it is still open, and so does one merged
-  while the card was parked or never opened. The session that opened one of the checkout's sessions hears it
-  too, wherever it runs, but only that one: the session that opened the opener does not. The notice also lands as a delivery like any other, so a cleanup
-  clicked in the second before it starts a turn finds no session mid-turn, asks nothing, and removes the checkout
-  with the notice still on its way.
+- **A merge is announced only to a card running at that moment, and one made outside lich up to a minute late**
+  (`internal/relay`, `AnnounceMerge`; called from the Pulls screen's merge and by the pull request watch,
+  `internal/project` `RunBranchPRWatch`): a merge on github.com, with `gh` in a terminal or by an agent is found by
+  the watch, the one reader of a checkout's pull request, which the cards' badges hear too. Each minute it reads,
+  one `gh pr view` each, every checkout a live agent runs in and every one whose last read found an open pull
+  request; any other is read only when a window asks (its branch or head moved, a turn ended there, the window came
+  back into focus). A merge is announced only when one read saw the pull request open and a later one sees it
+  merged, so one that merged while lich was closed, or before any read saw it open, is never announced; a card
+  parked while the merge is seen, or never opened, stays believing it is open. What was read and what was announced
+  live in memory, so a restart forgets both: a merge already announced is not repeated, because the next read
+  finds it merged without having seen it open. The session that opened one of the checkout's sessions hears it
+  too, wherever it runs, but only that one: the session that opened the opener does not. The notice also lands as
+  a delivery like any other, so a cleanup clicked in the second before it starts a turn finds no session mid-turn,
+  asks nothing, and removes the checkout with the notice still on its way.
 - **Only a Claude Code subagent becomes a lich card** (lich-plugin's `hooks/agent-cards.js`, its
   `docs/agent-cards.md`): the plugin's mod takes the model's general-purpose `Agent` call and runs it as a lich
   session with `lich open --subagent --prompt`, in the background. The card opens in the asking session's checkout
@@ -490,6 +497,14 @@ work when nobody knows it and that the call site never shows. The mechanism and 
   not hold it, under ReadFile's size cap. A relative image
   shows its alt text (the renderer fetches nothing) and raw HTML is left out. A new version of the file puts
   the card back on its diff, as it reopens or folds a card by its size.
+- **Any push resolves a thread sent to a session** (`internal/project/threadfix.go`): Send to session on the
+  Pulls screen replies on the thread at once and resolves it when the pull request's head first moves after the
+  send, replying with that head's short sha. lich cannot tell the commit that fixed the thread from one that did
+  not, so an unrelated push resolves it too, and a fix that never gets pushed leaves it waiting. The head is read
+  once a minute per waiting pull request, so the resolve lands up to a minute after the push. A pull request
+  that closes, or a checkout that is gone, drops its threads without a word on GitHub. A thread whose resolve
+  GitHub keeps refusing (deleted since) is retried every minute until its pull request closes. The replies are
+  written in English, whatever the interface and prompt languages: the reviewer reading them is someone else.
 
 ## Persistence and history
 
@@ -790,6 +805,36 @@ work when nobody knows it and that the call site never shows. The mechanism and 
   it across sessions: a push that finds it full, and the flush a session runs before its exit banner so the banner
   cannot overtake its own last bytes.
 
+## Services
+
+- **A service is up exactly as long as its command runs** (`internal/services`, `internal/terminal/service.go`):
+  there is no shell behind it and no supervisor. A command that detaches (`docker compose up -d`, a trailing
+  `&`, a tool that daemonizes) exits 0 at once and the service shows stopped while its work carries on, and a
+  service that fails stays failed until someone presses Start. Stop types Ctrl+C at the PTY, so a command that
+  ignores it stays stopping until Force stop. Force stop and quitting lich end the process lich started
+  (SIGTERM, then SIGKILL past the PTY's grace), not what it handed off to: a container `docker compose up`
+  started survives the kill of that command.
+- **A service's command loads no rc file, except under fish** (`serviceArgs`): `$SHELL -c` on Linux and macOS,
+  PowerShell `-NoProfile` on Windows, so an alias, a function or a `PATH` entry from the user's rc is not there.
+  fish reads `config.fish` even for `-c`, so the same line can work there and nowhere else.
+- **A service lives as long as its project's tab** (`services.ProjectChanged`, `main.go`): closing the tab asks
+  its services to stop and kills what is still up after 10 seconds, without asking first, and reopening the
+  project starts only the ones saved to start with lich; one started by hand stays down. Closing the window
+  stops nothing. Quitting lich stops everything the same way, and an in-place restart after an update is a quit:
+  the new lich starts the services saved to start with lich in the projects it opens with, so one started by
+  hand is down after an update. Home's services, edited from Settings › Services in Global, run for as long as
+  lich does, since Home has no tab to close.
+- **What a stopped service printed is kept in memory only** (`services.Output`): the tail of its last run, as
+  long as a session's replay, until it starts again or lich exits. After a restart of lich a service that has
+  not run yet has no output to show.
+- **The tray names at most eight running services** (`internal/tray`, `serviceSlots`): the menu is built once
+  and its entries shown and hidden, so past eight the count above them says how many run and the window lists
+  them all. The macOS menu-bar entries were never run on a Mac: they compile, and the logic they share with
+  Linux and Windows is tested.
+- **On Windows, Stop is Ctrl+C through ConPTY** (`InterruptService`): it reaches the console's processes as
+  `CTRL_C_EVENT`, which a process that left the console or turned the event off never sees. Not measured: the
+  service tests spawn real PTYs and run on Linux and macOS only.
+
 ## Window, sidebar and settings
 
 - **A closed card outlives its session by 180ms** (`native/cmd/lich-native/sidebar_closing.go`, `exitDuration`):
@@ -840,8 +885,11 @@ work when nobody knows it and that the call site never shows. The mechanism and 
   icon (below) is all that says it runs. Launching lich again opens a window on it; `lich quit` (or SIGINT /
   SIGTERM) ends it. `task dev` behaves the same: kept running, the dev backend stays on 47822 until Ctrl+C or
   `LICH_DEV=1 go run . quit`.
-- **The tray icon is Linux and Windows only, and late** (`internal/tray`): macOS's menu-bar item needs cgo
-  and lich is built without it, so a windowless lich on a Mac shows nothing. On Linux it is a
+- **The tray icon is late, and on macOS it rides AppKit through purego** (`internal/tray`, `internal/appkit`):
+  lich is built without cgo, so on a Mac the backend runs AppKit's loop on its main thread through purego, as
+  an accessory app (no Dock tile, no Cmd-Tab), and the menu-bar item and LaunchServices' reopen and terminate
+  live on that loop. A Mac where AppKit does not load runs lich without either, and opening lich again from
+  Finder then depends on LaunchServices launching a second copy. On Linux it is a
   StatusNotifierItem: GNOME draws none without the AppIndicator extension, and a desktop with no tray host
   shows nothing either. Its words are the window's interface language, so it comes up once a window has
   handed them over (`native/cmd/lich-native/tray.go`); a lich whose window never opened has no tray. `task dev` puts up a second
@@ -897,6 +945,10 @@ work when nobody knows it and that the call site never shows. The mechanism and 
   and macOS leave out the dual-width Nerd Font families (the ones not named "Mono", whose icons take two cells)
   that fontconfig's `spacing=dual` lists on Linux; the "Mono" variant of each is offered. Its family names come
   from parsing one file per family, a few hundred on a stock Windows, the first time a font picker opens.
+  On Linux each face fontconfig names is kept for the rest of the run (`fonts.Locate`), since every lookup is an
+  `fc-match` subprocess inside a frame: a family installed while lich runs, after a terminal or the editor
+  already asked for it, keeps drawing in the substitute fontconfig gave until lich restarts. Choosing it in a
+  font picker for the first time is not affected.
 - **The Chinese font the native window downloads reaches its interface, not its terminal on Linux**
   (`native/fonts/download.go`, `native/glyphs/raster.go`): the terminal finds a glyph its family lacks through
   fontconfig (`fonts.Covering`), which never sees `<user cache dir>/lich/fonts`, so with no Chinese font

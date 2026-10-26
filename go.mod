@@ -9,7 +9,8 @@ require (
 	github.com/chromedp/chromedp v0.16.0
 	github.com/coder/websocket v1.8.14
 	github.com/creack/pty v1.1.24
-	github.com/lichdotdev/godemirror v0.8.0
+	github.com/ebitengine/purego v0.11.2
+	github.com/lichdotdev/godemirror v0.8.1
 	github.com/ncruces/zenity v0.10.14
 	golang.org/x/image v0.47.0
 	golang.org/x/sys v0.49.0

@@ -420,6 +420,9 @@ type Service struct {
 	workerFinished func(workerID string) error
 	// raiseWindow brings lich's window to the front (SetRaiseWindow).
 	raiseWindow func(sessionID string)
+	// mergesTold is the merges already announced, by checkout and number, so
+	// the pull request watch and the Pulls screen's merge never announce one twice.
+	mergesTold map[string]bool
 }
 
 // Plugins is what the relay needs to know about the companion plugin
@@ -451,6 +454,7 @@ func New(sessions Sessions, term Terminal, events Events) *Service {
 		collectors:      make(map[string][]chan struct{}),
 		nudgeTimer:      make(map[string]*time.Timer),
 		nudging:         make(map[string]*sync.Mutex),
+		mergesTold:      make(map[string]bool),
 		sessions:        sessions,
 		term:            term,
 		events:          events,
