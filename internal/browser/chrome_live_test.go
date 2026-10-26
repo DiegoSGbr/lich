@@ -253,4 +253,14 @@ func TestChromeLinkToANewTabLoadsInThePageAndKeepsItResponding(t *testing.T) {
 	if err := p.Mouse(quick, api.BrowserMouseOptions{Type: "move", X: 50, Y: 50}); err != nil {
 		t.Fatalf("the page stopped taking input after the link: %v", err)
 	}
+	if err := p.Back(ctx); err != nil {
+		t.Fatalf("back after the link: %v", err)
+	}
+	var href string
+	if err := p.run(ctx, chromedp.Evaluate(`location.href`, &href)); err != nil {
+		t.Fatal(err)
+	}
+	if href != srv.URL+"/" {
+		t.Fatalf("back went to %q, want the page that held the link", href)
+	}
 }
