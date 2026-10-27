@@ -206,3 +206,26 @@ func TestAgentCursorPlaysNavigationOnTheToolbar(t *testing.T) {
 		t.Fatalf("pending %d: an action that changes nothing on screen was queued", len(c.pending))
 	}
 }
+
+func TestAgentCursorCatchesUpWithAFastAgent(t *testing.T) {
+	var c agentCursor
+	t0 := time.Unix(100, 0)
+	// four fields typed into within a second and a half, as a fast agent fills
+	// a form
+	play(&c, t0, clickMark(t0, 10, 10), clickMark(t0, 10, 50), clickMark(t0, 10, 90))
+	if c.pace != cursorCatchUp {
+		t.Fatalf("pace %v with two actions behind, want the catch-up pace", c.pace)
+	}
+	now := t0
+	for len(c.pending) > 0 {
+		now = c.played()
+		c.advance(now, atMark)
+	}
+	if c.pace != 1 {
+		t.Fatalf("pace %v for the last action, want it played whole", c.pace)
+	}
+	whole := cursorGlide + cursorRing
+	if behind := now.Sub(t0); behind >= 2*whole {
+		t.Fatalf("the last action started %v after the first, want well under two whole plays (%v)", behind, 2*whole)
+	}
+}

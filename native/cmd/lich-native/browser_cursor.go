@@ -31,6 +31,11 @@ const (
 	cursorScroll = 560 * time.Millisecond
 	// cursorDipScale is how far the arrow shrinks at the bottom of its dip.
 	cursorDipScale = 0.14
+	// cursorCatchUp is the share of its time an action plays in while more
+	// wait behind it: an agent filling a form fires a field every half second,
+	// and played whole the cursor fell seconds behind the page, pointing at
+	// where fields had been before the page scrolled.
+	cursorCatchUp = 0.4
 )
 
 // cursorShadow is the drop shadow under the arrow, the mockup's 35% black.
@@ -45,8 +50,10 @@ var cursorEase = ui.CubicBezier(0.2, 0.8, 0.2, 1)
 type agentCursor struct {
 	shown    bool
 	from, to f32.Point
-	// action is the one playing.
+	// action is the one playing; pace is the share of its time it plays in,
+	// cursorCatchUp while more actions wait behind it.
 	action string
+	pace   float64
 	// scroll is the direction of the scroll the cursor glided for, 1 down
 	// and -1 up; 0 for a click, which dips and rings instead.
 	scroll int
@@ -103,6 +110,10 @@ func (c *agentCursor) advance(now time.Time, place func(browserMark) f32.Point) 
 		from = c.to
 	}
 	c.from, c.to, c.moved, c.shown, c.action = from, to, now, true, m.action
+	c.pace = 1
+	if len(c.pending) > 0 {
+		c.pace = cursorCatchUp
+	}
 	c.scroll = 0
 	if m.action == "scroll" && m.dy != 0 {
 		c.scroll = 1
@@ -114,7 +125,7 @@ func (c *agentCursor) advance(now time.Time, place func(browserMark) f32.Point) 
 }
 
 func (c *agentCursor) position(now time.Time) f32.Point {
-	t := cursorEase(progress(now.Sub(c.moved), cursorGlide))
+	t := cursorEase(progress(now.Sub(c.moved), c.span(cursorGlide)))
 	return c.from.Add(c.to.Sub(c.from).Mul(t))
 }
 
@@ -142,16 +153,29 @@ func (c *agentCursor) alpha(now time.Time) float32 {
 // landed is how long ago the glide reached the point, negative while it
 // still moves.
 func (c *agentCursor) landed(now time.Time) time.Duration {
-	return now.Sub(c.moved) - cursorGlide
+	return now.Sub(c.moved) - c.span(cursorGlide)
+}
+
+// span is d at the pace the action playing goes at.
+func (c *agentCursor) span(d time.Duration) time.Duration {
+	if c.pace <= 0 {
+		return d
+	}
+	return time.Duration(float64(d) * c.pace)
+}
+
+// landing is when the glide of the action playing reaches its point.
+func (c *agentCursor) landing() time.Time {
+	return c.moved.Add(c.span(cursorGlide))
 }
 
 // played is when the action playing has finished: its glide, then its ring
 // or its chevrons.
 func (c *agentCursor) played() time.Time {
 	if c.scroll != 0 {
-		return c.moved.Add(cursorGlide + cursorScroll)
+		return c.landing().Add(c.span(cursorScroll))
 	}
-	return c.moved.Add(cursorGlide + cursorRing)
+	return c.landing().Add(c.span(cursorRing))
 }
 
 func progress(d, span time.Duration) float32 {
@@ -195,17 +219,18 @@ func (u *window) drawAgentCursor(gtx C, c *agentCursor, tint, outline color.NRGB
 	landed := c.landed(now)
 	defer paint.PushOpacity(gtx.Ops, a).Pop()
 	if c.scroll != 0 {
-		drawScrollChevrons(gtx, at, landed, c.scroll, tint, outline)
+		drawScrollChevrons(gtx, at, landed, c.span(cursorScroll), c.scroll, tint, outline)
 	}
-	if c.scroll == 0 && landed >= 0 && landed < cursorRing {
-		p := progress(landed, cursorRing)
+	ringFor, dipFor := c.span(cursorRing), c.span(cursorDip)
+	if c.scroll == 0 && landed >= 0 && landed < ringFor {
+		p := progress(landed, ringFor)
 		r := float32(gtx.Dp(17)) * cursorEase(p)
 		ring := clip.Ellipse{Min: image.Pt(int(at.X-r), int(at.Y-r)), Max: image.Pt(int(at.X+r), int(at.Y+r))}
 		paint.FillShape(gtx.Ops, ui.Alpha(tint, 0.95*(1-p)), clip.Stroke{Path: ring.Path(gtx.Ops), Width: float32(gtx.Dp(2))}.Op())
 	}
 	s := float32(1)
-	if c.scroll == 0 && landed >= 0 && landed < cursorDip {
-		s -= cursorDipScale * float32(math.Sin(math.Pi*float64(progress(landed, cursorDip))))
+	if c.scroll == 0 && landed >= 0 && landed < dipFor {
+		s -= cursorDipScale * float32(math.Sin(math.Pi*float64(progress(landed, dipFor))))
 	}
 	unit := float32(gtx.Dp(1))
 	place := op.Affine(f32.Affine2D{}.Scale(f32.Point{}, f32.Pt(s, s)).Offset(at)).Push(gtx.Ops)
@@ -228,12 +253,12 @@ func (u *window) drawAgentCursor(gtx C, c *agentCursor, tint, outline color.NRGB
 }
 
 // drawScrollChevrons slides two chevrons under the arrow at at in the scroll's
-// direction, fading in and out, for cursorScroll after the glide landed.
-func drawScrollChevrons(gtx C, at f32.Point, landed time.Duration, dir int, tint, outline color.NRGBA) {
-	if landed < 0 || landed >= cursorScroll {
+// direction, fading in and out, for span after the glide landed.
+func drawScrollChevrons(gtx C, at f32.Point, landed, span time.Duration, dir int, tint, outline color.NRGBA) {
+	if landed < 0 || landed >= span {
 		return
 	}
-	p := progress(landed, cursorScroll)
+	p := progress(landed, span)
 	// in until a third of the way, then out, as the mockup's keyframes
 	alpha := min(p/0.35, (1-p)/0.65)
 	unit := float32(gtx.Dp(1))

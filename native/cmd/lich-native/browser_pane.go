@@ -478,7 +478,7 @@ func (u *window) playAgentCursor(gtx C, p *browserPaneUI, marks []browserMark, h
 	if !started {
 		return
 	}
-	landed := p.cursor.moved.Add(cursorGlide)
+	landed := p.cursor.landing()
 	switch m.action {
 	case "navigate":
 		p.typing = agentPress{what: displayURL(m.url), at: landed}
