@@ -40,9 +40,11 @@ var (
 	icBrowserWindow  = icons.Lucide("external-link")
 )
 
-// agentGlow is how long the agent's cursor stays up after its last action on
-// the page, before it fades.
-const agentGlow = 2 * time.Second
+// agentHold is how long the agent's cursor stays up after the agent's last
+// action on the page or the end of its turn, before it fades. While its turn
+// runs the cursor stays: between two tool calls the agent is thinking, not
+// gone, and a cursor that left in between made it look stuttering.
+const agentHold = 5 * time.Second
 
 // doubleClick is the window two presses of a button count as one double
 // click in, as most desktops set it.
@@ -127,10 +129,9 @@ func (u *window) browserPaneAt(gtx C, v stageView, session string, r image.Recta
 	page.Constraints = layout.Exact(image.Pt(size.X, max(size.Y-head-bar, 0)))
 	off := op.Offset(image.Pt(0, head+bar)).Push(gtx.Ops)
 	p.cursor.take(mark)
+	// Unlike a terminal, the page is not dimmed out of focus: the person keeps
+	// the session's prompt in focus nearly always, and watches the page.
 	u.browserPage(page, p, session, frame, focused)
-	if several && !focused {
-		paint.FillShape(gtx.Ops, ui.Alpha(th.Background, paneDim), clip.Rect{Max: page.Constraints.Max}.Op())
-	}
 	off.Pop()
 	u.paneFocusTarget(gtx, pane)
 	area.Pop()
@@ -260,7 +261,8 @@ func (u *window) browserPage(gtx C, p *browserPaneUI, session string, frame brow
 		t.Pop()
 	}
 	if p.cursor.shown {
-		tint, provider, icon := u.agentLook(session)
+		tint, provider, icon, busy := u.agentLook(session)
+		p.cursor.observe(gtx.Now, busy)
 		u.drawAgentCursor(gtx, &p.cursor, scale, tint, u.theme.PrimaryForeground, provider, icon)
 	}
 	u.browserInput(gtx, p, session, scale, focused)
@@ -408,12 +410,13 @@ func isLocalHost(text string) bool {
 }
 
 // agentLook is how session's agent cursor is drawn: in its card color, or the
-// theme's primary for a card without one, naming the provider that runs in it.
-func (u *window) agentLook(session string) (tint color.NRGBA, provider string, icon *icons.Icon) {
+// theme's primary for a card without one, naming the provider that runs in it;
+// busy is whether the agent's turn is running.
+func (u *window) agentLook(session string) (tint color.NRGBA, provider string, icon *icons.Icon, busy bool) {
 	tint = u.theme.Primary
 	sv, ok := u.model.sessionViewOf(session)
 	if !ok {
-		return tint, "", providerIcon("")
+		return tint, "", providerIcon(""), false
 	}
 	if c, tinted := cardColors[sv.Color]; tinted {
 		tint = c
@@ -426,5 +429,5 @@ func (u *window) agentLook(session string) (tint color.NRGBA, provider string, i
 	if info, found := u.model.providers.find(kind); found && info.name != "" {
 		provider = info.name
 	}
-	return tint, provider, providerIcon(kind)
+	return tint, provider, providerIcon(kind), sv.status == statusBusy
 }

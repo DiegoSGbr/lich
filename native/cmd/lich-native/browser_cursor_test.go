@@ -55,10 +55,10 @@ func TestAgentCursorStaysUpWhileTheAgentActsAndThenFades(t *testing.T) {
 	t0 := time.Unix(100, 0)
 	c.take(clickMark(t0, 10, 10))
 	c.take(browserMark{at: t0.Add(time.Second)})
-	if a := c.alpha(t0.Add(time.Second + agentGlow - time.Millisecond)); a != 1 {
+	if a := c.alpha(t0.Add(time.Second + agentHold - time.Millisecond)); a != 1 {
 		t.Fatalf("alpha %v before the glow ends, want 1: an action without a point keeps it up", a)
 	}
-	if a := c.alpha(t0.Add(time.Second + agentGlow + cursorFade)); a != 0 {
+	if a := c.alpha(t0.Add(time.Second + agentHold + cursorFade)); a != 0 {
 		t.Fatalf("alpha %v after the fade, want 0", a)
 	}
 	if c.position(t0.Add(2*time.Second)) != f32.Pt(10, 10) {
@@ -100,7 +100,7 @@ func TestDrawAgentCursorLaysOutWithoutAPage(t *testing.T) {
 	var c agentCursor
 	t0 := time.Unix(100, 0)
 	c.take(clickMark(t0, 40, 30))
-	for _, d := range []time.Duration{0, cursorGlide, cursorGlide + cursorDip/2, agentGlow + cursorFade/2, agentGlow + cursorFade} {
+	for _, d := range []time.Duration{0, cursorGlide, cursorGlide + cursorDip/2, agentHold + cursorFade/2, agentHold + cursorFade} {
 		gtx := layout.Context{Ops: new(op.Ops), Now: t0.Add(d), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
 			Constraints: layout.Exact(image.Pt(400, 300))}
 		u.drawAgentCursor(gtx, &c, 1, th.Primary, th.PrimaryForeground, "Claude Code", providerIcon("claude"))
@@ -121,5 +121,24 @@ func TestAgentCursorScrollShowsItsDirectionInsteadOfAClick(t *testing.T) {
 	c.take(clickMark(t0.Add(time.Second), 10, 10))
 	if c.scroll != 0 {
 		t.Fatalf("a click after a scroll kept scroll %d", c.scroll)
+	}
+}
+
+func TestAgentCursorStaysWhileTheTurnRunsAndHoldsAfterItEnds(t *testing.T) {
+	var c agentCursor
+	t0 := time.Unix(100, 0)
+	c.take(clickMark(t0, 10, 10))
+	thinking := t0.Add(time.Minute)
+	c.observe(thinking, true)
+	if a := c.alpha(thinking); a != 1 {
+		t.Fatalf("alpha %v a minute into the turn, want 1: the agent is thinking between tools", a)
+	}
+	ended := thinking.Add(time.Second)
+	c.observe(ended, false)
+	if a := c.alpha(ended.Add(agentHold - time.Millisecond)); a != 1 {
+		t.Fatalf("alpha %v within the hold after the turn ended, want 1", a)
+	}
+	if a := c.alpha(ended.Add(agentHold + cursorFade)); a != 0 {
+		t.Fatalf("alpha %v after the hold and the fade, want 0", a)
 	}
 }

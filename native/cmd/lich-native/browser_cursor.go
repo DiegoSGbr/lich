@@ -49,6 +49,8 @@ type agentCursor struct {
 	// moved is when the glide to to began; last is the agent's last action,
 	// which the fade counts from; seen is the last mark taken.
 	moved, last, seen time.Time
+	// busy is whether the agent's turn ran at the last frame.
+	busy bool
 }
 
 // take moves the cursor for a new mark: an action at a point (a click, typing
@@ -82,13 +84,25 @@ func (c *agentCursor) position(now time.Time) f32.Point {
 	return c.from.Add(c.to.Sub(c.from).Mul(t))
 }
 
-// alpha is the cursor's opacity at now: whole until agentGlow after the last
-// action, then fading out over cursorFade.
-func (c *agentCursor) alpha(now time.Time) float32 {
-	if !c.shown {
-		return 0
+// observe notes whether the agent's turn runs at now: its end counts as the
+// agent's last activity, which the hold counts from.
+func (c *agentCursor) observe(now time.Time, busy bool) {
+	if c.busy && !busy && now.After(c.last) {
+		c.last = now
 	}
-	return 1 - progress(now.Sub(c.last)-agentGlow, cursorFade)
+	c.busy = busy
+}
+
+// alpha is the cursor's opacity at now: whole while the agent's turn runs and
+// for agentHold after its last activity, then fading out over cursorFade.
+func (c *agentCursor) alpha(now time.Time) float32 {
+	switch {
+	case !c.shown:
+		return 0
+	case c.busy:
+		return 1
+	}
+	return 1 - progress(now.Sub(c.last)-agentHold, cursorFade)
 }
 
 // landed is how long ago the glide reached the point, negative while it
@@ -166,11 +180,12 @@ func (u *window) drawAgentCursor(gtx C, c *agentCursor, scale float32, tint, out
 	badge := op.Offset(image.Pt(int(at.X)+gtx.Dp(12), int(at.Y)+gtx.Dp(15))).Push(gtx.Ops)
 	u.cursorBadge(gtx, tint, outline, provider, icon)
 	badge.Pop()
+	// A busy cursor waits for the turn's end, whose status event redraws.
 	switch {
-	case now.Before(c.settled()) || c.last.Add(agentGlow).Before(now):
+	case now.Before(c.settled()) || !c.busy && c.last.Add(agentHold).Before(now):
 		gtx.Execute(op.InvalidateCmd{})
-	default:
-		gtx.Execute(op.InvalidateCmd{At: c.last.Add(agentGlow)})
+	case !c.busy:
+		gtx.Execute(op.InvalidateCmd{At: c.last.Add(agentHold)})
 	}
 }
 
