@@ -104,7 +104,7 @@ func (u *window) browserPaneAt(gtx C, v stageView, session string, r image.Recta
 	pane := browserPaneOf(session)
 	p := u.browserPane(session)
 	p.onScreen = true
-	st, frame, mark := u.model.browserView(session)
+	st, frame, marks := u.model.browserView(session)
 	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
 	gtx.Constraints = layout.Exact(r.Size())
 	size := r.Size()
@@ -128,7 +128,8 @@ func (u *window) browserPaneAt(gtx C, v stageView, session string, r image.Recta
 	page := gtx
 	page.Constraints = layout.Exact(image.Pt(size.X, max(size.Y-head-bar, 0)))
 	off := op.Offset(image.Pt(0, head+bar)).Push(gtx.Ops)
-	p.cursor.take(mark)
+	p.cursor.take(marks)
+	p.cursor.advance(gtx.Now)
 	// Unlike a terminal, the page is not dimmed out of focus: the person keeps
 	// the session's prompt in focus nearly always, and watches the page.
 	u.browserPage(page, p, session, frame, focused)

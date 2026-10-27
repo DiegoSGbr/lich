@@ -147,3 +147,28 @@ func TestALayoutOfHomeSessionsComesOnScreen(t *testing.T) {
 		t.Fatal("a split holding a Home session stayed off screen")
 	}
 }
+
+func TestAgentActionsBetweenTwoFramesAreAllKeptInOrder(t *testing.T) {
+	m, _ := newLayoutsModel(t)
+	x, y := 10.0, 20.0
+	send(m, api.BrowserAgentEvent.Name, api.BrowserAgentAct{Owner: "orch", Action: "click", X: &x, Y: &y})
+	send(m, api.BrowserAgentEvent.Name, api.BrowserAgentAct{Owner: "orch", Action: "scroll", X: &x, Y: &y, DY: 500})
+	for range agentMarksKept {
+		send(m, api.BrowserAgentEvent.Name, api.BrowserAgentAct{Owner: "orch"})
+	}
+	_, _, marks := m.browserView("orch")
+	if len(marks) != agentMarksKept {
+		t.Fatalf("kept %d marks, want the latest %d", len(marks), agentMarksKept)
+	}
+	for i := 1; i < len(marks); i++ {
+		if marks[i].seq <= marks[i-1].seq {
+			t.Fatalf("marks out of order: %+v", marks)
+		}
+	}
+	m2, _ := newLayoutsModel(t)
+	send(m2, api.BrowserAgentEvent.Name, api.BrowserAgentAct{Owner: "orch", Action: "click", X: &x, Y: &y})
+	send(m2, api.BrowserAgentEvent.Name, api.BrowserAgentAct{Owner: "orch", Action: "scroll", X: &x, Y: &y, DY: 500})
+	if _, _, two := m2.browserView("orch"); len(two) != 2 || two[0].action != "click" || two[1].action != "scroll" {
+		t.Fatalf("marks %+v, want the click then the scroll", two)
+	}
+}

@@ -47,29 +47,52 @@ type agentCursor struct {
 	// and -1 up; 0 for a click, which dips and rings instead.
 	scroll int
 	// moved is when the glide to to began; last is the agent's last action,
-	// which the fade counts from; seen is the last mark taken.
-	moved, last, seen time.Time
+	// which the fade counts from.
+	moved, last time.Time
+	// seen is the last mark taken; pending are the actions at a point still
+	// to play, each played whole before the next.
+	seen    uint64
+	pending []browserMark
 	// busy is whether the agent's turn ran at the last frame.
 	busy bool
 }
 
-// take moves the cursor for a new mark: an action at a point (a click, typing
-// into or pressing on an element, a scroll) glides it there, any other only
-// keeps it up.
-func (c *agentCursor) take(m browserMark) {
-	if m.at.IsZero() || !m.at.After(c.seen) {
+// cursorPending is how many actions the cursor keeps waiting to play: past it
+// the oldest go, so a fast agent leaves the cursor a beat behind, not a replay.
+const cursorPending = 3
+
+// take queues the marks not seen yet: an action at a point (a click, typing
+// into or pressing on an element, a scroll) is played by advance, any other
+// only keeps the cursor up.
+func (c *agentCursor) take(marks []browserMark) {
+	for _, m := range marks {
+		if m.seq <= c.seen {
+			continue
+		}
+		c.seen = m.seq
+		if m.at.After(c.last) {
+			c.last = m.at
+		}
+		if m.x != nil && m.y != nil {
+			c.pending = append(c.pending, m)
+		}
+	}
+	c.pending = c.pending[max(0, len(c.pending)-cursorPending):]
+}
+
+// advance starts the next queued action once the one playing has finished.
+func (c *agentCursor) advance(now time.Time) {
+	if len(c.pending) == 0 || c.shown && now.Before(c.played()) {
 		return
 	}
-	c.seen, c.last = m.at, m.at
-	if m.x == nil || m.y == nil {
-		return
-	}
+	m := c.pending[0]
+	c.pending = c.pending[1:]
 	to := f32.Pt(float32(*m.x), float32(*m.y))
 	from := to
 	if c.shown {
-		from = c.position(m.at)
+		from = c.to
 	}
-	c.from, c.to, c.moved, c.shown = from, to, m.at, true
+	c.from, c.to, c.moved, c.shown = from, to, now, true
 	c.scroll = 0
 	if m.action == "scroll" && m.dy != 0 {
 		c.scroll = 1
@@ -111,9 +134,13 @@ func (c *agentCursor) landed(now time.Time) time.Duration {
 	return now.Sub(c.moved) - cursorGlide
 }
 
-// settled is when nothing about the cursor changes any more until it fades.
-func (c *agentCursor) settled() time.Time {
-	return c.moved.Add(cursorGlide + max(cursorRing, cursorScroll))
+// played is when the action playing has finished: its glide, then its ring
+// or its chevrons.
+func (c *agentCursor) played() time.Time {
+	if c.scroll != 0 {
+		return c.moved.Add(cursorGlide + cursorScroll)
+	}
+	return c.moved.Add(cursorGlide + cursorRing)
 }
 
 func progress(d, span time.Duration) float32 {
@@ -182,7 +209,7 @@ func (u *window) drawAgentCursor(gtx C, c *agentCursor, scale float32, tint, out
 	badge.Pop()
 	// A busy cursor waits for the turn's end, whose status event redraws.
 	switch {
-	case now.Before(c.settled()) || !c.busy && c.last.Add(agentHold).Before(now):
+	case now.Before(c.played()) || len(c.pending) > 0 || !c.busy && c.last.Add(agentHold).Before(now):
 		gtx.Execute(op.InvalidateCmd{})
 	case !c.busy:
 		gtx.Execute(op.InvalidateCmd{At: c.last.Add(agentHold)})

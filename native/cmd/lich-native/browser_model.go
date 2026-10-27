@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
+	"slices"
 	"time"
 
 	"gioui.org/op/paint"
@@ -25,23 +26,30 @@ type browserFrame struct {
 	size image.Point
 }
 
-// browserMark is the agent's last action on its page: which one, where, and
-// for a scroll how far (positive down).
+// browserMark is one agent action on its page: which one, where, and for a
+// scroll how far (positive down). seq orders the marks of one store.
 type browserMark struct {
+	seq    uint64
 	action string
 	dy     int
 	at     time.Time
 	x, y   *float64
 }
 
+// agentMarksKept is how many of a session's latest agent actions the store
+// keeps for its pane: an agent that calls tools in parallel sends several
+// between two frames, and the cursor plays them in turn.
+const agentMarksKept = 8
+
 type browserStore struct {
 	states map[string]api.BrowserState
 	frames map[string]browserFrame
-	agent  map[string]browserMark
+	agent  map[string][]browserMark
+	seq    uint64
 }
 
 func newBrowserStore() browserStore {
-	return browserStore{states: map[string]api.BrowserState{}, frames: map[string]browserFrame{}, agent: map[string]browserMark{}}
+	return browserStore{states: map[string]api.BrowserState{}, frames: map[string]browserFrame{}, agent: map[string][]browserMark{}}
 }
 
 // hydrateBrowsers reads the browsers running now, and takes out of the
@@ -140,15 +148,18 @@ func (m *model) applyBrowserFrame(owner string, ev backend.Event) error {
 func (m *model) applyBrowserAgent(a api.BrowserAgentAct, now time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.browsers.agent[a.Owner] = browserMark{at: now, x: a.X, y: a.Y, action: a.Action, dy: a.DY}
+	m.browsers.seq++
+	mark := browserMark{seq: m.browsers.seq, at: now, x: a.X, y: a.Y, action: a.Action, dy: a.DY}
+	marks := append(m.browsers.agent[a.Owner], mark)
+	m.browsers.agent[a.Owner] = marks[max(0, len(marks)-agentMarksKept):]
 }
 
 // browserView is what session's page pane draws: its state, its last frame
-// and the agent's last action.
-func (m *model) browserView(session string) (api.BrowserState, browserFrame, browserMark) {
+// and the agent's latest actions, oldest first.
+func (m *model) browserView(session string) (api.BrowserState, browserFrame, []browserMark) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.browsers.states[session], m.browsers.frames[session], m.browsers.agent[session]
+	return m.browsers.states[session], m.browsers.frames[session], slices.Clone(m.browsers.agent[session])
 }
 
 // openBrowserTab puts session's browser tab on screen, making it when there
