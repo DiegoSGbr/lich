@@ -66,10 +66,13 @@ type browserPaneUI struct {
 	// pane is attached.
 	view api.BrowserViewOptions
 	// held is the button the pointer holds down, for a drag's moves.
-	held                  string
-	lastPress             time.Time
-	presses               int
-	queue                 *browserQueue
+	held      string
+	lastPress time.Time
+	presses   int
+	queue     *browserQueue
+	// copied is the page selection a copy read, for the next frame to write
+	// to the system clipboard.
+	copied                chan string
 	cursor                agentCursor
 	onScreen, wasOnScreen bool
 	// flash is the toolbar button the agent's cursor pressed, and when;
@@ -91,7 +94,7 @@ func (u *window) browserPane(session string) *browserPaneUI {
 	}
 	p, ok := u.browserPanes[session]
 	if !ok {
-		p = &browserPaneUI{queue: newBrowserQueue()}
+		p = &browserPaneUI{queue: newBrowserQueue(), copied: make(chan string, 1)}
 		go p.queue.run(u.ctx, func(err error) { log.Printf("browser of %s: %v", session, err) })
 		u.browserPanes[session] = p
 	}
@@ -285,10 +288,13 @@ func (u *window) browserInput(gtx C, p *browserPaneUI, session string, scale flo
 		pointer.Filter{Target: &p.tag, Kinds: pointer.Scroll | pointer.Press | pointer.Release | pointer.Drag | pointer.Move,
 			ScrollX: pointer.ScrollRange{Min: -1 << 20, Max: 1 << 20}, ScrollY: pointer.ScrollRange{Min: -1 << 20, Max: 1 << 20}},
 		key.Filter{Focus: &p.tag, Name: "V", Required: key.ModCommand},
+		key.Filter{Focus: &p.tag, Name: "C", Required: key.ModCommand},
+		key.Filter{Focus: &p.tag, Name: "X", Required: key.ModCommand},
 		transfer.TargetFilter{Target: &p.tag, Type: "application/text"})
 	if focused && !gtx.Focused(&p.url) && !gtx.Focused(&p.tag) {
 		gtx.Execute(key.FocusCmd{Tag: &p.tag})
 	}
+	writeCopied(gtx, p)
 	for {
 		ev, ok := gtx.Event(filters...)
 		if !ok {
@@ -300,9 +306,14 @@ func (u *window) browserInput(gtx C, p *browserPaneUI, session string, scale flo
 				u.sendBrowser(session, "text", func(ctx context.Context) error { return u.client.BrowserText(ctx, session, text) })
 			}
 		case key.Event:
-			if e.State == key.Press && isPasteChord(e, runtime.GOOS) {
+			switch browserClipboardChord(e, runtime.GOOS) {
+			case "paste":
 				gtx.Execute(clipboard.ReadCmd{Tag: &p.tag})
-				break
+				continue
+			case "copy", "cut":
+				// Read before the key reaches the page: a cut takes the
+				// selection away. The queue keeps the two in order.
+				u.copyPageSelection(p, session)
 			}
 			if k, ok := browserKey(session, e); ok {
 				u.sendBrowser(session, "key", func(ctx context.Context) error { return u.client.BrowserKey(ctx, k) })

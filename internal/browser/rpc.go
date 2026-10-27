@@ -157,6 +157,17 @@ func (s *Service) TextInput(_ context.Context, opts api.BrowserTextOptions) (api
 	return api.None{}, err
 }
 
+// SelectedText is the text selected in this session's page.
+func (s *Service) SelectedText(_ context.Context, opts api.SessionIDOptions) (string, error) {
+	var text string
+	_, err := s.steer(opts.ID, inputWait, func(p Page, ctx context.Context) error {
+		var err error
+		text, err = p.Selection(ctx)
+		return err
+	})
+	return text, err
+}
+
 // NavView runs the pane's toolbar.
 func (s *Service) NavView(_ context.Context, opts api.BrowserNavOptions) (api.None, error) {
 	return api.None{}, s.Nav(opts.ID, opts.Action, opts.URL)

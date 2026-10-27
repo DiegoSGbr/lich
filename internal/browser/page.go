@@ -104,6 +104,8 @@ type Page interface {
 	Mouse(ctx context.Context, m api.BrowserMouseOptions) error
 	Key(ctx context.Context, k api.BrowserKeyOptions) error
 	InsertText(ctx context.Context, text string) error
+	// Selection is the text selected in the page, "" in a password field.
+	Selection(ctx context.Context) (string, error)
 	Alive() bool
 	Close() error
 }

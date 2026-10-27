@@ -36,6 +36,7 @@ type fakePage struct {
 	mouseErr    error
 	keys        []api.BrowserKeyOptions
 	texts       []string
+	selection   string
 	info        PageInfo
 	shotErr     error
 	navErr      error
@@ -218,6 +219,12 @@ func (p *fakePage) Key(_ context.Context, k api.BrowserKeyOptions) error {
 	defer p.mu.Unlock()
 	p.keys = append(p.keys, k)
 	return nil
+}
+
+func (p *fakePage) Selection(context.Context) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.selection, nil
 }
 
 func (p *fakePage) InsertText(_ context.Context, text string) error {

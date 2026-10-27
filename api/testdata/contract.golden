@@ -22,6 +22,7 @@ browser.Resize(BrowserViewOptions) None
 browser.Running(None) []BrowserState
 browser.Screenshot(BrowserScreenshotOptions) string
 browser.Scroll(BrowserScrollOptions) None
+browser.Selection(SessionIDOptions) string
 browser.Show(SessionIDOptions) BrowserHandle
 browser.Text(BrowserTextOptions) None
 browser.Type(BrowserTypeOptions) None

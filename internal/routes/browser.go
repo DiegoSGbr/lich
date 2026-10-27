@@ -32,4 +32,5 @@ func Browser(d *rpc.Handler, s *browser.Service) {
 	rpc.Handle(d, api.BrowserKey, s.KeyInput)
 	rpc.Handle(d, api.BrowserText, s.TextInput)
 	rpc.Handle(d, api.BrowserNav, s.NavView)
+	rpc.Handle(d, api.BrowserSelection, s.SelectedText)
 }

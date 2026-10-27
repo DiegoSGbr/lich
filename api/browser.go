@@ -26,6 +26,10 @@ var (
 	BrowserKey     = define[BrowserKeyOptions, None]("browser.Key")
 	BrowserText    = define[BrowserTextOptions, None]("browser.Text")
 	BrowserNav     = define[BrowserNavOptions, None]("browser.Nav")
+	// BrowserSelection is the text selected in the page, which the pane
+	// copies to the system clipboard: the headless browser's own clipboard
+	// is not the person's.
+	BrowserSelection = define[SessionIDOptions, string]("browser.Selection")
 )
 
 var (

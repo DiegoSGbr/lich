@@ -214,6 +214,22 @@ func (p *chromePage) InsertText(ctx context.Context, text string) error {
 	return p.run(ctx, input.InsertText(text))
 }
 
+// selectionScript reads the selection of a text field, which getSelection
+// does not see, else of the document. A password field gives nothing, as
+// Chrome refuses to copy one.
+const selectionScript = `(() => {
+	const el = document.activeElement;
+	if (el && typeof el.selectionStart === 'number' && typeof el.value === 'string') {
+		return el.type === 'password' ? '' : el.value.slice(el.selectionStart, el.selectionEnd);
+	}
+	return String(getSelection());
+})()`
+
+func (p *chromePage) Selection(ctx context.Context) (string, error) {
+	var text string
+	return text, p.run(ctx, chromedp.Evaluate(selectionScript, &text))
+}
+
 var mouseTypes = map[string]input.MouseType{
 	"press":   input.MousePressed,
 	"release": input.MouseReleased,

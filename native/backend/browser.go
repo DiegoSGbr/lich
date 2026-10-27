@@ -61,6 +61,11 @@ func (c *Client) BrowserText(ctx context.Context, id, text string) error {
 	return err
 }
 
+// BrowserSelection is the text selected in session id's page.
+func (c *Client) BrowserSelection(ctx context.Context, id string) (string, error) {
+	return callMethod(ctx, c, api.BrowserSelection, api.SessionIDOptions{ID: id})
+}
+
 // BrowserNav runs the pane's toolbar: back, forward, reload, or go to url.
 func (c *Client) BrowserNav(ctx context.Context, id, action, url string) error {
 	_, err := callMethod(ctx, c, api.BrowserNav, api.BrowserNavOptions{ID: id, Action: action, URL: url})

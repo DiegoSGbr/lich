@@ -299,3 +299,34 @@ func TestChromeScrollTurnsTheWheelAtThePoint(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+func TestChromeSelectionReadsAFieldAndNotAPassword(t *testing.T) {
+	p, _ := liveChrome(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<input id="q" value="hello world"><input id="pw" type="password" value="secret"><p id="p">plain text</p>`)
+	}))
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), pageWait)
+	defer cancel()
+	if err := p.Navigate(ctx, srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct{ js, want string }{
+		{`q.focus(); q.setSelectionRange(6, 11)`, "world"},
+		{`pw.focus(); pw.select()`, ""},
+		{`document.activeElement.blur(); getSelection().selectAllChildren(document.getElementById('p'))`, "plain text"},
+	}
+	for _, c := range cases {
+		if err := p.run(ctx, chromedp.Evaluate(c.js, nil)); err != nil {
+			t.Fatal(err)
+		}
+		got, err := p.Selection(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != c.want {
+			t.Errorf("after %s: selection %q, want %q", c.js, got, c.want)
+		}
+	}
+}
