@@ -36,6 +36,7 @@ type fakePage struct {
 	mouseErr    error
 	keys        []api.BrowserKeyOptions
 	texts       []string
+	settles     int
 	selection   string
 	info        PageInfo
 	shotErr     error
@@ -75,6 +76,13 @@ func (p *fakePage) Navigate(_ context.Context, url string) error {
 	}
 	p.url = url
 	p.navigations = append(p.navigations, url)
+	return nil
+}
+
+func (p *fakePage) Settle(context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.settles++
 	return nil
 }
 

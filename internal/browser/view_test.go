@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -306,5 +307,32 @@ func TestAgentNavigationSaysWhichToolbarActionItWas(t *testing.T) {
 	want := []string{"navigate https://example.com/a", "back ", "forward ", "reload ", "navigate https://example.com/b"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("agent actions %q, want %q", got, want)
+	}
+}
+
+func TestAgentClickAnswersWithThePageItLeft(t *testing.T) {
+	s, launch, _ := viewService(t)
+	if _, err := s.Open("s", "https://example.com"); err != nil {
+		t.Fatal(err)
+	}
+	p := launch.pages[0]
+	p.info = PageInfo{URL: "https://example.com/next", Title: "Next", Interactive: []Interactive{{Index: 0, Tag: "a", Text: "Home"}}}
+	idx := 0
+	info, err := s.ClickAt(t.Context(), api.BrowserClickOptions{ID: "s", BrowserTarget: api.BrowserTarget{Index: &idx}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.settles != 1 || info.URL != "https://example.com/next" || len(info.Interactive) != 1 {
+		t.Fatalf("settles %d, info %+v: the click should settle and read the page", p.settles, info)
+	}
+	if run := s.Running(); run[0].Title != "Next" {
+		t.Fatalf("running %+v: the page read after the click should update the window's title", run)
+	}
+	p.infoErr = errors.New("context destroyed by a navigation")
+	if _, err := s.PressKey(t.Context(), api.BrowserPressOptions{ID: "s", Key: "Enter"}); err == nil {
+		t.Fatal("a failed read after the press reported success")
+	}
+	if p.closed {
+		t.Fatal("a failed read after a press that went through closed the browser")
 	}
 }

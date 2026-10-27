@@ -78,7 +78,13 @@ func (c *client) browserInfo(args []string) error {
 	if err != nil {
 		return err
 	}
-	return c.emit(info)
+	return c.printPage(info)
+}
+
+// printPage prints a page the way the browser_* tools answer with it.
+func (c *client) printPage(info api.BrowserPageInfo) error {
+	_, err := fmt.Fprintln(c.stdout, pageText(info))
+	return err
 }
 
 func (c *client) browserClick(args []string) error {
@@ -95,8 +101,11 @@ func (c *client) browserClick(args []string) error {
 	if err != nil {
 		return err
 	}
-	_, err = callMethod(context.Background(), c, api.BrowserClick, api.BrowserClickOptions{ID: id, BrowserTarget: t}, shortCall)
-	return err
+	info, err := callMethod(context.Background(), c, api.BrowserClick, api.BrowserClickOptions{ID: id, BrowserTarget: t}, openCall)
+	if err != nil {
+		return err
+	}
+	return c.printPage(info)
 }
 
 func (c *client) browserType(args []string) error {
@@ -114,10 +123,13 @@ func (c *client) browserType(args []string) error {
 	if err != nil {
 		return err
 	}
-	_, err = callMethod(context.Background(), c, api.BrowserType, api.BrowserTypeOptions{
+	info, err := callMethod(context.Background(), c, api.BrowserType, api.BrowserTypeOptions{
 		ID: id, Text: text, Clear: *clear, BrowserTarget: tf.target(),
-	}, shortCall)
-	return err
+	}, openCall)
+	if err != nil {
+		return err
+	}
+	return c.printPage(info)
 }
 
 func (c *client) browserPress(args []string) error {
@@ -134,10 +146,13 @@ func (c *client) browserPress(args []string) error {
 	if err != nil {
 		return err
 	}
-	_, err = callMethod(context.Background(), c, api.BrowserPress, api.BrowserPressOptions{
+	info, err := callMethod(context.Background(), c, api.BrowserPress, api.BrowserPressOptions{
 		ID: id, Key: key, BrowserTarget: tf.target(),
-	}, shortCall)
-	return err
+	}, openCall)
+	if err != nil {
+		return err
+	}
+	return c.printPage(info)
 }
 
 func (c *client) browserScreenshot(args []string) error {

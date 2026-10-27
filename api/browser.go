@@ -1,12 +1,14 @@
 package api
 
 var (
-	BrowserShow       = define[SessionIDOptions, BrowserHandle]("browser.Show")
-	BrowserOpen       = define[BrowserOpenOptions, BrowserHandle]("browser.Open")
-	BrowserInfo       = define[SessionIDOptions, BrowserPageInfo]("browser.Info")
-	BrowserClick      = define[BrowserClickOptions, None]("browser.Click")
-	BrowserType       = define[BrowserTypeOptions, None]("browser.Type")
-	BrowserPress      = define[BrowserPressOptions, None]("browser.Press")
+	BrowserShow = define[SessionIDOptions, BrowserHandle]("browser.Show")
+	BrowserOpen = define[BrowserOpenOptions, BrowserHandle]("browser.Open")
+	BrowserInfo = define[SessionIDOptions, BrowserPageInfo]("browser.Info")
+	// Click, Type and Press answer with the page as it stands after them, so
+	// an agent reads what its action did without a browser.Info of its own.
+	BrowserClick      = define[BrowserClickOptions, BrowserPageInfo]("browser.Click")
+	BrowserType       = define[BrowserTypeOptions, BrowserPageInfo]("browser.Type")
+	BrowserPress      = define[BrowserPressOptions, BrowserPageInfo]("browser.Press")
 	BrowserScreenshot = define[BrowserScreenshotOptions, string]("browser.Screenshot")
 	BrowserNavigate   = define[BrowserOpenOptions, BrowserHandle]("browser.Navigate")
 	BrowserReload     = define[SessionIDOptions, None]("browser.Reload")

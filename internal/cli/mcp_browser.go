@@ -37,17 +37,19 @@ var browserTools = []mcpTool{
 	{
 		Name: "browser_info",
 		Description: "Read this session's current page: URL, title, the text in the viewport, and " +
-			"interactive elements there (index, tag, label, href, box). Form values are never " +
-			"included — filled/checked say that typing landed. Call this before click/type " +
-			"so indexes match. Read-only.",
+			"one line per interactive element there: index, tag, label and link. Form values are " +
+			"never included — (filled)/(checked) say that typing landed. click, type and press " +
+			"already answer with this, so call it only to look again without acting. Read-only.",
 		Schema:   schema(map[string]any{}),
 		ReadOnly: true,
 		Run:      mcpBrowserInfo,
 	},
 	{
 		Name: "browser_click",
-		Description: "Click in this session's browser. Prefer index from browser_info, or a " +
-			"CSS selector, or viewport x and y. Sends a real mouse event, not element.click().",
+		Description: "Click in this session's browser. Prefer index from the last page read, or a " +
+			"CSS selector, or viewport x and y. Sends a real mouse event, not element.click(). " +
+			"Answers with the page afterwards, as browser_info reads it, once a navigation the " +
+			"click started has its document.",
 		Schema: schema(map[string]any{
 			"index":    property("integer", "Index from the last browser_info."),
 			"selector": property("string", "CSS selector."),
@@ -61,8 +63,8 @@ var browserTools = []mcpTool{
 	{
 		Name: "browser_type",
 		Description: "Type into this session's browser. Target as for browser_click; omit it " +
-			"to type into whatever is focused. clear replaces the field first. The text never " +
-			"comes back through browser_info.",
+			"to type into whatever is focused. clear replaces the field first. Answers with the " +
+			"page afterwards, which never includes the typed text.",
 		Schema: schema(map[string]any{
 			"text":     property("string", "Keys to send."),
 			"clear":    property("boolean", "Replace the field before typing."),
@@ -76,13 +78,13 @@ var browserTools = []mcpTool{
 			if err != nil {
 				return "", err
 			}
-			_, err = callMethod(ctx, c, api.BrowserType, api.BrowserTypeOptions{
+			info, err := callMethod(ctx, c, api.BrowserType, api.BrowserTypeOptions{
 				ID: id, Text: a.text("text"), Clear: a.flag("clear"), BrowserTarget: mcpTarget(a),
-			}, shortCall)
+			}, openCall)
 			if err != nil {
 				return "", err
 			}
-			return "ok", nil
+			return pageText(info), nil
 		},
 	},
 	{
@@ -90,7 +92,8 @@ var browserTools = []mcpTool{
 		Description: "Press one named key in this session's browser (Enter, Tab, Escape, " +
 			"Backspace, Delete, Space, ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown). " +
 			"Real key event, not typed text — use browser_type for that. Optional target " +
-			"focuses first, as for browser_type.",
+			"focuses first, as for browser_type. Answers with the page afterwards, once a " +
+			"navigation the key started (Enter on a form) has its document.",
 		Schema: schema(map[string]any{
 			"key":      property("string", "Named key: Enter, Tab, Escape, …"),
 			"index":    property("integer", "Index from the last browser_info."),
@@ -103,13 +106,13 @@ var browserTools = []mcpTool{
 			if err != nil {
 				return "", err
 			}
-			_, err = callMethod(ctx, c, api.BrowserPress, api.BrowserPressOptions{
+			info, err := callMethod(ctx, c, api.BrowserPress, api.BrowserPressOptions{
 				ID: id, Key: a.text("key"), BrowserTarget: mcpTarget(a),
-			}, shortCall)
+			}, openCall)
 			if err != nil {
 				return "", err
 			}
-			return "ok", nil
+			return pageText(info), nil
 		},
 	},
 	{
@@ -232,11 +235,11 @@ func mcpBrowserClick(ctx context.Context, c *client, a mcpArgs) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	_, err = callMethod(ctx, c, api.BrowserClick, api.BrowserClickOptions{ID: id, BrowserTarget: mcpTarget(a)}, shortCall)
+	info, err := callMethod(ctx, c, api.BrowserClick, api.BrowserClickOptions{ID: id, BrowserTarget: mcpTarget(a)}, openCall)
 	if err != nil {
 		return "", err
 	}
-	return "ok", nil
+	return pageText(info), nil
 }
 
 func mcpBrowserID(ctx context.Context, c *client, method api.Method[api.SessionIDOptions, api.None]) (string, error) {
@@ -267,7 +270,7 @@ func mcpBrowserInfo(ctx context.Context, c *client, _ mcpArgs) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return encodeJSON(info)
+	return pageText(info), nil
 }
 
 func mcpBrowserList(ctx context.Context, c *client, _ mcpArgs) (string, error) {

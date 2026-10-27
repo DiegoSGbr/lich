@@ -79,6 +79,9 @@ type PageInfo struct {
 type Page interface {
 	Navigate(ctx context.Context, url string) error
 	Info(ctx context.Context) (PageInfo, error)
+	// Settle waits until a navigation the last action may have started has
+	// its document, bounded by domSettle.
+	Settle(ctx context.Context) error
 	// Click returns where it clicked, in CSS pixels.
 	Click(ctx context.Context, t Target) (x, y float64, err error)
 	Type(ctx context.Context, text string, clear bool, t Target) error

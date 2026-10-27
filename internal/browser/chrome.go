@@ -96,6 +96,23 @@ func (p *chromePage) Navigate(ctx context.Context, url string) error {
 	}))
 }
 
+// navGrace is how long after an action a navigation it starts may take to
+// replace the document: until then the old one reads as complete.
+const navGrace = 150 * time.Millisecond
+
+func (p *chromePage) Settle(ctx context.Context) error {
+	return p.run(ctx, settleAfter(func(ctx context.Context) error {
+		t := time.NewTimer(navGrace)
+		defer t.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-t.C:
+			return nil
+		}
+	}))
+}
+
 func (p *chromePage) Info(ctx context.Context) (PageInfo, error) {
 	var info PageInfo
 	if err := p.run(ctx, chromedp.Evaluate(pageInfoScript, &info)); err != nil {

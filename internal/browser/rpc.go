@@ -30,18 +30,47 @@ func (s *Service) Read(_ context.Context, opts api.SessionIDOptions) (api.Browse
 }
 
 // ClickAt clicks in this session's browser.
-func (s *Service) ClickAt(_ context.Context, opts api.BrowserClickOptions) (api.None, error) {
-	return api.None{}, s.Click(opts.ID, targetOf(opts.BrowserTarget))
+func (s *Service) ClickAt(_ context.Context, opts api.BrowserClickOptions) (api.BrowserPageInfo, error) {
+	if err := s.Click(opts.ID, targetOf(opts.BrowserTarget)); err != nil {
+		return api.BrowserPageInfo{}, err
+	}
+	return s.pageAfter(opts.ID)
 }
 
 // TypeText types into this session's browser.
-func (s *Service) TypeText(_ context.Context, opts api.BrowserTypeOptions) (api.None, error) {
-	return api.None{}, s.Type(opts.ID, opts.Text, opts.Clear, targetOf(opts.BrowserTarget))
+func (s *Service) TypeText(_ context.Context, opts api.BrowserTypeOptions) (api.BrowserPageInfo, error) {
+	if err := s.Type(opts.ID, opts.Text, opts.Clear, targetOf(opts.BrowserTarget)); err != nil {
+		return api.BrowserPageInfo{}, err
+	}
+	return s.pageAfter(opts.ID)
 }
 
 // PressKey presses one named key in this session's browser.
-func (s *Service) PressKey(_ context.Context, opts api.BrowserPressOptions) (api.None, error) {
-	return api.None{}, s.Press(opts.ID, opts.Key, targetOf(opts.BrowserTarget))
+func (s *Service) PressKey(_ context.Context, opts api.BrowserPressOptions) (api.BrowserPageInfo, error) {
+	if err := s.Press(opts.ID, opts.Key, targetOf(opts.BrowserTarget)); err != nil {
+		return api.BrowserPageInfo{}, err
+	}
+	return s.pageAfter(opts.ID)
+}
+
+// pageAfter is the page an action left, read once a navigation it started has
+// its document. A read that fails keeps the browser: the action itself went
+// through, and the page may be between two documents.
+func (s *Service) pageAfter(id string) (api.BrowserPageInfo, error) {
+	var info PageInfo
+	sess, err := s.steer(id, pageWait, func(p Page, ctx context.Context) error {
+		if err := p.Settle(ctx); err != nil {
+			return err
+		}
+		var err error
+		info, err = p.Info(ctx)
+		return err
+	})
+	if err != nil {
+		return api.BrowserPageInfo{}, err
+	}
+	s.remember(sess, info.URL, info.Title)
+	return infoAPI(info), nil
 }
 
 // Capture writes a PNG of this session's page and returns its path.

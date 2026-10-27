@@ -5,7 +5,7 @@ appupdate.Apply(None) None
 appupdate.Status(None) AppUpdateStatus
 browser.Attach(BrowserViewOptions) BrowserHandle
 browser.Back(SessionIDOptions) None
-browser.Click(BrowserClickOptions) None
+browser.Click(BrowserClickOptions) BrowserPageInfo
 browser.Close(SessionIDOptions) None
 browser.Detach(SessionIDOptions) None
 browser.Forward(SessionIDOptions) None
@@ -16,7 +16,7 @@ browser.Mouse(BrowserMouseOptions) None
 browser.Nav(BrowserNavOptions) None
 browser.Navigate(BrowserOpenOptions) BrowserHandle
 browser.Open(BrowserOpenOptions) BrowserHandle
-browser.Press(BrowserPressOptions) None
+browser.Press(BrowserPressOptions) BrowserPageInfo
 browser.Reload(SessionIDOptions) None
 browser.Resize(BrowserViewOptions) None
 browser.Running(None) []BrowserState
@@ -25,7 +25,7 @@ browser.Scroll(BrowserScrollOptions) None
 browser.Selection(SessionIDOptions) string
 browser.Show(SessionIDOptions) BrowserHandle
 browser.Text(BrowserTextOptions) None
-browser.Type(BrowserTypeOptions) None
+browser.Type(BrowserTypeOptions) BrowserPageInfo
 claudeprofile.CancelLogin(ProfileSlugOptions) None
 claudeprofile.CreateProfile(CreateProfileOptions) Profile
 claudeprofile.DeleteProfile(ProfileSlugOptions) None
