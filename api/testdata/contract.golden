@@ -1507,8 +1507,10 @@ BranchPullRequest {
 
 BrowserAgentAct {
 	owner string
+	action,omitempty string
 	x,omitempty *float64
 	y,omitempty *float64
+	dy,omitempty int
 }
 
 ProfileLogin {

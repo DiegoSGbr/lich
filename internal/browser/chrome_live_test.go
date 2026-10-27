@@ -264,3 +264,38 @@ func TestChromeLinkToANewTabLoadsInThePageAndKeepsItResponding(t *testing.T) {
 		t.Fatalf("back went to %q, want the page that held the link", href)
 	}
 }
+
+func TestChromeScrollTurnsTheWheelAtThePoint(t *testing.T) {
+	p, _ := liveChrome(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<body style="margin:0"><div style="height:5000px">tall</div></body>`)
+	}))
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), pageWait)
+	defer cancel()
+	if err := p.Navigate(ctx, srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	x, y, err := p.Scroll(ctx, nil, 400)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if x <= 0 || y <= 0 {
+		t.Fatalf("scrolled at %v,%v, want the viewport's middle", x, y)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var scrolled float64
+		if err := p.run(ctx, chromedp.Evaluate(`scrollY`, &scrolled)); err != nil {
+			t.Fatal(err)
+		}
+		if scrolled > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the wheel turned and the page did not scroll")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}

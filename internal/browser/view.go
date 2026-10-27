@@ -171,8 +171,29 @@ func (s *Service) emitState(sess *session, open bool) {
 	events.Send(s.emit, api.BrowserStateEvent, state)
 }
 
-func (s *Service) agentActed(sess *session, x, y *float64) {
-	events.Send(s.emit, api.BrowserAgentEvent, api.BrowserAgentAct{Owner: sess.owner, X: x, Y: y})
+// agentActed tells the window the agent acted on sess's page, and keeps the
+// point it acted at for its next scroll.
+func (s *Service) agentActed(sess *session, act api.BrowserAgentAct) {
+	act.Owner = sess.owner
+	if act.X != nil && act.Y != nil {
+		s.mu.Lock()
+		sess.agentAt = &point{X: *act.X, Y: *act.Y}
+		s.mu.Unlock()
+	}
+	events.Send(s.emit, api.BrowserAgentEvent, act)
+}
+
+// agentPoint is where the agent last acted on owner's page, nil before it
+// acted at a point.
+func (s *Service) agentPoint(owner string) *point {
+	s.mu.Lock()
+	defer s.unlock()
+	sess := s.lookupLocked(owner)
+	if sess == nil || sess.agentAt == nil {
+		return nil
+	}
+	at := *sess.agentAt
+	return &at
 }
 
 func (s *session) stateLocked(open bool) api.BrowserState {

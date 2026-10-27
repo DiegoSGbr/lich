@@ -54,12 +54,16 @@ type BrowserState struct {
 	Title   string `json:"title"`
 }
 
-// BrowserAgentAct is one agent action on its page. X and Y are where it
-// clicked, in CSS pixels, when the action was a click.
+// BrowserAgentAct is one agent action on its page. Action is click, type,
+// press or scroll, "" for one that touches no point (reading the page, a
+// screenshot, a navigation). X and Y are where it acted, in CSS pixels, when
+// it acted at a point; DY is a scroll's distance, positive down.
 type BrowserAgentAct struct {
-	Owner string   `json:"owner"`
-	X     *float64 `json:"x,omitempty"`
-	Y     *float64 `json:"y,omitempty"`
+	Owner  string   `json:"owner"`
+	Action string   `json:"action,omitempty"`
+	X      *float64 `json:"x,omitempty"`
+	Y      *float64 `json:"y,omitempty"`
+	DY     int      `json:"dy,omitempty"`
 }
 
 // BrowserViewOptions sizes a session's page to the pane showing it: W and H in

@@ -219,3 +219,64 @@ func TestWindowInputThatTimesOutKeepsTheBrowser(t *testing.T) {
 		t.Fatalf("last state %+v, want the browser still open", st[len(st)-1])
 	}
 }
+
+func TestAgentScrollTurnsWhereItLastActedAndSaysWhere(t *testing.T) {
+	s, launch, out := viewService(t)
+	if _, err := s.Attach("s", Viewport{W: 800, H: 600, Scale: 1}); err != nil {
+		t.Fatal(err)
+	}
+	p := launch.pages[0]
+	if err := s.Scroll("s", 300); err != nil {
+		t.Fatal(err)
+	}
+	p.clickAt = [2]float64{120, 48}
+	if err := s.Click("s", Target{Selector: "#go"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Scroll("s", -200); err != nil {
+		t.Fatal(err)
+	}
+	if p.scrolledAt[0] != nil {
+		t.Fatalf("first scroll turned at %+v, want the middle (nil) before any click", p.scrolledAt[0])
+	}
+	if at := p.scrolledAt[1]; at == nil || at.X != 120 || at.Y != 48 {
+		t.Fatalf("scroll after a click turned at %+v, want the click's point", at)
+	}
+	var acts []api.BrowserAgentAct
+	for _, d := range out.named(api.BrowserAgentEvent.Name) {
+		acts = append(acts, d.(api.BrowserAgentAct))
+	}
+	first, last := acts[0], acts[len(acts)-1]
+	if first.Action != "scroll" || first.DY != 300 || first.X == nil || *first.X != 400 {
+		t.Fatalf("first scroll reported %+v, want scroll 300 at the middle", first)
+	}
+	if last.Action != "scroll" || last.DY != -200 || *last.X != 120 || *last.Y != 48 {
+		t.Fatalf("second scroll reported %+v", last)
+	}
+}
+
+func TestAgentTypeAndPressReportTheElementTheyClicked(t *testing.T) {
+	s, launch, out := viewService(t)
+	if _, err := s.Attach("s", Viewport{W: 800, H: 600, Scale: 1}); err != nil {
+		t.Fatal(err)
+	}
+	launch.pages[0].clickAt = [2]float64{30, 40}
+	if err := s.Type("s", "hi", false, Target{Selector: "#q"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Press("s", "Enter", Target{}); err != nil {
+		t.Fatal(err)
+	}
+	acts := out.named(api.BrowserAgentEvent.Name)
+	typed, pressed := acts[0].(api.BrowserAgentAct), acts[1].(api.BrowserAgentAct)
+	if typed.Action != "type" || typed.X == nil || *typed.X != 30 || *typed.Y != 40 {
+		t.Fatalf("type reported %+v, want the field it clicked", typed)
+	}
+	if pressed.Action != "press" || pressed.X != nil {
+		t.Fatalf("press without a target reported %+v, want no point", pressed)
+	}
+	p := launch.pages[0]
+	if len(p.clicks) != 1 || len(p.typed) != 1 || !p.typed[0].t.empty() {
+		t.Fatalf("clicks %v typed %+v: type should click its target once, then type into what has focus", p.clicks, p.typed)
+	}
+}

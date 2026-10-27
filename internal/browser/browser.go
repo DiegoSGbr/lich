@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/network"
+	"github.com/lichdotdev/lich/api"
 )
 
 // idleAfter is how long a headless browser no pane shows sits unused before
@@ -66,8 +67,10 @@ type session struct {
 	// byAgent: the agent started it, not the window. watching: a pane shows
 	// it, so the reaper leaves it alone like a headed window.
 	byAgent, watching bool
-	page              Page
-	lastUsed          time.Time
+	// agentAt is where the agent last acted, where its next scroll turns.
+	agentAt  *point
+	page     Page
+	lastUsed time.Time
 }
 
 // New starts a service that launches the system Chromium (chromium.FindBrowser)
@@ -118,7 +121,7 @@ func (s *Service) Open(owner, rawURL string) (Handle, error) {
 		return Handle{}, err
 	}
 	s.remember(sess, u, "")
-	s.agentActed(sess, nil, nil)
+	s.agentActed(sess, api.BrowserAgentAct{})
 	return s.handleOf(sess), nil
 }
 

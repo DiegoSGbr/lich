@@ -87,7 +87,9 @@ type Page interface {
 	Reload(ctx context.Context) error
 	Back(ctx context.Context) error
 	Forward(ctx context.Context) error
-	Scroll(ctx context.Context, dy int) error
+	// Scroll turns the wheel by dy CSS pixels at at, or at the viewport's
+	// middle when at is nil, and returns where it turned it.
+	Scroll(ctx context.Context, at *point, dy int) (x, y float64, err error)
 	Focus(ctx context.Context) error
 	// Cookies and SetCookies carry a browser's cookies, session ones included,
 	// into the process that replaces it.

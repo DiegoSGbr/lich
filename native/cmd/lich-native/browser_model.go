@@ -25,10 +25,13 @@ type browserFrame struct {
 	size image.Point
 }
 
-// browserMark is the agent's last action on its page, and where it clicked.
+// browserMark is the agent's last action on its page: which one, where, and
+// for a scroll how far (positive down).
 type browserMark struct {
-	at   time.Time
-	x, y *float64
+	action string
+	dy     int
+	at     time.Time
+	x, y   *float64
 }
 
 type browserStore struct {
@@ -137,7 +140,7 @@ func (m *model) applyBrowserFrame(owner string, ev backend.Event) error {
 func (m *model) applyBrowserAgent(a api.BrowserAgentAct, now time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.browsers.agent[a.Owner] = browserMark{at: now, x: a.X, y: a.Y}
+	m.browsers.agent[a.Owner] = browserMark{at: now, x: a.X, y: a.Y, action: a.Action, dy: a.DY}
 }
 
 // browserView is what session's page pane draws: its state, its last frame

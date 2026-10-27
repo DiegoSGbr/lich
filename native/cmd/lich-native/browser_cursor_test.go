@@ -109,3 +109,17 @@ func TestDrawAgentCursorLaysOutWithoutAPage(t *testing.T) {
 		t.Fatal("cursor still shown after it faded out")
 	}
 }
+
+func TestAgentCursorScrollShowsItsDirectionInsteadOfAClick(t *testing.T) {
+	var c agentCursor
+	t0 := time.Unix(100, 0)
+	x, y := 200.0, 150.0
+	c.take(browserMark{at: t0, x: &x, y: &y, action: "scroll", dy: -300})
+	if c.scroll != -1 || c.to != f32.Pt(200, 150) {
+		t.Fatalf("scroll up: scroll %d to %v", c.scroll, c.to)
+	}
+	c.take(clickMark(t0.Add(time.Second), 10, 10))
+	if c.scroll != 0 {
+		t.Fatalf("a click after a scroll kept scroll %d", c.scroll)
+	}
+}

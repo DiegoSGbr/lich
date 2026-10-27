@@ -23,6 +23,7 @@ type fakePage struct {
 	backs       int
 	forwards    int
 	scrolled    []int
+	scrolledAt  []*point
 	focused     int
 	cookies     []*network.CookieParam
 	setCookies  []*network.CookieParam
@@ -143,11 +144,15 @@ func (p *fakePage) Forward(context.Context) error {
 	return nil
 }
 
-func (p *fakePage) Scroll(_ context.Context, dy int) error {
+func (p *fakePage) Scroll(_ context.Context, at *point, dy int) (x, y float64, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.scrolled = append(p.scrolled, dy)
-	return nil
+	p.scrolledAt = append(p.scrolledAt, at)
+	if at == nil {
+		return 400, 300, nil
+	}
+	return at.X, at.Y, nil
 }
 
 func (p *fakePage) Focus(context.Context) error {

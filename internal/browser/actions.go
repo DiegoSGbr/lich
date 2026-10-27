@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+
+	"github.com/lichdotdev/lich/api"
 )
 
 var errNoBrowser = fmt.Errorf("no browser for this session — open one first")
@@ -65,7 +67,7 @@ func (s *Service) Info(id string) (PageInfo, error) {
 		return PageInfo{}, err
 	}
 	s.remember(sess, info.URL, info.Title)
-	s.agentActed(sess, nil, nil)
+	s.agentActed(sess, api.BrowserAgentAct{})
 	return info, nil
 }
 
@@ -89,15 +91,19 @@ func (s *Service) Click(id string, t Target) error {
 		return err
 	}
 	s.touch(sess)
-	s.agentActed(sess, &x, &y)
+	s.agentActed(sess, api.BrowserAgentAct{Action: "click", X: &x, Y: &y})
 	return nil
 }
 
 // Type sends keystrokes. clear selects-and-replaces; the typed text never
 // comes back through Info.
 func (s *Service) Type(id, text string, clear bool, t Target) error {
-	return s.act(id, func(p Page, ctx context.Context) error {
-		return p.Type(ctx, text, clear, t)
+	return s.actAt(id, api.BrowserAgentAct{Action: "type"}, func(p Page, ctx context.Context) (*point, error) {
+		at, err := clickTarget(ctx, p, t)
+		if err != nil {
+			return nil, err
+		}
+		return at, p.Type(ctx, text, clear, Target{})
 	})
 }
 
@@ -107,9 +113,27 @@ func (s *Service) Press(id, key string, t Target) error {
 	if _, err := keySequence(key); err != nil {
 		return err
 	}
-	return s.act(id, func(p Page, ctx context.Context) error {
-		return p.Press(ctx, key, t)
+	return s.actAt(id, api.BrowserAgentAct{Action: "press"}, func(p Page, ctx context.Context) (*point, error) {
+		at, err := clickTarget(ctx, p, t)
+		if err != nil {
+			return nil, err
+		}
+		return at, p.Press(ctx, key, Target{})
 	})
+}
+
+// clickTarget clicks t, as typing into or pressing on an element does first,
+// and returns where; nil for an empty target, which acts on whatever has
+// focus.
+func clickTarget(ctx context.Context, p Page, t Target) (*point, error) {
+	if t.empty() {
+		return nil, nil
+	}
+	x, y, err := p.Click(ctx, t)
+	if err != nil {
+		return nil, err
+	}
+	return &point{X: x, Y: y}, nil
 }
 
 // Screenshot writes a PNG to dest (created if empty: inside the profile dir)
@@ -136,7 +160,7 @@ func (s *Service) Screenshot(id, dest string) (string, error) {
 		return "", err
 	}
 	s.touch(sess)
-	s.agentActed(sess, nil, nil)
+	s.agentActed(sess, api.BrowserAgentAct{})
 	return dest, nil
 }
 
@@ -158,7 +182,7 @@ func (s *Service) Navigate(id, rawURL string) (Handle, error) {
 		return Handle{}, err
 	}
 	s.remember(sess, u, "")
-	s.agentActed(sess, nil, nil)
+	s.agentActed(sess, api.BrowserAgentAct{})
 	return s.handleOf(sess), nil
 }
 
@@ -178,8 +202,15 @@ func (s *Service) Forward(id string) error {
 }
 
 // Scroll moves the viewport by dy CSS pixels (positive is down).
+// It turns the wheel where the agent last acted, else in the middle.
 func (s *Service) Scroll(id string, dy int) error {
-	return s.act(id, func(p Page, ctx context.Context) error { return p.Scroll(ctx, dy) })
+	return s.actAt(id, api.BrowserAgentAct{Action: "scroll", DY: dy}, func(p Page, ctx context.Context) (*point, error) {
+		x, y, err := p.Scroll(ctx, s.agentPoint(id), dy)
+		if err != nil {
+			return nil, err
+		}
+		return &point{X: x, Y: y}, nil
+	})
 }
 
 // act runs one agent action on its page and tells the window the agent
@@ -188,9 +219,27 @@ func (s *Service) Scroll(id string, dy int) error {
 func (s *Service) act(id string, fn func(Page, context.Context) error) error {
 	sess, err := s.drive(id, fn)
 	if err == nil {
-		s.agentActed(sess, nil, nil)
+		s.agentActed(sess, api.BrowserAgentAct{})
 	}
 	return err
+}
+
+// actAt is act for act, made at the point fn returns (nil for none).
+func (s *Service) actAt(id string, act api.BrowserAgentAct, fn func(Page, context.Context) (*point, error)) error {
+	var at *point
+	sess, err := s.drive(id, func(p Page, ctx context.Context) error {
+		var err error
+		at, err = fn(p, ctx)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	if at != nil {
+		act.X, act.Y = &at.X, &at.Y
+	}
+	s.agentActed(sess, act)
+	return nil
 }
 
 func (s *Service) drive(id string, fn func(Page, context.Context) error) (*session, error) {

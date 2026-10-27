@@ -219,8 +219,17 @@ func settleAfter(goThere func(context.Context) error) chromedp.Action {
 	})
 }
 
-func (p *chromePage) Scroll(ctx context.Context, dy int) error {
-	return p.run(ctx, chromedp.Evaluate(fmt.Sprintf("window.scrollBy(0, %d)", dy), nil))
+// Scroll is a real wheel turn rather than window.scrollBy, so it scrolls what
+// is under the point (a list with its own scroll) as a person's would.
+func (p *chromePage) Scroll(ctx context.Context, at *point, dy int) (x, y float64, err error) {
+	if at == nil {
+		at = new(point)
+		if err := p.run(ctx, chromedp.Evaluate(`({x: innerWidth / 2, y: innerHeight / 2})`, at)); err != nil {
+			return 0, 0, err
+		}
+	}
+	wheel := input.DispatchMouseEvent(input.MouseWheel, at.X, at.Y).WithDeltaY(float64(dy))
+	return at.X, at.Y, p.run(ctx, wheel)
 }
 
 // Focus raises the window. window.focus() from the page does not: the OS

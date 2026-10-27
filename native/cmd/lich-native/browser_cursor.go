@@ -27,6 +27,8 @@ const (
 	cursorDip   = 170 * time.Millisecond
 	cursorRing  = 520 * time.Millisecond
 	cursorFade  = 300 * time.Millisecond
+	// cursorScroll is how long a scroll's chevrons take to slide past.
+	cursorScroll = 560 * time.Millisecond
 	// cursorDipScale is how far the arrow shrinks at the bottom of its dip.
 	cursorDipScale = 0.14
 )
@@ -41,13 +43,17 @@ var cursorEase = ui.CubicBezier(0.2, 0.8, 0.2, 1)
 type agentCursor struct {
 	shown    bool
 	from, to f32.Point
+	// scroll is the direction of the scroll the cursor glided for, 1 down
+	// and -1 up; 0 for a click, which dips and rings instead.
+	scroll int
 	// moved is when the glide to to began; last is the agent's last action,
 	// which the fade counts from; seen is the last mark taken.
 	moved, last, seen time.Time
 }
 
-// take moves the cursor for a new mark: a click glides it to its point, any
-// other action only keeps it up.
+// take moves the cursor for a new mark: an action at a point (a click, typing
+// into or pressing on an element, a scroll) glides it there, any other only
+// keeps it up.
 func (c *agentCursor) take(m browserMark) {
 	if m.at.IsZero() || !m.at.After(c.seen) {
 		return
@@ -62,6 +68,13 @@ func (c *agentCursor) take(m browserMark) {
 		from = c.position(m.at)
 	}
 	c.from, c.to, c.moved, c.shown = from, to, m.at, true
+	c.scroll = 0
+	if m.action == "scroll" && m.dy != 0 {
+		c.scroll = 1
+		if m.dy < 0 {
+			c.scroll = -1
+		}
+	}
 }
 
 func (c *agentCursor) position(now time.Time) f32.Point {
@@ -86,7 +99,7 @@ func (c *agentCursor) landed(now time.Time) time.Duration {
 
 // settled is when nothing about the cursor changes any more until it fades.
 func (c *agentCursor) settled() time.Time {
-	return c.moved.Add(cursorGlide + cursorRing)
+	return c.moved.Add(cursorGlide + max(cursorRing, cursorScroll))
 }
 
 func progress(d, span time.Duration) float32 {
@@ -129,14 +142,17 @@ func (u *window) drawAgentCursor(gtx C, c *agentCursor, scale float32, tint, out
 	at := c.position(now).Mul(scale)
 	landed := c.landed(now)
 	defer paint.PushOpacity(gtx.Ops, a).Pop()
-	if landed >= 0 && landed < cursorRing {
+	if c.scroll != 0 {
+		drawScrollChevrons(gtx, at, landed, c.scroll, tint, outline)
+	}
+	if c.scroll == 0 && landed >= 0 && landed < cursorRing {
 		p := progress(landed, cursorRing)
 		r := float32(gtx.Dp(17)) * cursorEase(p)
 		ring := clip.Ellipse{Min: image.Pt(int(at.X-r), int(at.Y-r)), Max: image.Pt(int(at.X+r), int(at.Y+r))}
 		paint.FillShape(gtx.Ops, ui.Alpha(tint, 0.95*(1-p)), clip.Stroke{Path: ring.Path(gtx.Ops), Width: float32(gtx.Dp(2))}.Op())
 	}
 	s := float32(1)
-	if landed >= 0 && landed < cursorDip {
+	if c.scroll == 0 && landed >= 0 && landed < cursorDip {
 		s -= cursorDipScale * float32(math.Sin(math.Pi*float64(progress(landed, cursorDip))))
 	}
 	unit := float32(gtx.Dp(1))
@@ -155,6 +171,34 @@ func (u *window) drawAgentCursor(gtx C, c *agentCursor, scale float32, tint, out
 		gtx.Execute(op.InvalidateCmd{})
 	default:
 		gtx.Execute(op.InvalidateCmd{At: c.last.Add(agentGlow)})
+	}
+}
+
+// drawScrollChevrons slides two chevrons under the arrow at at in the scroll's
+// direction, fading in and out, for cursorScroll after the glide landed.
+func drawScrollChevrons(gtx C, at f32.Point, landed time.Duration, dir int, tint, outline color.NRGBA) {
+	if landed < 0 || landed >= cursorScroll {
+		return
+	}
+	p := progress(landed, cursorScroll)
+	// in until a third of the way, then out, as the mockup's keyframes
+	alpha := min(p/0.35, (1-p)/0.65)
+	unit := float32(gtx.Dp(1))
+	d := float32(dir)
+	shift := (-6 + 16*p) * d * unit
+	center := at.Add(f32.Pt(0, 30*unit+shift))
+	chevron := func(dy float32) clip.PathSpec {
+		var path clip.Path
+		path.Begin(gtx.Ops)
+		path.MoveTo(center.Add(f32.Pt(-6*unit, (dy-3)*d*unit)))
+		path.LineTo(center.Add(f32.Pt(0, (dy+3)*d*unit)))
+		path.LineTo(center.Add(f32.Pt(6*unit, (dy-3)*d*unit)))
+		return path.End()
+	}
+	defer paint.PushOpacity(gtx.Ops, alpha).Pop()
+	for _, dy := range []float32{-5, 5} {
+		paint.FillShape(gtx.Ops, outline, clip.Stroke{Path: chevron(dy), Width: 4.4 * unit}.Op())
+		paint.FillShape(gtx.Ops, tint, clip.Stroke{Path: chevron(dy), Width: 2.6 * unit}.Op())
 	}
 }
 
