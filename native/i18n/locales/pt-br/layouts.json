@@ -17,7 +17,6 @@
   },
   "browser": {
     "title": "Navegador",
-    "agent": "agente",
     "close": "Fechar o navegador",
     "address": "Digite uma URL",
     "back": "Voltar",

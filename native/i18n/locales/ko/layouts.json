@@ -15,7 +15,6 @@
   },
   "browser": {
     "title": "브라우저",
-    "agent": "에이전트",
     "close": "브라우저 닫기",
     "address": "URL 입력",
     "back": "뒤로",

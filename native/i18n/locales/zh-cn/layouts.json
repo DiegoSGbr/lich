@@ -15,7 +15,6 @@
   },
   "browser": {
     "title": "浏览器",
-    "agent": "智能体",
     "close": "关闭浏览器",
     "address": "输入网址",
     "back": "后退",

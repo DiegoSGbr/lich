@@ -1,0 +1,212 @@
+package main
+
+import (
+	"image"
+	"image/color"
+	"math"
+	"time"
+
+	"gioui.org/f32"
+	"gioui.org/font"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
+
+	"github.com/lichdotdev/lich/native/ui"
+	"github.com/lichdotdev/lich/native/ui/icons"
+)
+
+// The agent's pointer over its page: lich's own arrow, in the session's card
+// color or the theme's primary, outlined in primary-foreground so it reads
+// over any page, with a badge naming the provider. It glides to each click,
+// dips, rings, and fades once the agent goes quiet. Timings from the approved
+// mockup (2026-10-26).
+const (
+	cursorGlide = 280 * time.Millisecond
+	cursorDip   = 170 * time.Millisecond
+	cursorRing  = 520 * time.Millisecond
+	cursorFade  = 300 * time.Millisecond
+	// cursorDipScale is how far the arrow shrinks at the bottom of its dip.
+	cursorDipScale = 0.14
+)
+
+// cursorShadow is the drop shadow under the arrow, the mockup's 35% black.
+var cursorShadow = color.NRGBA{A: 90}
+
+// cursorEase is the glide's curve, CSS's cubic-bezier(.2,.8,.2,1).
+var cursorEase = ui.CubicBezier(0.2, 0.8, 0.2, 1)
+
+// agentCursor is where the agent's pointer is, in CSS pixels of the page.
+type agentCursor struct {
+	shown    bool
+	from, to f32.Point
+	// moved is when the glide to to began; last is the agent's last action,
+	// which the fade counts from; seen is the last mark taken.
+	moved, last, seen time.Time
+}
+
+// take moves the cursor for a new mark: a click glides it to its point, any
+// other action only keeps it up.
+func (c *agentCursor) take(m browserMark) {
+	if m.at.IsZero() || !m.at.After(c.seen) {
+		return
+	}
+	c.seen, c.last = m.at, m.at
+	if m.x == nil || m.y == nil {
+		return
+	}
+	to := f32.Pt(float32(*m.x), float32(*m.y))
+	from := to
+	if c.shown {
+		from = c.position(m.at)
+	}
+	c.from, c.to, c.moved, c.shown = from, to, m.at, true
+}
+
+func (c *agentCursor) position(now time.Time) f32.Point {
+	t := cursorEase(progress(now.Sub(c.moved), cursorGlide))
+	return c.from.Add(c.to.Sub(c.from).Mul(t))
+}
+
+// alpha is the cursor's opacity at now: whole until agentGlow after the last
+// action, then fading out over cursorFade.
+func (c *agentCursor) alpha(now time.Time) float32 {
+	if !c.shown {
+		return 0
+	}
+	return 1 - progress(now.Sub(c.last)-agentGlow, cursorFade)
+}
+
+// landed is how long ago the glide reached the point, negative while it
+// still moves.
+func (c *agentCursor) landed(now time.Time) time.Duration {
+	return now.Sub(c.moved) - cursorGlide
+}
+
+// settled is when nothing about the cursor changes any more until it fades.
+func (c *agentCursor) settled() time.Time {
+	return c.moved.Add(cursorGlide + cursorRing)
+}
+
+func progress(d, span time.Duration) float32 {
+	return float32(min(max(float64(d)/float64(span), 0), 1))
+}
+
+// cursorArrow is lich's arrow in a 24-unit box, its tip at cursorTip: rounder
+// and heavier than the system's, so it is not taken for the person's own.
+var cursorArrow = []f32.Point{
+	f32.Pt(4.2, 2.6), f32.Pt(19.4, 10.4), f32.Pt(20.6, 11), f32.Pt(19.3, 11.6),
+	f32.Pt(13.2, 13.6), f32.Pt(10.6, 19.6), f32.Pt(10, 20.9), f32.Pt(9.4, 19.6),
+}
+
+var cursorTip = f32.Pt(4, 3)
+
+func arrowPath(ops *op.Ops, unit float32) clip.PathSpec {
+	p := func(i int) f32.Point { return cursorArrow[i].Sub(cursorTip).Mul(unit) }
+	var path clip.Path
+	path.Begin(ops)
+	path.MoveTo(p(0))
+	path.LineTo(p(1))
+	path.QuadTo(p(2), p(3))
+	path.LineTo(p(4))
+	path.LineTo(p(5))
+	path.QuadTo(p(6), p(7))
+	path.Close()
+	return path.End()
+}
+
+// drawAgentCursor draws c over the page, scale being device pixels per CSS
+// pixel, in tint with outline around it, the badge naming provider with its
+// icon. It asks for the frames its motion needs.
+func (u *window) drawAgentCursor(gtx C, c *agentCursor, scale float32, tint, outline color.NRGBA, provider string, icon *icons.Icon) {
+	now := gtx.Now
+	a := c.alpha(now)
+	if a <= 0 {
+		c.shown = false
+		return
+	}
+	at := c.position(now).Mul(scale)
+	landed := c.landed(now)
+	defer paint.PushOpacity(gtx.Ops, a).Pop()
+	if landed >= 0 && landed < cursorRing {
+		p := progress(landed, cursorRing)
+		r := float32(gtx.Dp(17)) * cursorEase(p)
+		ring := clip.Ellipse{Min: image.Pt(int(at.X-r), int(at.Y-r)), Max: image.Pt(int(at.X+r), int(at.Y+r))}
+		paint.FillShape(gtx.Ops, ui.Alpha(tint, 0.95*(1-p)), clip.Stroke{Path: ring.Path(gtx.Ops), Width: float32(gtx.Dp(2))}.Op())
+	}
+	s := float32(1)
+	if landed >= 0 && landed < cursorDip {
+		s -= cursorDipScale * float32(math.Sin(math.Pi*float64(progress(landed, cursorDip))))
+	}
+	unit := float32(gtx.Dp(1))
+	place := op.Affine(f32.Affine2D{}.Scale(f32.Point{}, f32.Pt(s, s)).Offset(at)).Push(gtx.Ops)
+	shadow := op.Offset(image.Pt(0, gtx.Dp(1))).Push(gtx.Ops)
+	paint.FillShape(gtx.Ops, cursorShadow, clip.Outline{Path: arrowPath(gtx.Ops, unit)}.Op())
+	shadow.Pop()
+	paint.FillShape(gtx.Ops, tint, clip.Outline{Path: arrowPath(gtx.Ops, unit)}.Op())
+	paint.FillShape(gtx.Ops, outline, clip.Stroke{Path: arrowPath(gtx.Ops, unit), Width: 1.6 * unit}.Op())
+	place.Pop()
+	badge := op.Offset(image.Pt(int(at.X)+gtx.Dp(12), int(at.Y)+gtx.Dp(15))).Push(gtx.Ops)
+	u.cursorBadge(gtx, tint, outline, provider, icon)
+	badge.Pop()
+	switch {
+	case now.Before(c.settled()) || c.last.Add(agentGlow).Before(now):
+		gtx.Execute(op.InvalidateCmd{})
+	default:
+		gtx.Execute(op.InvalidateCmd{At: c.last.Add(agentGlow)})
+	}
+}
+
+// cursorBadge is the pill beside the arrow: the provider's icon and name in
+// ink on tint, outlined like the arrow.
+func (u *window) cursorBadge(gtx C, tint, outline color.NRGBA, provider string, icon *icons.Icon) {
+	th := u.theme.On(tint)
+	fg := inkOn(tint, outline)
+	gtx.Constraints.Min = image.Point{}
+	rec := op.Record(gtx.Ops)
+	d := layout.Inset{Left: ui.Space(1.25), Right: ui.Space(2)}.Layout(gtx, func(gtx C) D {
+		gtx.Constraints.Min.Y = gtx.Dp(20)
+		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx C) D { return icon.Layout(gtx, ui.Space(3), fg) }),
+			ui.Gap(1),
+			layout.Rigid(th.Text(ui.TextXS, provider).In(fg).Weight(font.Medium).Layout),
+		)
+	})
+	call := rec.Stop()
+	pill := clip.UniformRRect(image.Rectangle{Max: d.Size}, d.Size.Y/2)
+	paint.FillShape(gtx.Ops, tint, pill.Op(gtx.Ops))
+	paint.FillShape(gtx.Ops, outline, clip.Stroke{Path: pill.Path(gtx.Ops), Width: float32(gtx.Dp(1.5))}.Op())
+	call.Add(gtx.Ops)
+}
+
+// inkOn is the text color on tint: the theme's primary-foreground, which is
+// made for the theme's primary, unless tint is a card color it does not read
+// on, where black or white is, by luminance.
+func inkOn(tint, themed color.NRGBA) color.NRGBA {
+	if contrast(tint, themed) >= 3 {
+		return themed
+	}
+	if luminance(tint) > 0.4 {
+		return color.NRGBA{A: 255}
+	}
+	return color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+}
+
+// contrast is WCAG's contrast ratio of two opaque colors.
+func contrast(a, b color.NRGBA) float64 {
+	la, lb := luminance(a), luminance(b)
+	return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+}
+
+// luminance is WCAG's relative luminance of an opaque sRGB color.
+func luminance(c color.NRGBA) float64 {
+	lin := func(v uint8) float64 {
+		s := float64(v) / 255
+		if s <= 0.04045 {
+			return s / 12.92
+		}
+		return math.Pow((s+0.055)/1.055, 2.4)
+	}
+	return 0.2126*lin(c.R) + 0.7152*lin(c.G) + 0.0722*lin(c.B)
+}

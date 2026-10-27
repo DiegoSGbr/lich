@@ -15,7 +15,6 @@
   },
   "browser": {
     "title": "ブラウザ",
-    "agent": "エージェント",
     "close": "ブラウザを閉じる",
     "address": "URL を入力",
     "back": "戻る",

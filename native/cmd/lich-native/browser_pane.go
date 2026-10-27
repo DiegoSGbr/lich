@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"image/color"
 	"log"
 	"runtime"
 	"strings"
@@ -37,11 +38,10 @@ var (
 	icBrowserForward = icons.Lucide("arrow-right")
 	icBrowserReload  = icons.Lucide("rotate-cw")
 	icBrowserWindow  = icons.Lucide("external-link")
-	icBrowserAgent   = icons.Lucide("bot")
 )
 
-// agentGlow is how long the agent chip and its click mark stay up after the
-// agent's last action on the page.
+// agentGlow is how long the agent's cursor stays up after its last action on
+// the page, before it fades.
 const agentGlow = 2 * time.Second
 
 // doubleClick is the window two presses of a button count as one double
@@ -68,6 +68,7 @@ type browserPaneUI struct {
 	lastPress             time.Time
 	presses               int
 	queue                 *browserQueue
+	cursor                agentCursor
 	onScreen, wasOnScreen bool
 }
 
@@ -113,7 +114,7 @@ func (u *window) browserPaneAt(gtx C, v stageView, session string, r image.Recta
 	head, bar := gtx.Dp(paneHeader), gtx.Dp(ui.Space(9))
 	header := gtx
 	header.Constraints = layout.Exact(image.Pt(size.X, head))
-	u.browserHeader(header, p, pane, focused, gtx.Now.Sub(mark.at) < agentGlow)
+	u.browserHeader(header, p, pane, focused)
 	line := th.Over(th.Border)
 	paint.FillShape(gtx.Ops, line, clip.Rect{Min: image.Pt(0, head-gtx.Dp(1)), Max: image.Pt(size.X, head)}.Op())
 	tool := op.Offset(image.Pt(0, head)).Push(gtx.Ops)
@@ -125,7 +126,8 @@ func (u *window) browserPaneAt(gtx C, v stageView, session string, r image.Recta
 	page := gtx
 	page.Constraints = layout.Exact(image.Pt(size.X, max(size.Y-head-bar, 0)))
 	off := op.Offset(image.Pt(0, head+bar)).Push(gtx.Ops)
-	u.browserPage(page, p, session, frame, mark, focused)
+	p.cursor.take(mark)
+	u.browserPage(page, p, session, frame, focused)
 	if several && !focused {
 		paint.FillShape(gtx.Ops, ui.Alpha(th.Background, paneDim), clip.Rect{Max: page.Constraints.Max}.Op())
 	}
@@ -138,14 +140,10 @@ func (u *window) browserPaneAt(gtx C, v stageView, session string, r image.Recta
 		border, width = th.Ring, float32(gtx.Dp(1.5))
 	}
 	paint.FillShape(gtx.Ops, border, clip.Stroke{Path: shape.Path(gtx.Ops), Width: width}.Op())
-	if gtx.Now.Sub(mark.at) < agentGlow {
-		gtx.Execute(op.InvalidateCmd{At: mark.at.Add(agentGlow)})
-	}
 }
 
-// browserHeader is the page pane's top row: its name, the agent chip while
-// the agent acts on the page, and zoom and close.
-func (u *window) browserHeader(gtx C, p *browserPaneUI, pane string, focused, agent bool) {
+// browserHeader is the page pane's top row: its name, zoom and close.
+func (u *window) browserHeader(gtx C, p *browserPaneUI, pane string, focused bool) {
 	th := u.theme
 	if p.zoom.Clicked(gtx) {
 		u.layoutStage.focus, u.layoutStage.zoom = pane, true
@@ -163,19 +161,6 @@ func (u *window) browserHeader(gtx C, p *browserPaneUI, pane string, focused, ag
 			layout.Rigid(func(gtx C) D { return icBrowser.Layout(gtx, ui.Space(3.5), th.MutedForeground) }),
 			ui.Gap(2),
 			layout.Rigid(th.Text(ui.TextXS, i18n.T("layouts.browser.title")).In(fg).Weight(weight).Layout),
-			ui.Gap(2),
-			layout.Rigid(func(gtx C) D {
-				if !agent {
-					return D{}
-				}
-				return pill(gtx, th, func(gtx C) D {
-					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx C) D { return icBrowserAgent.Layout(gtx, ui.Space(3), th.Foreground) }),
-						ui.Gap(1),
-						layout.Rigid(th.Text(ui.TextXS, i18n.T("layouts.browser.agent")).Layout),
-					)
-				}, ui.Space(2), ui.Space(2))
-			}),
 			layout.Flexed(1, func(gtx C) D { return D{Size: image.Pt(gtx.Constraints.Max.X, 0)} }),
 			layout.Rigid(func(gtx C) D {
 				zoom := th.Tooltip(&u.root, &p.zoomTip, i18n.T("layouts.pane.zoom"))
@@ -250,7 +235,7 @@ func (u *window) browserToolbar(gtx C, p *browserPaneUI, session string, st api.
 
 // browserPage draws the page's last frame over gtx's area, keeps the
 // backend's page the area's size, and passes the pointer and keys on.
-func (u *window) browserPage(gtx C, p *browserPaneUI, session string, frame browserFrame, mark browserMark, focused bool) {
+func (u *window) browserPage(gtx C, p *browserPaneUI, session string, frame browserFrame, focused bool) {
 	size := gtx.Constraints.Max
 	scale := gtx.Metric.PxPerDp
 	want := api.BrowserViewOptions{ID: session, W: int(float32(size.X) / scale), H: int(float32(size.Y) / scale), Scale: float64(scale)}
@@ -274,12 +259,9 @@ func (u *window) browserPage(gtx C, p *browserPaneUI, session string, frame brow
 		paint.PaintOp{}.Add(gtx.Ops)
 		t.Pop()
 	}
-	if gtx.Now.Sub(mark.at) < agentGlow && mark.x != nil && mark.y != nil {
-		at := image.Pt(int(float32(*mark.x)*scale), int(float32(*mark.y)*scale))
-		r := gtx.Dp(ui.Space(2))
-		dot := clip.Ellipse{Min: at.Sub(image.Pt(r, r)), Max: at.Add(image.Pt(r, r))}
-		paint.FillShape(gtx.Ops, ui.Alpha(u.theme.Ring, 0.35), dot.Op(gtx.Ops))
-		paint.FillShape(gtx.Ops, u.theme.Ring, clip.Stroke{Path: dot.Path(gtx.Ops), Width: float32(gtx.Dp(1.5))}.Op())
+	if p.cursor.shown {
+		tint, provider, icon := u.agentLook(session)
+		u.drawAgentCursor(gtx, &p.cursor, scale, tint, u.theme.PrimaryForeground, provider, icon)
 	}
 	u.browserInput(gtx, p, session, scale, focused)
 	defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
@@ -423,4 +405,26 @@ func isLocalHost(text string) bool {
 		}
 	}
 	return host == "localhost" || host == "127.0.0.1" || host == "[::1]" || strings.HasSuffix(host, ".localhost")
+}
+
+// agentLook is how session's agent cursor is drawn: in its card color, or the
+// theme's primary for a card without one, naming the provider that runs in it.
+func (u *window) agentLook(session string) (tint color.NRGBA, provider string, icon *icons.Icon) {
+	tint = u.theme.Primary
+	sv, ok := u.model.sessionViewOf(session)
+	if !ok {
+		return tint, "", providerIcon("")
+	}
+	if c, tinted := cardColors[sv.Color]; tinted {
+		tint = c
+	}
+	kind := sv.Kind
+	if sv.agent != "" {
+		kind = sv.agent
+	}
+	provider = kind
+	if info, found := u.model.providers.find(kind); found && info.name != "" {
+		provider = info.name
+	}
+	return tint, provider, providerIcon(kind)
 }
