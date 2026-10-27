@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"image"
 	"reflect"
 	"testing"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
@@ -97,5 +99,18 @@ func TestToolbarButtonFlashesOnceTheCursorLands(t *testing.T) {
 	gtx.Now = t0.Add(toolbarFlash)
 	if p.flashing(gtx, "back") {
 		t.Fatal("back still lit after the flash")
+	}
+}
+
+func TestPagePointStaysInsideThePage(t *testing.T) {
+	page := image.Rect(0, 66, 800, 666)
+	if got := pagePoint(100, 50, 1, page); got != f32.Pt(100, 116) {
+		t.Fatalf("inside: %v", got)
+	}
+	if got := pagePoint(475, 715, 1, page); got.Y != 665 {
+		t.Fatalf("below the page: %v, want kept at its bottom edge", got)
+	}
+	if got := pagePoint(-5, 10, 2, page); got.X != 0 || got.Y != 86 {
+		t.Fatalf("left of the page at scale 2: %v", got)
 	}
 }

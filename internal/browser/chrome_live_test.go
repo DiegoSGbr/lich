@@ -330,3 +330,52 @@ func TestChromeSelectionReadsAFieldAndNotAPassword(t *testing.T) {
 		}
 	}
 }
+
+func TestChromeClickReachesAnElementScrolledOutOfView(t *testing.T) {
+	p, _ := liveChrome(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<body style="margin:0"><div style="height:3000px">form</div>
+<button id="save" onclick="document.body.dataset.saved = 'yes'">Salvar</button></body>`)
+	}))
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), pageWait)
+	defer cancel()
+	if err := p.Navigate(ctx, srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Resize(ctx, Viewport{W: 800, H: 600, Scale: 1}); err != nil {
+		t.Fatal(err)
+	}
+	x, y, err := p.Click(ctx, Target{Selector: "#save"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if y < 0 || y > 600 || x < 0 || x > 800 {
+		t.Fatalf("clicked at %v,%v, outside the 800x600 viewport", x, y)
+	}
+	var saved string
+	if err := p.run(ctx, chromedp.Evaluate(`document.body.dataset.saved || ""`, &saved)); err != nil {
+		t.Fatal(err)
+	}
+	if saved != "yes" {
+		t.Fatal("the button below the fold was not clicked")
+	}
+}
+
+func TestChromeClickRefusesAPointOutsideTheViewport(t *testing.T) {
+	p, srv := liveChrome(t)
+	ctx, cancel := context.WithTimeout(context.Background(), pageWait)
+	defer cancel()
+	if err := p.Navigate(ctx, srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Resize(ctx, Viewport{W: 800, H: 600, Scale: 1}); err != nil {
+		t.Fatal(err)
+	}
+	x, y := 400.0, 715.0
+	_, _, err := p.Click(ctx, Target{X: &x, Y: &y})
+	if err == nil || !strings.Contains(err.Error(), "800x600") {
+		t.Fatalf("click at 400,715 in an 800x600 viewport: %v, want an error naming the viewport", err)
+	}
+}

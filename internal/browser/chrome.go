@@ -313,8 +313,14 @@ type point struct {
 	Y float64 `json:"y"`
 }
 
+// resolveJS finds a click's point in the viewport. An element out of view,
+// which typing into a form scrolls the save button to, is scrolled to the
+// middle first: a click at its old box lands outside the page and hits
+// nothing. A point given outside the viewport is reported, not clicked.
 const resolveJS = `(function(index, selector, x, y) {
+  var inView = function(px, py) { return px >= 0 && py >= 0 && px < innerWidth && py < innerHeight; };
   if (typeof x === 'number' && typeof y === 'number') {
+    if (!inView(x, y)) return {x: x, y: y, outside: true, w: innerWidth, h: innerHeight};
     return {x: x, y: y};
   }
   var el = null;
@@ -324,8 +330,21 @@ const resolveJS = `(function(index, selector, x, y) {
   }
   if (!el) return null;
   var r = el.getBoundingClientRect();
+  if (!inView(r.left + r.width / 2, r.top + r.height / 2)) {
+    el.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
+    r = el.getBoundingClientRect();
+  }
   return {x: r.left + r.width / 2, y: r.top + r.height / 2};
 })`
+
+// resolved is resolveJS's answer: the point, or a point outside the
+// viewport of w by h.
+type resolved struct {
+	point
+	Outside bool    `json:"outside"`
+	W       float64 `json:"w"`
+	H       float64 `json:"h"`
+}
 
 func (p *chromePage) resolve(ctx context.Context, t Target) (point, error) {
 	args, err := json.Marshal([]any{t.Index, t.Selector, t.X, t.Y})
@@ -333,12 +352,16 @@ func (p *chromePage) resolve(ctx context.Context, t Target) (point, error) {
 		return point{}, err
 	}
 	expr := resolveJS + "(" + string(args[1:len(args)-1]) + ")"
-	var pt *point
-	if err := p.run(ctx, chromedp.Evaluate(expr, &pt)); err != nil {
+	var r *resolved
+	if err := p.run(ctx, chromedp.Evaluate(expr, &r)); err != nil {
 		return point{}, err
 	}
-	if pt == nil {
+	if r == nil {
 		return point{}, fmt.Errorf("no element matches that target")
 	}
-	return *pt, nil
+	if r.Outside {
+		return point{}, fmt.Errorf("%g,%g is outside the %gx%g viewport: scroll first, or click by index or selector, which scroll the element into view",
+			r.X, r.Y, r.W, r.H)
+	}
+	return r.point, nil
 }

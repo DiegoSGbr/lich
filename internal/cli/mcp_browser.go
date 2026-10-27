@@ -47,7 +47,8 @@ var browserTools = []mcpTool{
 	{
 		Name: "browser_click",
 		Description: "Click in this session's browser. Prefer index from the last page read, or a " +
-			"CSS selector, or viewport x and y. Sends a real mouse event, not element.click(). " +
+			"CSS selector: either scrolls the element into view first. x and y are viewport " +
+			"coordinates and must be inside it. Sends a real mouse event, not element.click(). " +
 			"Answers with the page afterwards, as browser_info reads it, once a navigation the " +
 			"click started has its document.",
 		Schema: schema(map[string]any{

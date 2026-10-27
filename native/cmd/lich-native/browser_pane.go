@@ -472,7 +472,7 @@ func (u *window) playAgentCursor(gtx C, p *browserPaneUI, marks []browserMark, h
 		if toolbarActions[m.action] {
 			return toolbarPoint(gtx, m.action, head, bar)
 		}
-		return f32.Pt(float32(*m.x)*scale, float32(*m.y)*scale+float32(head+bar))
+		return pagePoint(*m.x, *m.y, scale, image.Rect(0, head+bar, gtx.Constraints.Max.X, gtx.Constraints.Max.Y))
 	}
 	m, started := p.cursor.advance(gtx.Now, place)
 	if !started {
@@ -485,6 +485,15 @@ func (u *window) playAgentCursor(gtx C, p *browserPaneUI, marks []browserMark, h
 	case "back", "forward", "reload":
 		p.flash = agentPress{what: m.action, at: landed}
 	}
+}
+
+// pagePoint is the pane point of the page's CSS point x,y, the page drawn in
+// page, kept inside it: an action reported outside the viewport would carry
+// the cursor off the pane.
+func pagePoint(x, y float64, scale float32, page image.Rectangle) f32.Point {
+	px := min(max(float32(x)*scale, float32(page.Min.X)), float32(page.Max.X-1))
+	py := min(max(float32(y)*scale+float32(page.Min.Y), float32(page.Min.Y)), float32(page.Max.Y-1))
+	return f32.Pt(px, py)
 }
 
 // toolbarPoint is where on the toolbar the cursor plays action: the middle of
