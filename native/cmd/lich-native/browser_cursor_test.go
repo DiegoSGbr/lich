@@ -29,10 +29,20 @@ func scrollMark(at time.Time, x, y float64, dy int) browserMark {
 	return m
 }
 
+// atMark places a page mark at its own point, and a toolbar one at toolbarAt.
+func atMark(m browserMark) f32.Point {
+	if m.x == nil {
+		return toolbarAt
+	}
+	return f32.Pt(float32(*m.x), float32(*m.y))
+}
+
+var toolbarAt = f32.Pt(12, 40)
+
 // play feeds marks to c at now and lets it start what it can.
 func play(c *agentCursor, now time.Time, marks ...browserMark) {
 	c.take(marks)
-	c.advance(now)
+	c.advance(now, atMark)
 }
 
 func TestAgentCursorAppearsAtItsFirstClickAndGlidesToTheNext(t *testing.T) {
@@ -62,11 +72,11 @@ func TestAgentCursorPlaysParallelActionsInTurn(t *testing.T) {
 	if c.scroll != 0 || c.to != f32.Pt(40, 40) {
 		t.Fatalf("playing scroll %d to %v first, want the click", c.scroll, c.to)
 	}
-	c.advance(t0.Add(cursorGlide))
+	c.advance(t0.Add(cursorGlide), atMark)
 	if c.scroll != 0 {
 		t.Fatal("the scroll cut the click's ring short")
 	}
-	c.advance(t0.Add(cursorGlide + cursorRing))
+	c.advance(t0.Add(cursorGlide+cursorRing), atMark)
 	if c.scroll != 1 {
 		t.Fatalf("after the click played, scroll %d, want the scroll down", c.scroll)
 	}
@@ -154,7 +164,7 @@ func TestDrawAgentCursorLaysOutWithoutAPage(t *testing.T) {
 	for _, d := range []time.Duration{0, cursorGlide, cursorGlide + cursorDip/2, agentHold + cursorFade/2, agentHold + cursorFade} {
 		gtx := layout.Context{Ops: new(op.Ops), Now: t0.Add(d), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
 			Constraints: layout.Exact(image.Pt(400, 300))}
-		u.drawAgentCursor(gtx, &c, 1, th.Primary, th.PrimaryForeground, "Claude Code", providerIcon("claude"))
+		u.drawAgentCursor(gtx, &c, th.Primary, th.PrimaryForeground, "Claude Code", providerIcon("claude"))
 	}
 	if c.shown {
 		t.Fatal("cursor still shown after it faded out")
@@ -177,5 +187,22 @@ func TestAgentCursorStaysWhileTheTurnRunsAndHoldsAfterItEnds(t *testing.T) {
 	}
 	if a := c.alpha(ended.Add(agentHold + cursorFade)); a != 0 {
 		t.Fatalf("alpha %v after the hold and the fade, want 0", a)
+	}
+}
+
+func TestAgentCursorPlaysNavigationOnTheToolbar(t *testing.T) {
+	var c agentCursor
+	t0 := time.Unix(100, 0)
+	markSeq++
+	back := browserMark{seq: markSeq, at: t0, action: "back"}
+	markSeq++
+	shot := browserMark{seq: markSeq, at: t0, action: "screenshot"}
+	c.take([]browserMark{back, shot})
+	m, started := c.advance(t0, atMark)
+	if !started || m.action != "back" || c.to != toolbarAt {
+		t.Fatalf("started %v %q at %v, want back on the toolbar", started, m.action, c.to)
+	}
+	if len(c.pending) != 0 {
+		t.Fatalf("pending %d: an action that changes nothing on screen was queued", len(c.pending))
 	}
 }

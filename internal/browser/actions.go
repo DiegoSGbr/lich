@@ -182,23 +182,23 @@ func (s *Service) Navigate(id, rawURL string) (Handle, error) {
 		return Handle{}, err
 	}
 	s.remember(sess, u, "")
-	s.agentActed(sess, api.BrowserAgentAct{})
+	s.agentActed(sess, api.BrowserAgentAct{Action: "navigate", URL: u})
 	return s.handleOf(sess), nil
 }
 
 // Reload reloads the current page.
 func (s *Service) Reload(id string) error {
-	return s.act(id, func(p Page, ctx context.Context) error { return p.Reload(ctx) })
+	return s.act(id, api.BrowserAgentAct{Action: "reload"}, func(p Page, ctx context.Context) error { return p.Reload(ctx) })
 }
 
 // Back goes back in history.
 func (s *Service) Back(id string) error {
-	return s.act(id, func(p Page, ctx context.Context) error { return p.Back(ctx) })
+	return s.act(id, api.BrowserAgentAct{Action: "back"}, func(p Page, ctx context.Context) error { return p.Back(ctx) })
 }
 
 // Forward goes forward in history.
 func (s *Service) Forward(id string) error {
-	return s.act(id, func(p Page, ctx context.Context) error { return p.Forward(ctx) })
+	return s.act(id, api.BrowserAgentAct{Action: "forward"}, func(p Page, ctx context.Context) error { return p.Forward(ctx) })
 }
 
 // Scroll moves the viewport by dy CSS pixels (positive is down).
@@ -213,13 +213,13 @@ func (s *Service) Scroll(id string, dy int) error {
 	})
 }
 
-// act runs one agent action on its page and tells the window the agent
-// acted; drive runs it, dropping a browser whose page failed it. The
-// window's own calls go through steer instead.
-func (s *Service) act(id string, fn func(Page, context.Context) error) error {
+// act runs one agent action on its page and tells the window the agent did
+// act; drive runs it, dropping a browser whose page failed it. The window's
+// own calls go through steer instead.
+func (s *Service) act(id string, act api.BrowserAgentAct, fn func(Page, context.Context) error) error {
 	sess, err := s.drive(id, fn)
 	if err == nil {
-		s.agentActed(sess, api.BrowserAgentAct{})
+		s.agentActed(sess, act)
 	}
 	return err
 }

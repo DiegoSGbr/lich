@@ -32,6 +32,7 @@ type browserMark struct {
 	seq    uint64
 	action string
 	dy     int
+	url    string
 	at     time.Time
 	x, y   *float64
 }
@@ -149,7 +150,7 @@ func (m *model) applyBrowserAgent(a api.BrowserAgentAct, now time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.browsers.seq++
-	mark := browserMark{seq: m.browsers.seq, at: now, x: a.X, y: a.Y, action: a.Action, dy: a.DY}
+	mark := browserMark{seq: m.browsers.seq, at: now, x: a.X, y: a.Y, action: a.Action, dy: a.DY, url: a.URL}
 	marks := append(m.browsers.agent[a.Owner], mark)
 	m.browsers.agent[a.Owner] = marks[max(0, len(marks)-agentMarksKept):]
 }

@@ -39,10 +39,14 @@ var cursorShadow = color.NRGBA{A: 90}
 // cursorEase is the glide's curve, CSS's cubic-bezier(.2,.8,.2,1).
 var cursorEase = ui.CubicBezier(0.2, 0.8, 0.2, 1)
 
-// agentCursor is where the agent's pointer is, in CSS pixels of the page.
+// agentCursor is where the agent's pointer is, in pixels of its pane: over
+// the page for what the agent does in it, over the toolbar for back, forward,
+// reload and an address.
 type agentCursor struct {
 	shown    bool
 	from, to f32.Point
+	// action is the one playing.
+	action string
 	// scroll is the direction of the scroll the cursor glided for, 1 down
 	// and -1 up; 0 for a click, which dips and rings instead.
 	scroll int
@@ -61,9 +65,13 @@ type agentCursor struct {
 // the oldest go, so a fast agent leaves the cursor a beat behind, not a replay.
 const cursorPending = 3
 
-// take queues the marks not seen yet: an action at a point (a click, typing
-// into or pressing on an element, a scroll) is played by advance, any other
-// only keeps the cursor up.
+// toolbarActions are the agent's actions the cursor plays on the pane's
+// toolbar rather than at a point of the page.
+var toolbarActions = map[string]bool{"back": true, "forward": true, "reload": true, "navigate": true}
+
+// take queues the marks not seen yet: an action at a point of the page (a
+// click, typing into or pressing on an element, a scroll) or on the toolbar
+// is played by advance, any other only keeps the cursor up.
 func (c *agentCursor) take(marks []browserMark) {
 	for _, m := range marks {
 		if m.seq <= c.seen {
@@ -73,26 +81,28 @@ func (c *agentCursor) take(marks []browserMark) {
 		if m.at.After(c.last) {
 			c.last = m.at
 		}
-		if m.x != nil && m.y != nil {
+		if m.x != nil && m.y != nil || toolbarActions[m.action] {
 			c.pending = append(c.pending, m)
 		}
 	}
 	c.pending = c.pending[max(0, len(c.pending)-cursorPending):]
 }
 
-// advance starts the next queued action once the one playing has finished.
-func (c *agentCursor) advance(now time.Time) {
+// advance starts the next queued action once the one playing has finished,
+// at the point place puts it in the pane, and returns it; false when none
+// started.
+func (c *agentCursor) advance(now time.Time, place func(browserMark) f32.Point) (browserMark, bool) {
 	if len(c.pending) == 0 || c.shown && now.Before(c.played()) {
-		return
+		return browserMark{}, false
 	}
 	m := c.pending[0]
 	c.pending = c.pending[1:]
-	to := f32.Pt(float32(*m.x), float32(*m.y))
+	to := place(m)
 	from := to
 	if c.shown {
 		from = c.to
 	}
-	c.from, c.to, c.moved, c.shown = from, to, now, true
+	c.from, c.to, c.moved, c.shown, c.action = from, to, now, true, m.action
 	c.scroll = 0
 	if m.action == "scroll" && m.dy != 0 {
 		c.scroll = 1
@@ -100,6 +110,7 @@ func (c *agentCursor) advance(now time.Time) {
 			c.scroll = -1
 		}
 	}
+	return m, true
 }
 
 func (c *agentCursor) position(now time.Time) f32.Point {
@@ -170,17 +181,17 @@ func arrowPath(ops *op.Ops, unit float32) clip.PathSpec {
 	return path.End()
 }
 
-// drawAgentCursor draws c over the page, scale being device pixels per CSS
-// pixel, in tint with outline around it, the badge naming provider with its
-// icon. It asks for the frames its motion needs.
-func (u *window) drawAgentCursor(gtx C, c *agentCursor, scale float32, tint, outline color.NRGBA, provider string, icon *icons.Icon) {
+// drawAgentCursor draws c over its pane, in tint with outline around it, the
+// badge naming provider with its icon. It asks for the frames its motion
+// needs.
+func (u *window) drawAgentCursor(gtx C, c *agentCursor, tint, outline color.NRGBA, provider string, icon *icons.Icon) {
 	now := gtx.Now
 	a := c.alpha(now)
 	if a <= 0 {
 		c.shown = false
 		return
 	}
-	at := c.position(now).Mul(scale)
+	at := c.position(now)
 	landed := c.landed(now)
 	defer paint.PushOpacity(gtx.Ops, a).Pop()
 	if c.scroll != 0 {

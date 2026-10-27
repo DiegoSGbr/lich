@@ -121,7 +121,7 @@ func (s *Service) Open(owner, rawURL string) (Handle, error) {
 		return Handle{}, err
 	}
 	s.remember(sess, u, "")
-	s.agentActed(sess, api.BrowserAgentAct{})
+	s.agentActed(sess, api.BrowserAgentAct{Action: "navigate", URL: u})
 	return s.handleOf(sess), nil
 }
 

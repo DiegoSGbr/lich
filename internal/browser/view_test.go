@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -278,5 +279,32 @@ func TestAgentTypeAndPressReportTheElementTheyClicked(t *testing.T) {
 	p := launch.pages[0]
 	if len(p.clicks) != 1 || len(p.typed) != 1 || !p.typed[0].t.empty() {
 		t.Fatalf("clicks %v typed %+v: type should click its target once, then type into what has focus", p.clicks, p.typed)
+	}
+}
+
+func TestAgentNavigationSaysWhichToolbarActionItWas(t *testing.T) {
+	s, _, out := viewService(t)
+	if _, err := s.Attach("s", Viewport{W: 800, H: 600, Scale: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Navigate("s", "https://example.com/a"); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []func(string) error{s.Back, s.Forward, s.Reload} {
+		if err := step("s"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.Open("s", "https://example.com/b"); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, d := range out.named(api.BrowserAgentEvent.Name) {
+		a := d.(api.BrowserAgentAct)
+		got = append(got, a.Action+" "+a.URL)
+	}
+	want := []string{"navigate https://example.com/a", "back ", "forward ", "reload ", "navigate https://example.com/b"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("agent actions %q, want %q", got, want)
 	}
 }

@@ -72,6 +72,17 @@ type browserPaneUI struct {
 	queue                 *browserQueue
 	cursor                agentCursor
 	onScreen, wasOnScreen bool
+	// flash is the toolbar button the agent's cursor pressed, and when;
+	// typing is the address it types into the field, from when.
+	flash  agentPress
+	typing agentPress
+}
+
+// agentPress is what the agent's cursor does on the toolbar, from at: the
+// button it presses (back, forward, reload) or the address it types.
+type agentPress struct {
+	what string
+	at   time.Time
 }
 
 func (u *window) browserPane(session string) *browserPaneUI {
@@ -114,6 +125,7 @@ func (u *window) browserPaneAt(gtx C, v stageView, session string, r image.Recta
 	paint.FillShape(gtx.Ops, th.Background, shape.Op(gtx.Ops))
 	area := shape.Push(gtx.Ops)
 	head, bar := gtx.Dp(paneHeader), gtx.Dp(ui.Space(9))
+	u.playAgentCursor(gtx, p, marks, head, bar)
 	header := gtx
 	header.Constraints = layout.Exact(image.Pt(size.X, head))
 	u.browserHeader(header, p, pane, focused)
@@ -128,12 +140,11 @@ func (u *window) browserPaneAt(gtx C, v stageView, session string, r image.Recta
 	page := gtx
 	page.Constraints = layout.Exact(image.Pt(size.X, max(size.Y-head-bar, 0)))
 	off := op.Offset(image.Pt(0, head+bar)).Push(gtx.Ops)
-	p.cursor.take(marks)
-	p.cursor.advance(gtx.Now)
 	// Unlike a terminal, the page is not dimmed out of focus: the person keeps
 	// the session's prompt in focus nearly always, and watches the page.
 	u.browserPage(page, p, session, frame, focused)
 	off.Pop()
+	u.paintAgentCursor(gtx, p, session)
 	u.paneFocusTarget(gtx, pane)
 	area.Pop()
 	u.lockedDropRefusal(gtx, session, image.Rectangle{Max: size}, r.Add(u.islandAt))
@@ -206,7 +217,9 @@ func (u *window) browserToolbar(gtx C, p *browserPaneUI, session string, st api.
 			gtx.Execute(key.FocusCmd{Tag: &p.tag})
 		}
 	}
-	if st.URL != p.shownURL && !gtx.Focused(&p.url) {
+	if text, typing := p.typed(gtx); typing && !gtx.Focused(&p.url) {
+		p.url.SetText(text)
+	} else if st.URL != p.shownURL && !gtx.Focused(&p.url) {
 		p.shownURL = st.URL
 		p.url.SetText(displayURL(st.URL))
 	}
@@ -217,13 +230,13 @@ func (u *window) browserToolbar(gtx C, p *browserPaneUI, session string, st api.
 		gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
 		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 			layout.Rigid(func(gtx C) D {
-				return iconAction(gtx, th, &u.root, &p.back, icBrowserBack, i18n.T("layouts.browser.back"), false)
+				return iconAction(gtx, th, &u.root, &p.back, icBrowserBack, i18n.T("layouts.browser.back"), p.flashing(gtx, "back"))
 			}),
 			layout.Rigid(func(gtx C) D {
-				return iconAction(gtx, th, &u.root, &p.forward, icBrowserForward, i18n.T("layouts.browser.forward"), false)
+				return iconAction(gtx, th, &u.root, &p.forward, icBrowserForward, i18n.T("layouts.browser.forward"), p.flashing(gtx, "forward"))
 			}),
 			layout.Rigid(func(gtx C) D {
-				return iconAction(gtx, th, &u.root, &p.reload, icBrowserReload, i18n.T("layouts.browser.reload"), false)
+				return iconAction(gtx, th, &u.root, &p.reload, icBrowserReload, i18n.T("layouts.browser.reload"), p.flashing(gtx, "reload"))
 			}),
 			ui.Gap(1.5),
 			layout.Flexed(1, field.Layout),
@@ -260,11 +273,6 @@ func (u *window) browserPage(gtx C, p *browserPaneUI, session string, frame brow
 		frame.img.Add(gtx.Ops)
 		paint.PaintOp{}.Add(gtx.Ops)
 		t.Pop()
-	}
-	if p.cursor.shown {
-		tint, provider, icon, busy := u.agentLook(session)
-		p.cursor.observe(gtx.Now, busy)
-		u.drawAgentCursor(gtx, &p.cursor, scale, tint, u.theme.PrimaryForeground, provider, icon)
 	}
 	u.browserInput(gtx, p, session, scale, focused)
 	defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
@@ -431,4 +439,99 @@ func (u *window) agentLook(session string) (tint color.NRGBA, provider string, i
 		provider = info.name
 	}
 	return tint, provider, providerIcon(kind), sv.status == statusBusy
+}
+
+// toolbarFlash is how long a toolbar button the agent's cursor pressed stays
+// lit, as a click's would.
+const toolbarFlash = 220 * time.Millisecond
+
+// typingStep and typingMost pace the address the agent's cursor types into
+// the field: a key every typingStep, the whole address within typingMost.
+const (
+	typingStep = 28 * time.Millisecond
+	typingMost = 700 * time.Millisecond
+)
+
+// playAgentCursor takes the agent's new actions and starts the next one, at
+// its point of the page under the header and toolbar, or on the toolbar.
+func (u *window) playAgentCursor(gtx C, p *browserPaneUI, marks []browserMark, head, bar int) {
+	p.cursor.take(marks)
+	scale := gtx.Metric.PxPerDp
+	place := func(m browserMark) f32.Point {
+		if toolbarActions[m.action] {
+			return toolbarPoint(gtx, m.action, head, bar)
+		}
+		return f32.Pt(float32(*m.x)*scale, float32(*m.y)*scale+float32(head+bar))
+	}
+	m, started := p.cursor.advance(gtx.Now, place)
+	if !started {
+		return
+	}
+	landed := p.cursor.moved.Add(cursorGlide)
+	switch m.action {
+	case "navigate":
+		p.typing = agentPress{what: displayURL(m.url), at: landed}
+	case "back", "forward", "reload":
+		p.flash = agentPress{what: m.action, at: landed}
+	}
+}
+
+// toolbarPoint is where on the toolbar the cursor plays action: the middle of
+// its button, or into the address field. It follows browserToolbar's layout:
+// an inset, then back, forward and reload of one iconAction side each, a gap,
+// and the field.
+func toolbarPoint(gtx C, action string, head, bar int) f32.Point {
+	inset, side, gap := gtx.Dp(ui.Space(1.5)), gtx.Dp(ui.Space(6)), gtx.Dp(ui.Space(1.5))
+	y := float32(head + bar/2)
+	slot := map[string]int{"back": 0, "forward": 1, "reload": 2}
+	if i, ok := slot[action]; ok {
+		return f32.Pt(float32(inset+side*i+side/2), y)
+	}
+	return f32.Pt(float32(inset+3*side+gap+gtx.Dp(ui.Space(10))), y)
+}
+
+// paintAgentCursor draws the agent's cursor over the whole pane.
+func (u *window) paintAgentCursor(gtx C, p *browserPaneUI, session string) {
+	if !p.cursor.shown {
+		return
+	}
+	tint, provider, icon, busy := u.agentLook(session)
+	p.cursor.observe(gtx.Now, busy)
+	u.drawAgentCursor(gtx, &p.cursor, tint, u.theme.PrimaryForeground, provider, icon)
+}
+
+// flashing reports whether the agent's cursor lit the toolbar button for
+// action at now.
+func (p *browserPaneUI) flashing(gtx C, action string) bool {
+	if p.flash.what != action || gtx.Now.Before(p.flash.at) {
+		return false
+	}
+	end := p.flash.at.Add(toolbarFlash)
+	if gtx.Now.Before(end) {
+		gtx.Execute(op.InvalidateCmd{At: end})
+		return true
+	}
+	return false
+}
+
+// typed is the part of the agent's address shown in the field at now, and
+// whether the typing still runs; it waits for the cursor to land.
+func (p *browserPaneUI) typed(gtx C) (string, bool) {
+	t := p.typing
+	if t.what == "" {
+		return "", false
+	}
+	runes := []rune(t.what)
+	step := min(typingStep, typingMost/time.Duration(max(len(runes), 1)))
+	if gtx.Now.Before(t.at) {
+		gtx.Execute(op.InvalidateCmd{})
+		return "", true
+	}
+	n := int(gtx.Now.Sub(t.at)/step) + 1
+	if n >= len(runes) {
+		p.typing = agentPress{}
+		return t.what, false
+	}
+	gtx.Execute(op.InvalidateCmd{})
+	return string(runes[:n]), true
 }

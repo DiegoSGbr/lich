@@ -1511,6 +1511,7 @@ BrowserAgentAct {
 	x,omitempty *float64
 	y,omitempty *float64
 	dy,omitempty int
+	url,omitempty string
 }
 
 ProfileLogin {

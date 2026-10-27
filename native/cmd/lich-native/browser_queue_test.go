@@ -4,8 +4,14 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
+
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
 
 	"github.com/lichdotdev/lich/api"
+	"github.com/lichdotdev/lich/native/ui"
 )
 
 func TestBrowserQueueMergesWhatPilesUpBehindACall(t *testing.T) {
@@ -49,5 +55,47 @@ func TestBrowserQueueKeepsOnlyTheLastPendingResize(t *testing.T) {
 	}
 	if !reflect.DeepEqual(sizes, []int{3}) {
 		t.Fatalf("sent sizes %v, want the last one", sizes)
+	}
+}
+
+func TestToolbarPointsFollowTheToolbarsLayout(t *testing.T) {
+	gtx := layout.Context{Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
+	back, fwd, reload, addr := toolbarPoint(gtx, "back", 30, 36), toolbarPoint(gtx, "forward", 30, 36), toolbarPoint(gtx, "reload", 30, 36), toolbarPoint(gtx, "navigate", 30, 36)
+	side := float32(gtx.Dp(ui.Space(6)))
+	if fwd.X-back.X != side || reload.X-fwd.X != side || addr.X <= reload.X+side/2 {
+		t.Fatalf("back %v forward %v reload %v address %v: buttons one side apart, the address after them", back, fwd, reload, addr)
+	}
+	if back.Y != 48 || addr.Y != 48 {
+		t.Fatalf("y %v, want the toolbar's middle under the header", back.Y)
+	}
+}
+
+func TestTypedAddressGrowsAfterTheCursorLands(t *testing.T) {
+	t0 := time.Unix(100, 0)
+	p := &browserPaneUI{typing: agentPress{what: "example.com", at: t0}}
+	gtx := layout.Context{Ops: new(op.Ops), Now: t0.Add(-time.Millisecond)}
+	if text, typing := p.typed(gtx); text != "" || !typing {
+		t.Fatalf("before landing: %q %v", text, typing)
+	}
+	gtx.Now = t0.Add(3 * typingStep)
+	if text, _ := p.typed(gtx); text != "exam" {
+		t.Fatalf("three steps in: %q", text)
+	}
+	gtx.Now = t0.Add(typingMost)
+	if text, typing := p.typed(gtx); text != "example.com" || typing {
+		t.Fatalf("done: %q %v", text, typing)
+	}
+}
+
+func TestToolbarButtonFlashesOnceTheCursorLands(t *testing.T) {
+	t0 := time.Unix(100, 0)
+	p := &browserPaneUI{flash: agentPress{what: "back", at: t0}}
+	gtx := layout.Context{Ops: new(op.Ops), Now: t0.Add(toolbarFlash / 2)}
+	if !p.flashing(gtx, "back") || p.flashing(gtx, "forward") {
+		t.Fatal("back should be lit, forward not")
+	}
+	gtx.Now = t0.Add(toolbarFlash)
+	if p.flashing(gtx, "back") {
+		t.Fatal("back still lit after the flash")
 	}
 }
