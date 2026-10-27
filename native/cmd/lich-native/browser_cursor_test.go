@@ -67,18 +67,23 @@ func TestAgentCursorPlaysParallelActionsInTurn(t *testing.T) {
 	var c agentCursor
 	t0 := time.Unix(100, 0)
 	// An agent's click and scroll called in parallel reach the pane between
-	// two frames; the click still dips and rings before the scroll plays.
+	// two frames; the click still dips before the scroll plays, and its ring
+	// fades on where it was.
 	play(&c, t0, clickMark(t0, 40, 40), scrollMark(t0, 40, 40, 500))
 	if c.scroll != 0 || c.to != f32.Pt(40, 40) {
 		t.Fatalf("playing scroll %d to %v first, want the click", c.scroll, c.to)
 	}
-	c.advance(t0.Add(cursorGlide), atMark)
+	dipped := c.played()
+	c.advance(dipped.Add(-time.Millisecond), atMark)
 	if c.scroll != 0 {
-		t.Fatal("the scroll cut the click's ring short")
+		t.Fatal("the scroll cut the click's dip short")
 	}
-	c.advance(t0.Add(cursorGlide+cursorRing), atMark)
+	c.advance(dipped, atMark)
 	if c.scroll != 1 {
-		t.Fatalf("after the click played, scroll %d, want the scroll down", c.scroll)
+		t.Fatalf("after the click dipped, scroll %d, want the scroll down", c.scroll)
+	}
+	if len(c.rings) != 1 {
+		t.Fatalf("rings %d, want the click's ring still fading", len(c.rings))
 	}
 }
 
@@ -227,5 +232,22 @@ func TestAgentCursorCatchesUpWithAFastAgent(t *testing.T) {
 	whole := cursorGlide + cursorRing
 	if behind := now.Sub(t0); behind >= 2*whole {
 		t.Fatalf("the last action started %v after the first, want well under two whole plays (%v)", behind, 2*whole)
+	}
+}
+
+func TestAgentCursorGoesOnOnceAClickDippedAndLeavesItsRing(t *testing.T) {
+	var c agentCursor
+	t0 := time.Unix(100, 0)
+	play(&c, t0, clickMark(t0, 10, 10))
+	t1 := t0.Add(cursorGlide + cursorDip)
+	play(&c, t1, clickMark(t1, 200, 10))
+	if c.to != f32.Pt(200, 10) {
+		t.Fatalf("playing %v after the first click dipped, want the next click", c.to)
+	}
+	if len(c.rings) != 1 || c.rings[0].at != f32.Pt(10, 10) {
+		t.Fatalf("rings %+v, want the first click's ring left fading at its point", c.rings)
+	}
+	if !c.settled().After(c.played()) {
+		t.Fatal("settled before the rings faded")
 	}
 }

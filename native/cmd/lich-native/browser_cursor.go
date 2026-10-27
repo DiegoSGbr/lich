@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"slices"
 	"time"
 
 	"gioui.org/f32"
@@ -66,6 +67,17 @@ type agentCursor struct {
 	pending []browserMark
 	// busy is whether the agent's turn ran at the last frame.
 	busy bool
+	// rings are the rings of clicks the cursor already moved on from, left
+	// to fade where they were: the cursor goes on once a click has dipped,
+	// rather than waiting out its ring.
+	rings []cursorRingAt
+}
+
+// cursorRingAt is one click's ring: where, from when, for how long.
+type cursorRingAt struct {
+	at    f32.Point
+	start time.Time
+	span  time.Duration
 }
 
 // cursorPending is how many actions the cursor keeps waiting to play: past it
@@ -104,6 +116,10 @@ func (c *agentCursor) advance(now time.Time, place func(browserMark) f32.Point) 
 	}
 	m := c.pending[0]
 	c.pending = c.pending[1:]
+	if c.shown && c.scroll == 0 {
+		c.rings = append(c.rings, cursorRingAt{at: c.to, start: c.landing(), span: c.span(cursorRing)})
+	}
+	c.rings = slices.DeleteFunc(c.rings, func(r cursorRingAt) bool { return !now.Before(r.start.Add(r.span)) })
 	to := place(m)
 	from := to
 	if c.shown {
@@ -169,13 +185,28 @@ func (c *agentCursor) landing() time.Time {
 	return c.moved.Add(c.span(cursorGlide))
 }
 
-// played is when the action playing has finished: its glide, then its ring
-// or its chevrons.
+// played is when the cursor may go on to the next action: a click once it
+// has dipped, its ring fading on behind it; a scroll once its chevrons, which
+// ride the cursor, have slid past.
 func (c *agentCursor) played() time.Time {
 	if c.scroll != 0 {
 		return c.landing().Add(c.span(cursorScroll))
 	}
-	return c.landing().Add(c.span(cursorRing))
+	return c.landing().Add(c.span(cursorDip))
+}
+
+// settled is when nothing about the cursor moves any more until it fades.
+func (c *agentCursor) settled() time.Time {
+	end := c.played()
+	if c.scroll == 0 {
+		end = c.landing().Add(c.span(cursorRing))
+	}
+	for _, r := range c.rings {
+		if r.start.Add(r.span).After(end) {
+			end = r.start.Add(r.span)
+		}
+	}
+	return end
 }
 
 func progress(d, span time.Duration) float32 {
@@ -221,12 +252,12 @@ func (u *window) drawAgentCursor(gtx C, c *agentCursor, tint, outline color.NRGB
 	if c.scroll != 0 {
 		drawScrollChevrons(gtx, at, landed, c.span(cursorScroll), c.scroll, tint, outline)
 	}
-	ringFor, dipFor := c.span(cursorRing), c.span(cursorDip)
-	if c.scroll == 0 && landed >= 0 && landed < ringFor {
-		p := progress(landed, ringFor)
-		r := float32(gtx.Dp(17)) * cursorEase(p)
-		ring := clip.Ellipse{Min: image.Pt(int(at.X-r), int(at.Y-r)), Max: image.Pt(int(at.X+r), int(at.Y+r))}
-		paint.FillShape(gtx.Ops, ui.Alpha(tint, 0.95*(1-p)), clip.Stroke{Path: ring.Path(gtx.Ops), Width: float32(gtx.Dp(2))}.Op())
+	for _, r := range c.rings {
+		drawCursorRing(gtx, r.at, now.Sub(r.start), r.span, tint)
+	}
+	dipFor := c.span(cursorDip)
+	if c.scroll == 0 {
+		drawCursorRing(gtx, at, landed, c.span(cursorRing), tint)
 	}
 	s := float32(1)
 	if c.scroll == 0 && landed >= 0 && landed < dipFor {
@@ -245,11 +276,22 @@ func (u *window) drawAgentCursor(gtx C, c *agentCursor, tint, outline color.NRGB
 	badge.Pop()
 	// A busy cursor waits for the turn's end, whose status event redraws.
 	switch {
-	case now.Before(c.played()) || len(c.pending) > 0 || !c.busy && c.last.Add(agentHold).Before(now):
+	case now.Before(c.settled()) || len(c.pending) > 0 || !c.busy && c.last.Add(agentHold).Before(now):
 		gtx.Execute(op.InvalidateCmd{})
 	case !c.busy:
 		gtx.Execute(op.InvalidateCmd{At: c.last.Add(agentHold)})
 	}
+}
+
+// drawCursorRing draws a click's ring at at, since into its span.
+func drawCursorRing(gtx C, at f32.Point, since, span time.Duration, tint color.NRGBA) {
+	if since < 0 || since >= span {
+		return
+	}
+	p := progress(since, span)
+	r := float32(gtx.Dp(17)) * cursorEase(p)
+	ring := clip.Ellipse{Min: image.Pt(int(at.X-r), int(at.Y-r)), Max: image.Pt(int(at.X+r), int(at.Y+r))}
+	paint.FillShape(gtx.Ops, ui.Alpha(tint, 0.95*(1-p)), clip.Stroke{Path: ring.Path(gtx.Ops), Width: float32(gtx.Dp(2))}.Op())
 }
 
 // drawScrollChevrons slides two chevrons under the arrow at at in the scroll's
