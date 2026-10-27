@@ -123,13 +123,10 @@ func (c *client) browserType(args []string) error {
 	if err != nil {
 		return err
 	}
-	info, err := callMethod(context.Background(), c, api.BrowserType, api.BrowserTypeOptions{
+	_, err = callMethod(context.Background(), c, api.BrowserType, api.BrowserTypeOptions{
 		ID: id, Text: text, Clear: *clear, BrowserTarget: tf.target(),
-	}, openCall)
-	if err != nil {
-		return err
-	}
-	return c.printPage(info)
+	}, shortCall)
+	return err
 }
 
 func (c *client) browserPress(args []string) error {

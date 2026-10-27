@@ -38,8 +38,8 @@ var browserTools = []mcpTool{
 		Name: "browser_info",
 		Description: "Read this session's current page: URL, title, the text in the viewport, and " +
 			"one line per interactive element there: index, tag, label and link. Form values are " +
-			"never included — (filled)/(checked) say that typing landed. click, type and press " +
-			"already answer with this, so call it only to look again without acting. Read-only.",
+			"never included — (filled)/(checked) say that typing landed. click and press already " +
+			"answer with this, so call it only to look again without acting. Read-only.",
 		Schema:   schema(map[string]any{}),
 		ReadOnly: true,
 		Run:      mcpBrowserInfo,
@@ -63,8 +63,9 @@ var browserTools = []mcpTool{
 	{
 		Name: "browser_type",
 		Description: "Type into this session's browser. Target as for browser_click; omit it " +
-			"to type into whatever is focused. clear replaces the field first. Answers with the " +
-			"page afterwards, which never includes the typed text.",
+			"to type into whatever is focused. clear replaces the field first. Answers ok, not " +
+			"the page: submit with browser_press Enter, which answers with the page, or call " +
+			"browser_info if typing changed it. The typed text never comes back.",
 		Schema: schema(map[string]any{
 			"text":     property("string", "Keys to send."),
 			"clear":    property("boolean", "Replace the field before typing."),
@@ -78,13 +79,13 @@ var browserTools = []mcpTool{
 			if err != nil {
 				return "", err
 			}
-			info, err := callMethod(ctx, c, api.BrowserType, api.BrowserTypeOptions{
+			_, err = callMethod(ctx, c, api.BrowserType, api.BrowserTypeOptions{
 				ID: id, Text: a.text("text"), Clear: a.flag("clear"), BrowserTarget: mcpTarget(a),
-			}, openCall)
+			}, shortCall)
 			if err != nil {
 				return "", err
 			}
-			return pageText(info), nil
+			return "ok", nil
 		},
 	},
 	{

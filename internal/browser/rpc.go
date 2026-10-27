@@ -38,11 +38,8 @@ func (s *Service) ClickAt(_ context.Context, opts api.BrowserClickOptions) (api.
 }
 
 // TypeText types into this session's browser.
-func (s *Service) TypeText(_ context.Context, opts api.BrowserTypeOptions) (api.BrowserPageInfo, error) {
-	if err := s.Type(opts.ID, opts.Text, opts.Clear, targetOf(opts.BrowserTarget)); err != nil {
-		return api.BrowserPageInfo{}, err
-	}
-	return s.pageAfter(opts.ID)
+func (s *Service) TypeText(_ context.Context, opts api.BrowserTypeOptions) (api.None, error) {
+	return api.None{}, s.Type(opts.ID, opts.Text, opts.Clear, targetOf(opts.BrowserTarget))
 }
 
 // PressKey presses one named key in this session's browser.

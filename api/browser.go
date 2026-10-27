@@ -4,10 +4,13 @@ var (
 	BrowserShow = define[SessionIDOptions, BrowserHandle]("browser.Show")
 	BrowserOpen = define[BrowserOpenOptions, BrowserHandle]("browser.Open")
 	BrowserInfo = define[SessionIDOptions, BrowserPageInfo]("browser.Info")
-	// Click, Type and Press answer with the page as it stands after them, so
-	// an agent reads what its action did without a browser.Info of its own.
+	// Click and Press answer with the page as it stands after them, so an
+	// agent reads what its action did without a browser.Info of its own. Type
+	// does not: typing into a field seldom changes the page, and a page per
+	// field filled cost a fifth of a session's page text (measured
+	// 2026-10-26).
 	BrowserClick      = define[BrowserClickOptions, BrowserPageInfo]("browser.Click")
-	BrowserType       = define[BrowserTypeOptions, BrowserPageInfo]("browser.Type")
+	BrowserType       = define[BrowserTypeOptions, None]("browser.Type")
 	BrowserPress      = define[BrowserPressOptions, BrowserPageInfo]("browser.Press")
 	BrowserScreenshot = define[BrowserScreenshotOptions, string]("browser.Screenshot")
 	BrowserNavigate   = define[BrowserOpenOptions, BrowserHandle]("browser.Navigate")

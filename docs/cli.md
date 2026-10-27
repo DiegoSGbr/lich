@@ -951,8 +951,9 @@ lich browser close
 sees its page in a tab beside the session; one that **Open in a window** moved
 to a Chromium window of its own is reused there. `info` describes the page, one line per clickable node
 (index, tag, label, link), and never includes what was typed into a field;
-`click`, `type` and `press` print the same description of the page they left,
-once a navigation they started has its document. `screenshot` prints the PNG's path.
+`click` and `press` print the same description of the page they left, once a
+navigation they started has its document; `type` prints nothing, as a field
+filled seldom changes the page. `screenshot` prints the PNG's path.
 URLs are http, https or `about:blank`.
 
 ### `lich mcp`
