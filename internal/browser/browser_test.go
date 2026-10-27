@@ -306,6 +306,7 @@ func TestFailedInfoDropsTheBrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	launch.pages[0].infoErr = errors.New("chrome gone")
+	launch.pages[0].dead = true
 	if _, err := s.Info("s"); err == nil {
 		t.Fatal("Info succeeded on a dead page")
 	}
@@ -315,18 +316,33 @@ func TestFailedInfoDropsTheBrowser(t *testing.T) {
 	}
 }
 
-func TestOpenDropsWhenReuseNavigateFails(t *testing.T) {
+func TestOpenKeepsALiveBrowserWhenReuseNavigateFails(t *testing.T) {
 	launch := &fakeLauncher{}
 	s := testService(t, launch)
 	if _, err := s.Open("s", "https://a.example"); err != nil {
 		t.Fatal(err)
 	}
-	launch.pages[0].navErr = errors.New("gone")
+	launch.pages[0].navErr = errors.New("net::ERR_NAME_NOT_RESOLVED")
 	if _, err := s.Open("s", "https://b.example"); err == nil {
-		t.Fatal("Open reused a page that could not navigate")
+		t.Fatal("Open reported success for a navigation that failed")
 	}
-	if !launch.pages[0].closed {
-		t.Fatal("failed reuse left the page open")
+	if launch.pages[0].closed {
+		t.Fatal("a failed navigation closed a browser whose Chrome is alive")
+	}
+}
+
+func TestOpenReplacesABrowserWhoseChromeDied(t *testing.T) {
+	launch := &fakeLauncher{}
+	s := testService(t, launch)
+	if _, err := s.Open("s", "https://a.example"); err != nil {
+		t.Fatal(err)
+	}
+	launch.pages[0].dead = true
+	if _, err := s.Open("s", "https://b.example"); err != nil {
+		t.Fatal(err)
+	}
+	if len(launch.pages) != 2 || launch.pages[1].url != "https://b.example" {
+		t.Fatalf("pages %d: a dead Chrome should be replaced by a fresh one at the new URL", len(launch.pages))
 	}
 }
 
@@ -464,5 +480,24 @@ func TestLaunchDoesNotHoldOtherSessions(t *testing.T) {
 	close(release)
 	if err := <-slow; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAFailedAgentActionKeepsALiveBrowser(t *testing.T) {
+	launch := &fakeLauncher{}
+	s := testService(t, launch)
+	if _, err := s.Open("s", "https://example.com"); err != nil {
+		t.Fatal(err)
+	}
+	launch.pages[0].clickErr = errors.New("no element matches that target")
+	idx := 9
+	if err := s.Click("s", Target{Index: &idx}); err == nil {
+		t.Fatal("a click that missed its target reported success")
+	}
+	if launch.pages[0].closed {
+		t.Fatal("a click that missed its target closed the browser")
+	}
+	if list, _ := s.List("s"); len(list) != 1 {
+		t.Fatal("the browser left the list after a missed click")
 	}
 }

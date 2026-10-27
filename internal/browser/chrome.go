@@ -357,7 +357,7 @@ func (p *chromePage) resolve(ctx context.Context, t Target) (point, error) {
 		return point{}, err
 	}
 	if r == nil {
-		return point{}, fmt.Errorf("no element matches that target")
+		return point{}, fmt.Errorf("no element matches that target: the page may have changed since it was read; read it again for fresh indexes")
 	}
 	if r.Outside {
 		return point{}, fmt.Errorf("%g,%g is outside the %gx%g viewport: scroll first, or click by index or selector, which scroll the element into view",

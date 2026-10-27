@@ -34,14 +34,17 @@ type fakePage struct {
 	viewports   []Viewport
 	mice        []api.BrowserMouseOptions
 	mouseErr    error
-	keys        []api.BrowserKeyOptions
-	texts       []string
-	settles     int
-	selection   string
-	info        PageInfo
-	shotErr     error
-	navErr      error
-	infoErr     error
+	clickErr    error
+	// dead is a Chrome whose process ended under the page.
+	dead      bool
+	keys      []api.BrowserKeyOptions
+	texts     []string
+	settles   int
+	selection string
+	info      PageInfo
+	shotErr   error
+	navErr    error
+	infoErr   error
 }
 
 type typed struct {
@@ -58,7 +61,7 @@ type pressed struct {
 func (p *fakePage) Alive() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return !p.closed
+	return !p.closed && !p.dead
 }
 
 func (p *fakePage) Close() error {
@@ -105,6 +108,9 @@ func (p *fakePage) Info(context.Context) (PageInfo, error) {
 func (p *fakePage) Click(_ context.Context, t Target) (x, y float64, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.clickErr != nil {
+		return 0, 0, p.clickErr
+	}
 	p.clicks = append(p.clicks, t)
 	return p.clickAt[0], p.clickAt[1], nil
 }

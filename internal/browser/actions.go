@@ -29,7 +29,14 @@ func (s *Service) touch(sess *session) {
 	}
 }
 
+// drop takes out a browser a call failed on, if its Chrome is gone. One that
+// is alive stays: a click on a stale index or on a page between documents
+// fails and the next call works, and closing the browser lost the person's
+// page and the agent's login with it.
 func (s *Service) drop(sess *session) {
+	if sess.alive() {
+		return
+	}
 	s.mu.Lock()
 	defer s.unlock()
 	if s.byID[sess.id] == sess {

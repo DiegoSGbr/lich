@@ -119,9 +119,7 @@ func (s *Service) steer(owner string, wait time.Duration, fn func(Page, context.
 	ctx, cancel := context.WithTimeout(context.Background(), wait)
 	defer cancel()
 	if err := fn(sess.page, ctx); err != nil {
-		if !sess.alive() {
-			s.drop(sess)
-		}
+		s.drop(sess)
 		return nil, err
 	}
 	s.touch(sess)
